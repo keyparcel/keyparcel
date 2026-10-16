@@ -553,6 +553,10 @@ class ClientJourneyTest {
             click("cancel-inbox-delete")
             check(model.inbox.any { it.id == id }) { "Cancel removed the parcel" }
             click("delete-$id")
+            // Compose can finish the click before the native dialog gains focus.
+            compose.waitUntil(30_000) {
+                pickerNode { it.text?.toString() == "Delete inbox copy?" } != null
+            }
             InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
             compose.waitUntil(30_000) { model.pendingDelete == null }
             check(model.inbox.any { it.id == id }) { "Back removed the parcel" }
