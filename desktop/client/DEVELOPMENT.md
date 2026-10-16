@@ -3,7 +3,8 @@
 [User guide](README.md) · [Repository development guide](../../docs/development.md)
 
 Native builds require Linux, the Go version in `go.mod`, a C compiler, pkg-config,
-GTK 4 development headers/runtime, and OpenSSH. From the repository root:
+GTK 4 development headers/runtime, an SVG image loader (`librsvg2-common` on
+Debian/Ubuntu), and OpenSSH. From the repository root:
 
 ```sh
 make desktop-build

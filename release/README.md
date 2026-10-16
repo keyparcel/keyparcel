@@ -54,11 +54,13 @@ Each Linux target produces one combined CLI/GTK package and a matching `.tar.gz`
 install tree. Keeping them together avoids another package dependency/version
 relationship. Files install under `/usr/bin`, `/usr/share/applications`,
 `/usr/share/bash-completion/completions`, and `/usr/share/doc/keyparcel`.
-The launcher uses the existing Adwaita `mail-send-symbolic` icon; no new artwork.
+The bundled parcel-and-key SVG installs under `/usr/share/icons/hicolor/scalable/apps`.
+The GTK application ID and icon name are `dev.keyparcel`, matching the launcher
+`dev.keyparcel.desktop` on X11 and Wayland. See [shared artwork](../assets/branding/README.md).
 
 - **DEB:** built on Ubuntu 24.04 x86_64, installed/tested on Ubuntu 24.04 and Debian
   13. `dpkg-shlibdeps` derives GTK/libc dependencies; OpenSSH client, CA certificates
-  and Adwaita icons are explicit dependencies
+  Adwaita icons and the SVG loader are explicit dependencies
 - **RPM:** built and installed/tested on Fedora 44 x86_64. RPM derives shared-library
   requirements; OpenSSH clients, CA certificates and Adwaita icons are explicit
 - **Archives:** contain the exact package binaries and install files. The GTK
@@ -80,7 +82,7 @@ source/developer guides are not bundled as broken relative links.
 runtime images (retaining candidate docs despite minimal-image doc filters).
 It checks startup/linking **before** adding test-driver tools,
 then checks archive/package byte equality, paths/modes/ownership, provenance,
-launcher, system icon and completion as the ordinary fixture user. Runtime
+launcher, application icon and completion as the ordinary fixture user. Runtime
 images contain neither Go nor development binaries; selected CLI invocations
 use `/usr/bin/keyparcel` and GTK uses `/usr/bin/keyparcel-gtk` explicitly.
 

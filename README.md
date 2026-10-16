@@ -1,4 +1,7 @@
-# keyparcel
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/branding/logo-dark.svg">
+  <img src="assets/branding/logo-light.svg" alt="keyparcel" width="360">
+</picture>
 
 [![CI](https://github.com/keyparcel/keyparcel/actions/workflows/ci.yml/badge.svg)](https://github.com/keyparcel/keyparcel/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
