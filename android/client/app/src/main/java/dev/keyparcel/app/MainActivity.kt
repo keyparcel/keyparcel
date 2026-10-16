@@ -362,39 +362,44 @@ private fun DevicesScreen(model: AppModel) {
 @Composable
 private fun SendScreen(model: AppModel, chooseFile: () -> Unit) {
     val (text, recipient, fileMode) = model.draft
-    Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(if (fileMode) "Send file" else "Send text", style = MaterialTheme.typography.titleLarge)
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            FilterChip(selected = !fileMode, onClick = { model.draft = model.draft.copy(fileMode = false) }, enabled = !model.busy,
-                label = { Text("Text") }, modifier = Modifier.testTag("send-text-mode"))
-            FilterChip(selected = fileMode, onClick = { model.draft = model.draft.copy(fileMode = true) }, enabled = !model.busy,
-                label = { Text("File") }, modifier = Modifier.testTag("send-file-mode"))
-        }
-        if (model.settings.host?.trusted != true) Text("Connect a server in Settings before sending.")
-        OutlinedButton(onClick = { model.draft = model.draft.copy(recipient = "self") }, enabled = !model.busy,
-            modifier = Modifier.testTag("recipient-self")) { Text(if (recipient == "self") "✓ This device" else "This device") }
-        if (model.settings.peers.isEmpty()) Text("Send to this device, or approve another device in Devices.")
-        model.settings.peers.keys.sorted().forEach { name ->
-            OutlinedButton(onClick = { model.draft = model.draft.copy(recipient = name) }, enabled = !model.busy,
-                modifier = Modifier.testTag("recipient-$name")) { Text(if (recipient == name) "✓ To $name" else "To $name") }
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(if (fileMode) "Send file" else "Send text", style = MaterialTheme.typography.titleLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                FilterChip(selected = !fileMode, onClick = { model.draft = model.draft.copy(fileMode = false) }, enabled = !model.busy,
+                    label = { Text("Text") }, modifier = Modifier.testTag("send-text-mode"))
+                FilterChip(selected = fileMode, onClick = { model.draft = model.draft.copy(fileMode = true) }, enabled = !model.busy,
+                    label = { Text("File") }, modifier = Modifier.testTag("send-file-mode"))
+            }
+            if (model.settings.host?.trusted != true) Text("Connect a server in Settings before sending.")
+            OutlinedButton(onClick = { model.draft = model.draft.copy(recipient = "self") }, enabled = !model.busy,
+                modifier = Modifier.testTag("recipient-self")) { Text(if (recipient == "self") "✓ This device" else "This device") }
+            if (model.settings.peers.isEmpty()) Text("Send to this device, or approve another device in Devices.")
+            model.settings.peers.keys.sorted().forEach { name ->
+                OutlinedButton(onClick = { model.draft = model.draft.copy(recipient = name) }, enabled = !model.busy,
+                    modifier = Modifier.testTag("recipient-$name")) { Text(if (recipient == name) "✓ To $name" else "To $name") }
+            }
+            if (fileMode) {
+                OutlinedButton(onClick = chooseFile, enabled = !model.busy,
+                    modifier = Modifier.testTag("choose-file")) { Text("Choose file") }
+                model.selectedFile?.let { file ->
+                    Text(file.name, modifier = Modifier.testTag("selected-filename"))
+                    Text(file.size?.let { Bridge.formatSize(it) } ?: "Size unknown", modifier = Modifier.testTag("selected-size"))
+                }
+            } else {
+                OutlinedTextField(value = text, onValueChange = { model.draft = model.draft.copy(text = it) }, enabled = !model.busy,
+                    label = { Text("Message") }, minLines = 4, modifier = Modifier.fillMaxWidth().testTag("message"))
+            }
+            TextButton(onClick = model::discardDraft, enabled = !model.busy,
+                modifier = Modifier.testTag("discard-draft")) { Text("Discard draft") }
         }
         if (fileMode) {
-            OutlinedButton(onClick = chooseFile, enabled = !model.busy,
-                modifier = Modifier.testTag("choose-file")) { Text("Choose file") }
-            model.selectedFile?.let { file ->
-                Text(file.name, modifier = Modifier.testTag("selected-filename"))
-                Text(file.size?.let { Bridge.formatSize(it) } ?: "Size unknown", modifier = Modifier.testTag("selected-size"))
-            }
             Button(onClick = { model.sendFile(recipient) }, enabled = !model.busy && model.settings.host?.trusted == true && recipient.isNotEmpty() && model.selectedFile != null,
                 modifier = Modifier.testTag("send-file")) { Text("Send file") }
         } else {
-            OutlinedTextField(value = text, onValueChange = { model.draft = model.draft.copy(text = it) }, enabled = !model.busy,
-                label = { Text("Message") }, minLines = 4, modifier = Modifier.fillMaxWidth().testTag("message"))
             Button(onClick = { model.send(recipient, text) }, enabled = !model.busy && model.settings.host?.trusted == true && recipient.isNotEmpty() && text.isNotEmpty(),
                 modifier = Modifier.testTag("send-message")) { Text("Send") }
         }
-        TextButton(onClick = model::discardDraft, enabled = !model.busy,
-            modifier = Modifier.testTag("discard-draft")) { Text("Discard draft") }
     }
 }
 
