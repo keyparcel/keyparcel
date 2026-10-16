@@ -525,6 +525,80 @@ try:
 
     send_text_to_peer(message)
 
+    # Multi-recipient text and files use the existing peer/self fixture.
+    for multi_file in (False, True):
+        click("Send")
+        status("Ready.")
+        select_recipient("This device")
+        click("Add recipient")
+        dialog = control(app, "Add recipient", Atspi.Role.DIALOG)
+        click("Cancel", dialog)
+        wait("recipient cancellation closes dialog", lambda: not find(app, "Add recipient", Atspi.Role.DIALOG))
+        control(app, "Send text", Atspi.Role.PUSH_BUTTON)
+        click("Add recipient")
+        click("Add", control(app, "Add recipient", Atspi.Role.DIALOG))
+        wait("recipient selection closes dialog", lambda: not find(app, "Add recipient", Atspi.Role.DIALOG))
+        control(app, "Remove recipient bob", Atspi.Role.PUSH_BUTTON)
+        click("Remove recipient bob")
+        control(app, "Send text", Atspi.Role.PUSH_BUTTON)
+        click("Add recipient")
+        click("Add", control(app, "Add recipient", Atspi.Role.DIALOG))
+        wait("recipient selection closes dialog", lambda: not find(app, "Add recipient", Atspi.Role.DIALOG))
+        click("Add recipient")
+        status("All approved devices are already selected")
+        assert not find(app, "Add recipient", Atspi.Role.DIALOG), "Duplicate recipient chooser was offered"
+        content = b"multi file bytes\x00\xff" if multi_file else "multi text 世界\n".encode()
+        if multi_file:
+            source_multi = session / "multi.bin"
+            source_multi.write_bytes(content)
+            click("Choose file")
+            picker_path(file_dialog("Choose a file"), source_multi)
+            status("File selected")
+        else:
+            fill("Message", content.decode())
+        before = {name: ids(name) for name in ("desktop", "peer")}
+        # Refuse the peer copy while allowing self; retry must not resend self.
+        fixture.exec("chmod", "500", fixture.inbox_path("peer"))
+        try:
+            click("Send file to 2 devices" if multi_file else "Send text to 2 devices")
+            status("Send incomplete; the draft is retained")
+            own_new = ids("desktop") - before["desktop"]
+            assert len(own_new) == 1, "Partial multi-send did not deliver exactly one self copy"
+            assert ids("peer") == before["peer"], "Refused multi-send changed peer inbox"
+            if multi_file:
+                source_multi.write_bytes(b"changed after partial delivery")
+            else:
+                assert text_contents(control(app, "Message")) == content.decode(), "Partial send discarded draft"
+            screenshot("send-multiple.png")
+        finally:
+            fixture.exec("chmod", "700", fixture.inbox_path("peer"))
+        click("Retry failed recipients")
+        wait("multi-recipient retry completes", lambda: any(n.get_name().startswith("Sent to 2 devices") for n in walk(app)))
+        assert ids("desktop") == before["desktop"] | own_new, "Retry resent the successful self copy"
+        peer_new = ids("peer") - before["peer"]
+        assert len(peer_new) == 1, "Retry did not deliver exactly one failed peer copy"
+        for name, new_ids in (("desktop", own_new), ("peer", peer_new)):
+            transfer = next(iter(new_ids))
+            if multi_file:
+                destination = session / (name + "-multi.bin")
+                fixture.cli(name, "receive", transfer, "--save-to", str(destination))
+                assert destination.read_bytes() == content, "Retry changed the captured file bytes"
+            else:
+                assert fixture.cli(name, "receive", transfer, "--stdout") == content, "Multi-recipient text bytes differ"
+
+    click("Send"); status("Ready.")
+    select_recipient("This device")
+    click("Add recipient")
+    click("Add", control(app, "Add recipient", Atspi.Role.DIALOG))
+    wait("additional recipient selected", lambda: find(app, "Remove recipient bob", Atspi.Role.PUSH_BUTTON))
+    fill("Message", "keep multi-recipient draft after trust change")
+    fixture.cli("desktop", "untrust", "bob")
+    control(control(app, "Recipient", Atspi.Role.COMBO_BOX), "Choose a recipient", Atspi.Role.LABEL)
+    assert not find(app, "Remove recipient bob", Atspi.Role.PUSH_BUTTON), "Removed approval silently reduced multi-send selection"
+    assert text_contents(control(app, "Message")) == "keep multi-recipient draft after trust change", "Trust change discarded multi-send draft"
+    fixture.cli("desktop", "trust", fixture.fingerprint("peer"), "--name", "bob")
+    click("Discard draft")
+
     for size in (16 * 1024 * 1024, 16 * 1024 * 1024 + 1):
         large = "x" * size
         incoming = peer_send(large)

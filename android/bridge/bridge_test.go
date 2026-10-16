@@ -132,3 +132,18 @@ func TestReplacingApprovalSnapshotRemovesRevokedPeers(t *testing.T) {
 		t.Fatal("failed validation modified approvals")
 	}
 }
+
+func TestBatchSendValidatesInputsBeforeTransport(t *testing.T) {
+	c := &Client{}
+	if _, err := c.SendTextTo("not JSON", "text"); err == nil {
+		t.Fatal("invalid recipients JSON accepted")
+	}
+	for _, name := range []string{"../escape", "", "a/b"} {
+		if _, err := c.SendNamedFileTo(`["self"]`, "missing", name); err == nil || err.Error() != "invalid filename" {
+			t.Fatalf("invalid filename reached transport: %q %v", name, err)
+		}
+	}
+	if _, err := c.SendNamedFileTo(`["self"]`, t.TempDir(), "file"); err == nil || err.Error() != "file input must be a regular file" {
+		t.Fatalf("directory reached transport: %v", err)
+	}
+}

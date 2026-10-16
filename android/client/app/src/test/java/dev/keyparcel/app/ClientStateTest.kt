@@ -68,4 +68,40 @@ class ClientStateTest {
         assertFalse(request.matches(settings, emptyList()))
         assertFalse(request.matches(settings, listOf(item.copy(id = "other"))))
     }
+    @Test fun recipientTokensPreventDuplicatesAndPromoteOnRemoval() {
+        val draft = SendDraft("keep", "self", true).add("bob").add("bob")
+        assertEquals(listOf("self", "bob"), draft.recipients)
+        assertEquals(listOf("bob"), draft.remove("self").recipients)
+        assertEquals(listOf("self"), draft.remove("bob").recipients)
+        assertEquals(listOf("bob"), draft.select("bob").recipients)
+        assertEquals("keep", draft.remove("self").text)
+        val settings = Settings(Host("server", 22, "user"), mapOf("bob" to "ssh-ed25519 BBB comment", "alias" to "ssh-ed25519 AAA other"))
+        assertEquals(listOf("bob"), availableRecipients(SendDraft(recipient = "self"), settings, "ssh-ed25519 AAA own"))
+        assertTrue(availableRecipients(draft, settings, "ssh-ed25519 AAA own").isEmpty())
+    }
+
+    @Test fun changedAdditionalApprovalInvalidatesWholeSelection() {
+        val settings = Settings(Host("server", 22, "user"), mapOf("bob" to "key"))
+        val draft = SendDraft("keep", "self", true).add("bob")
+        assertEquals(draft.copy(recipient = "", additionalRecipients = emptyList()),
+            draft.reconcile(settings, settings.copy(peers = emptyMap())))
+        val context = SendContext(settings, draft.recipients, "own key")
+        assertTrue(context.matches(settings.copy(peers = settings.peers + ("other" to "other key"))))
+        assertFalse(context.matches(settings.copy(peers = emptyMap())))
+        assertFalse(context.matches(settings, "replacement own key"))
+        assertFalse(context.matches(settings.copy(host = settings.host!!.copy(root = "other"))))
+    }
+
+    @Test fun retryOnlyFailedRecipientsAndKeepDeliveredOutcomes() {
+        val report = SendReport(listOf(SendDelivery("self", "original"),
+            SendDelivery("bob", "", "permission denied"), SendDelivery("unknown", "", "lost acknowledgement", true)))
+        assertEquals(listOf("bob"), report.failed)
+        val retried = report.merge(SendReport(listOf(SendDelivery("bob", "retry"))))
+        assertEquals("original", retried.deliveries.first().id)
+        assertEquals("retry", retried.deliveries[1].id)
+        assertTrue(retried.deliveries.last().unconfirmed)
+        assertTrue(retried.failed.isEmpty())
+        assertFalse(retried.complete)
+        assertTrue(retried.summary().contains("This device: delivered"))
+    }
 }

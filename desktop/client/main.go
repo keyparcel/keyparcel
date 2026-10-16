@@ -69,6 +69,9 @@ type model struct {
 	save                              *pendingSave
 	forget                            *core.Device
 	deleteInbox                       *pendingDelete
+	addingRecipient                   *profile
+	extraRecipients                   []string
+	sending                           *sendAttempt
 }
 
 func cstrings(values []string, call func([]*C.char)) {
@@ -135,15 +138,15 @@ func goEvent(handle C.uintptr_t, action, arg, value *C.char) {
 	m.event(C.GoString(action), C.GoString(arg), C.GoString(value))
 }
 
-func (m *model) run(notice string, work func(context.Context) (any, error), done func(any)) {
+func (m *model) run(notice string, work func(context.Context) (any, error), done func(any), failed ...func(error)) bool {
 	if m.active != nil {
-		return
+		return false
 	}
 	select {
 	case m.workers <- struct{}{}:
 	default:
 		m.message("File workers are still finishing; try again shortly.")
-		return
+		return false
 	}
 	if m.pollCancel != nil {
 		m.pollCancel()
@@ -190,6 +193,9 @@ func (m *model) run(notice string, work func(context.Context) (any, error), done
 					message = "Operation cancelled; remote transfers retained."
 				}
 				m.message(message)
+				if len(failed) > 0 {
+					failed[0](outcome.err)
+				}
 				return
 			}
 			done(outcome.value)
@@ -197,6 +203,7 @@ func (m *model) run(notice string, work func(context.Context) (any, error), done
 		})
 		C.ui_post(m.ui, C.uintptr_t(callback))
 	}()
+	return true
 }
 
 func (m *model) load(target string) {
@@ -220,6 +227,10 @@ func (m *model) applyProfile(p profile) {
 		m.items, m.devices, m.rejected = nil, nil, nil
 		m.view, m.save = nil, nil
 		m.deleteInbox = nil
+		m.addingRecipient = nil
+		if m.target != p.Target || m.host != p.Host {
+			m.set("send-report", "")
+		}
 		C.ui_clear_results(m.ui)
 		if m.navigation.current == "text" || m.navigation.current == "saved" {
 			m.page("inbox")
@@ -231,6 +242,21 @@ func (m *model) applyProfile(p profile) {
 		m.syncStatus("Loading", "Refreshing after connection or approval changes")
 	}
 	recipient := retainedRecipient(m.get("recipient"), m.target, m.host, m.peers, p)
+	for _, name := range m.extraRecipients {
+		if retainedRecipient(name, m.target, m.host, m.peers, p) == "" {
+			recipient = ""
+			break
+		}
+	}
+	if recipient == "" {
+		m.extraRecipients = nil
+	}
+	if m.sending != nil && !m.sending.matches(p) {
+		m.clearSendAttempt()
+		recipient = ""
+		m.extraRecipients = nil
+		m.set("send-report", "Server or recipient approval changed; choose recipients again. Previous deliveries are not undone.")
+	}
 	m.peers = p.Config.Peers
 	m.host = p.Host
 	m.target = p.Target
@@ -260,6 +286,7 @@ func (m *model) applyProfile(p profile) {
 	}
 	cstrings([]string{recipient}, func(v []*C.char) { C.ui_select_recipient(m.ui, v[0]) })
 	m.set("ssh-config", m.options.sshConfig)
+	m.drawSend()
 }
 
 func (m *model) remote(ctx context.Context, target string, expected *core.Host, action func(*core.Session, profile) (any, error)) (any, error) {
@@ -341,6 +368,7 @@ func (m *model) event(action, arg, value string) {
 	if action == "close" {
 		m.closed = true
 		m.cancel()
+		m.clearSendAttempt()
 		if m.active != nil {
 			m.active()
 		}
@@ -456,14 +484,43 @@ func (m *model) event(action, arg, value string) {
 			info := v.(os.FileInfo)
 			m.set("selected-file", filepath.Base(arg)+" · "+display.Size(info.Size()))
 			C.ui_send_ready(m.ui, 1)
+			m.drawSend()
 			m.message("File selected")
 		})
 	case "discard-draft":
+		m.clearSendAttempt()
+		m.extraRecipients = nil
+		m.set("send-report", "")
 		C.ui_clear_draft(m.ui, 0)
 		m.file = ""
 		m.set("selected-file", "No file selected")
 		C.ui_send_ready(m.ui, 0)
+		m.drawSend()
 		m.message("Draft discarded")
+	case "recipient-changed":
+		primary := m.get("recipient")
+		kept := m.extraRecipients[:0]
+		for _, name := range m.extraRecipients {
+			if name != primary {
+				kept = append(kept, name)
+			}
+		}
+		m.extraRecipients = kept
+		m.drawSend()
+	case "add-recipient-request":
+		m.chooseRecipient()
+	case "add-recipient":
+		m.addRecipient(value)
+	case "remove-recipient":
+		m.removeRecipient(arg)
+	case "retry-send":
+		m.retrySend()
+	case "edit-send":
+		m.clearSendAttempt()
+		m.extraRecipients = nil
+		cstrings([]string{""}, func(v []*C.char) { C.ui_select_recipient(m.ui, v[0]) })
+		m.set("send-report", "")
+		m.drawSend()
 	case "send-text", "send-file":
 		m.send(action == "send-file")
 	case "delete-request":
@@ -521,75 +578,6 @@ func (m *model) event(action, arg, value string) {
 	}
 }
 
-func (m *model) send(file bool) {
-	target, recipient, path, host := m.target, m.get("recipient"), m.file, m.host
-	if recipient == "" {
-		m.message("Choose a recipient before sending")
-		return
-	}
-	peers := m.peers
-	selectedKey := peers[recipient]
-	if recipient == "self" {
-		selectedKey = m.public
-	}
-	text := ""
-	if !file {
-		native := C.ui_draft(m.ui)
-		text = C.GoString(native)
-		C.g_free(C.gpointer(native))
-	}
-	m.run("Sending…", func(ctx context.Context) (any, error) {
-		p, err := m.store.load(target)
-		if err != nil {
-			return nil, err
-		}
-		if retainedRecipient(recipient, target, host, peers, p) == "" {
-			return nil, &recipientChanged{p}
-		}
-		var input *os.File
-		if file {
-			var err error
-			input, err = openInput(path)
-			if err != nil {
-				return nil, err
-			}
-			defer input.Close()
-			stop := context.AfterFunc(ctx, func() { input.Close() })
-			defer stop()
-		}
-		return m.remote(ctx, target, &host, func(s *core.Session, p profile) (any, error) {
-			key := p.Config.Peers[recipient]
-			if recipient == "self" {
-				key = p.Public
-			}
-			if key == "" || key != selectedKey {
-				return nil, &recipientChanged{p}
-			}
-			var deliveries []core.Delivery
-			var err error
-			if file {
-				name := filepath.Base(path)
-				deliveries, err = s.Send(p.Config, []string{recipient}, "file", &name, input)
-			} else {
-				deliveries, err = s.Send(p.Config, []string{recipient}, "text", nil, strings.NewReader(text))
-			}
-			if err != nil && len(deliveries) > 0 && deliveries[0].Error != "" {
-				return nil, fmt.Errorf("send failed: %s", deliveries[0].Error)
-			}
-			return deliveries, err
-		})
-	}, func(v any) {
-		deliveries := v.([]core.Delivery)
-		C.ui_clear_draft(m.ui, boolean(file))
-		if file {
-			m.file = ""
-			m.set("selected-file", "No file selected")
-			C.ui_send_ready(m.ui, 0)
-		}
-		m.page("inbox")
-		m.message("Sent " + deliveries[0].ID)
-	})
-}
 func (m *model) receiveText(id string) {
 	target := m.target
 	m.run("Verifying received text…", func(ctx context.Context) (any, error) {

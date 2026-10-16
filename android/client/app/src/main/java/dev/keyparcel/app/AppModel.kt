@@ -61,6 +61,12 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     var savedFile by mutableStateOf<SavedFile?>(null); private set
     var pendingDelete by mutableStateOf<InboxDeleteRequest?>(null); private set
     var progress by mutableStateOf<String?>(null); private set
+    private data class PendingSend(val context: SendContext, val text: String, val file: File?, val filename: String, val report: SendReport)
+    private var pendingSend by mutableStateOf<PendingSend?>(null)
+    var sendReport by mutableStateOf<SendReport?>(null); private set
+    var sendReportHost by mutableStateOf(""); private set
+    val sendLocked get() = pendingSend != null
+    val canRetrySend get() = pendingSend?.let { it.context.matches(settings, publicKey) && it.report.failed.isNotEmpty() } == true
     private val mainHandler = Handler(Looper.getMainLooper())
     private data class Connected(val host: Host, val client: Client, val epoch: Long)
     @Volatile private var connected: Connected? = null
@@ -161,6 +167,10 @@ class AppModel(application: Application) : AndroidViewModel(application) {
 
     private fun applySettings(updated: Settings) {
         draft = draft.reconcile(settings, updated)
+        if (pendingSend?.context?.matches(updated, publicKey) == false) {
+            clearPendingSend()
+            error = "Server or recipient approval changed; choose recipients again. Previous deliveries are not undone."
+        }
         if (settings != updated) {
             // Old verification results must never survive a trust-context change.
             pendingDelete = null
@@ -347,14 +357,18 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun sendFile(recipient: String) {
+        if (busy || sendLocked) return
         val document = selectedFile ?: return
+        val context = sendContext(recipient)
+        sendReport = null
         work({
             reportProgress("Preparing ${document.name}…")
-            val context = getApplication<Application>()
-            val staging = File.createTempFile("keyparcel-send-", ".tmp", context.cacheDir)
+            val application = getApplication<Application>()
+            val staging = File.createTempFile("keyparcel-send-", ".tmp", application.cacheDir)
+            var retained = false
             try {
                 withDocumentAccess(documentTimeoutMillis) { access ->
-                    access.open(context.contentResolver, document.uri, "r").use { source ->
+                    access.open(application.contentResolver, document.uri, "r").use { source ->
                         source.createInputStream().use { input ->
                             staging.outputStream().use { output ->
                                 copyDocumentContent(Channels.newInputStream(access.own(input.channel)), output,
@@ -365,12 +379,74 @@ class AppModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 reportProgress("Uploading ${document.name}…")
-                withClient { it.sendNamedFile(recipient, staging.absolutePath, document.name) }
-            } finally { staging.delete() }
-        }) {
-            discardDraft(); showPage(Page.Inbox)
-            notice = "Sent to ${if (recipient == "self") "this device" else recipient} · $it"
+                val report = sendBatch(context, context.names, "", staging, document.name)
+                retained = withContext(Dispatchers.Main) { finishSend(context, "", staging, document.name, report) }
+            } finally { if (!retained) staging.delete() }
+        }) {}
+    }
+
+    private fun sendContext(recipient: String) = SendContext(settings,
+        (listOf(recipient) + draft.additionalRecipients).filter { it.isNotEmpty() }.distinct(), publicKey)
+
+    private suspend fun sendBatch(context: SendContext, names: List<String>, text: String, file: File?, filename: String): SendReport {
+        val json = withClient(requireNotNull(context.settings.host) { "Configure a server first" }) { client ->
+            require(context.matches(settings, publicKey)) { "Server or recipient approval changed; choose recipients again" }
+            val recipients = JSONArray(names).toString()
+            if (file == null) client.sendTextTo(recipients, text) else client.sendNamedFileTo(recipients, file.absolutePath, filename)
         }
+        val result = JSONObject(json)
+        val array = result.optJSONArray("deliveries")
+        if (array == null || array.length() == 0) throw java.io.IOException(result.optString("error", "Send did not start"))
+        val deliveries = (0 until array.length()).map {
+            val d = array.getJSONObject(it)
+            SendDelivery(d.getString("recipient"), d.getString("transfer_id"), d.optString("error"), d.optBoolean("unconfirmed"))
+        }
+        // Never interpret a missing outcome as success or make it retryable.
+        return if (deliveries.map { it.recipient } == names) SendReport(deliveries)
+            else SendReport(names.map { SendDelivery(it, "", "Incomplete delivery report", true) })
+    }
+
+    private fun finishSend(context: SendContext, text: String, file: File?, filename: String, report: SendReport): Boolean {
+        if (!context.matches(settings, publicKey)) {
+            error = "Send finished for ${context.settings.host?.address}; check those inboxes before sending again"
+            return false
+        }
+        sendReport = report
+        sendReportHost = context.settings.host?.address.orEmpty()
+        if (!report.complete) {
+            pendingSend = PendingSend(context, text, file, filename, report)
+            notice = "Send incomplete; the draft is retained"
+            return true
+        }
+        discardDraft()
+        sendReport = report
+        sendReportHost = context.settings.host?.address.orEmpty()
+        showPage(Page.Inbox)
+        notice = if (context.names.size == 1) "Sent to ${if (context.names.single() == "self") "this device" else context.names.single()} · ${report.deliveries.single().id}"
+            else "Sent to ${context.names.size} devices\n${report.summary()}"
+        return false
+    }
+
+    fun retrySend() {
+        if (busy) return
+        val pending = pendingSend ?: return
+        val names = pending.report.failed
+        if (names.isEmpty()) return
+        work({
+            require(pending.context.matches(settings, publicKey)) { "Server or recipient approval changed; choose recipients again" }
+            val report = sendBatch(pending.context, names, pending.text, pending.file, pending.filename)
+            withContext(Dispatchers.Main) {
+                if (pendingSend === pending) finishSend(pending.context, pending.text, pending.file, pending.filename, pending.report.merge(report))
+            }
+        }) {}
+    }
+
+    private fun clearPendingSend() { pendingSend?.file?.delete(); pendingSend = null }
+
+    fun editSend() {
+        if (busy) return
+        clearPendingSend(); sendReport = null
+        draft = draft.copy(recipient = "", additionalRecipients = emptyList())
     }
 
     private fun reportProgress(message: String) { mainHandler.post { if (busy) progress = message } }
@@ -433,11 +509,16 @@ class AppModel(application: Application) : AndroidViewModel(application) {
 
     fun back() { if (!busy) showPage(navigation.back().page) }
 
-    fun discardDraft() { draft = SendDraft(); selectedFile = null }
+    fun discardDraft() { clearPendingSend(); sendReport = null; draft = SendDraft(); selectedFile = null }
 
-    fun send(recipient: String, text: String) = work({ withClient { it.sendText(recipient, text) } }) {
-        discardDraft(); showPage(Page.Inbox)
-        notice = "Sent to ${if (recipient == "self") "this device" else recipient} · $it"
+    fun send(recipient: String, text: String) {
+        if (busy || sendLocked) return
+        val context = sendContext(recipient)
+        sendReport = null
+        work({
+            val report = sendBatch(context, context.names, text, null, "")
+            withContext(Dispatchers.Main) { finishSend(context, text, null, "", report) }
+        }) {}
     }
 
     fun clipboardError(message: String?) { error = message; notice = null }
@@ -482,6 +563,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
+        clearPendingSend()
         foreground = false
         retireConnection()
         super.onCleared()

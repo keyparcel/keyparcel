@@ -177,12 +177,12 @@ class ClientJourneyTest {
         pickerReturned()
     }
 
-    private fun saveFile(id: String, outputName: String) {
+    private fun saveFile(id: String, outputName: String, expectedName: String = "file-世界.bin") {
         compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("save-$id"))
         click("save-$id")
         var filename: AccessibilityNodeInfo? = null
         compose.waitUntil(30_000) { pickerNode { it.className?.toString() == "android.widget.EditText" }.also { filename = it } != null }
-        check(filename!!.text.toString() == "file-世界.bin") { "Save dialog did not suggest the original filename: ${filename!!.text}" }
+        check(filename!!.text.toString() == expectedName) { "Save dialog did not suggest the original filename: ${filename!!.text}" }
         pickerRoot()
         filename = pickerNode { it.className?.toString() == "android.widget.EditText" }
         check(filename?.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
@@ -192,11 +192,11 @@ class ClientJourneyTest {
         pickerReturned()
     }
 
-    private fun receive(id: String) {
+    private fun receive(id: String, expected: String = input) {
         compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("receive-$id"))
         click("receive-$id")
         waitFor("received-text")
-        check(value("received-text") == input) { "Received text changed its Unicode or whitespace" }
+        check(value("received-text") == expected) { "Received text changed its Unicode or whitespace" }
     }
 
     private fun withClipboard(check: (ClipboardManager) -> Unit) {
@@ -678,6 +678,88 @@ class ClientJourneyTest {
         click("back"); refresh()
         compose.onNodeWithTag("receive-$id").assertExists()
         receive(id); click("remove-close"); finished()
+    }
+
+    @Test fun multipleRecipients() {
+        waitFor("refresh-inbox")
+        val model = ViewModelProvider(compose.activity)[AppModel::class.java]
+        val cache = compose.activity.cacheDir
+        val directory = File(compose.activity.filesDir, "document-fixtures").apply { mkdirs() }
+        val payload = byteArrayOf(0, 1, 2, -1, 42)
+        val source = File(directory, "multi.bin").apply { writeBytes(payload) }
+        fun fixture(stage: String) {
+            File(cache, "multi-$stage-ready").writeText("ready")
+            compose.waitUntil(60_000) { File(cache, "multi-$stage-go").exists() }
+        }
+        val evidence = Bundle()
+        for (fileMode in listOf(false, true)) {
+            val kind = if (fileMode) "file" else "text"
+            click("send-screen")
+            compose.onNodeWithTag("discard-draft").performScrollTo().performClick()
+            compose.onNodeWithTag("recipient-self").performScrollTo().performClick()
+            compose.onNodeWithTag("send-message").assertTextEquals("Send")
+            compose.onNodeWithTag("add-recipient").performScrollTo().performClick()
+            compose.onNodeWithText("Cancel").performClick()
+            compose.onNodeWithTag("remove-recipient-laptop").assertDoesNotExist()
+            compose.onNodeWithTag("add-recipient").performScrollTo().performClick()
+            click("add-recipient-laptop")
+            compose.onNodeWithTag("add-recipient").assertIsNotEnabled()
+            compose.onNodeWithTag("remove-recipient-laptop").performScrollTo().performClick()
+            compose.onNodeWithTag("send-message").assertTextEquals("Send")
+            compose.onNodeWithTag("add-recipient").performScrollTo().performClick()
+            click("add-recipient-laptop")
+            click("devices-screen"); click("send-screen")
+            compose.onNodeWithTag("remove-recipient-self").assertExists()
+            compose.onNodeWithTag("remove-recipient-laptop").assertExists()
+            if (fileMode) {
+                compose.onNodeWithTag("send-file-mode").performScrollTo().performClick()
+                compose.onNodeWithTag("choose-file").performScrollTo().performClick(); pickerRoot()
+                pickerClick(scrollFiles = true) { it.text?.toString() == "multi.bin" }; pickerReturned()
+            } else field("message", "multi text 世界\n")
+            fixture("$kind-prepare")
+            val sendTag = if (fileMode) "send-file" else "send-message"
+            compose.onNodeWithTag(sendTag).assertTextEquals("Send to 2 devices")
+            compose.onNodeWithTag(sendTag).assertIsDisplayed().assertIsEnabled().performTouchInput { click() }; finished()
+            compose.onNodeWithTag("error").assertDoesNotExist()
+            val partial = requireNotNull(model.sendReport)
+            check(partial.failed == listOf("laptop")) { "Partial delivery lost exact failed recipient: $partial" }
+            check(partial.deliveries.first { it.recipient == "self" }.error.isEmpty()) { "Self was not delivered" }
+            val ownID = partial.deliveries.first { it.recipient == "self" }.id
+            evidence.putString("${kind}_self_id", ownID)
+            compose.onNodeWithTag(sendTag).assertIsNotEnabled()
+            if (fileMode) source.writeText("changed source after partial delivery")
+            else check(value("message") == "multi text 世界\n") { "Partial delivery discarded draft" }
+            screenshot("send-multiple-$kind")
+            fixture("$kind-retry")
+            compose.onNodeWithTag("retry-send").performScrollTo().performClick(); finished()
+            compose.onNodeWithTag("error").assertDoesNotExist()
+            val complete = requireNotNull(model.sendReport)
+            check(complete.complete) { "Failed-only retry did not complete: $complete" }
+            check(complete.deliveries.first { it.recipient == "self" }.id == ownID) { "Retry replaced the successful self result" }
+            evidence.putString("${kind}_peer_id", complete.deliveries.first { it.recipient == "laptop" }.id)
+            refresh()
+            if (fileMode) {
+                saveFile(ownID, "multi-saved.bin", "multi.bin"); waitFor("saved-file")
+                check(File(directory, "multi-saved.bin").readBytes().contentEquals(payload)) { "Self multi-file bytes changed" }
+                click("back")
+            } else {
+                receive(ownID, "multi text 世界\n")
+                click("back")
+            }
+        }
+        click("send-screen")
+        compose.onNodeWithTag("discard-draft").performScrollTo().performClick()
+        compose.onNodeWithTag("recipient-self").performScrollTo().performClick()
+        compose.onNodeWithTag("add-recipient").performScrollTo().performClick(); click("add-recipient-laptop")
+        field("message", "retain after trust change")
+        val peer = model.devices.first { it.key == model.settings.peers["laptop"] }
+        compose.runOnIdle { model.forget("laptop") }; finished()
+        check(model.draft.recipients.isEmpty()) { "Removed additional approval silently reduced the recipient list" }
+        check(value("message") == "retain after trust change") { "Trust change discarded content" }
+        compose.onNodeWithTag("send-message").assertIsNotEnabled()
+        compose.runOnIdle { model.approve(peer, "laptop") }; finished()
+        compose.onNodeWithTag("discard-draft").performScrollTo().performClick()
+        InstrumentationRegistry.getInstrumentation().sendStatus(0, evidence)
     }
 
     @Test fun receivedClipboardCases() {

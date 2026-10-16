@@ -120,9 +120,10 @@ func (s *Session) Discover(c *Config) ([]Device, error) {
 }
 
 type Delivery struct {
-	Recipient string `json:"recipient"`
-	ID        string `json:"transfer_id"`
-	Error     string `json:"error,omitempty"`
+	Recipient   string `json:"recipient"`
+	ID          string `json:"transfer_id"`
+	Error       string `json:"error,omitempty"`
+	Unconfirmed bool   `json:"unconfirmed,omitempty"`
 }
 
 func (s *Session) Send(c *Config, names []string, kind string, filename *string, input io.Reader) ([]Delivery, error) {
@@ -194,6 +195,8 @@ func (s *Session) Send(c *Config, names []string, kind string, filename *string,
 					}
 					if err == nil {
 						err = s.Client.Rename(tmp, dest)
+						// A lost acknowledgement cannot prove whether publication happened.
+						d.Unconfirmed = connectionFailure(err) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 					}
 					if err != nil {
 						s.Client.Remove(tmp)

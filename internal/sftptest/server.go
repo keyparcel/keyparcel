@@ -22,13 +22,13 @@ type Server struct {
 	fault    atomic.Pointer[failure]
 }
 
-// Fail affects only the named request and path. io.ErrClosedPipe drops the wire.
+// Fail affects the named request/path (empty path matches all). io.ErrClosedPipe drops the wire.
 func (s *Server) Fail(method, path string, err error) {
 	s.fault.Store(&failure{method, path, err})
 }
 
 func (s *Server) check(method, path string) error {
-	if f := s.fault.Load(); f != nil && f.method == method && f.path == path {
+	if f := s.fault.Load(); f != nil && f.method == method && (f.path == path || f.path == "") {
 		if f.err == io.ErrClosedPipe {
 			s.wire.Close()
 		}
@@ -42,7 +42,7 @@ func New(t testing.TB) *Server {
 	clientWire, serverWire := net.Pipe()
 	s := &Server{wire: serverWire, handlers: sftp.InMemHandler()}
 	handlers := s.handlers
-	handlers.FileList, handlers.FileGet = s, s
+	handlers.FileList, handlers.FileGet, handlers.FileCmd = s, s, s
 	server := sftp.NewRequestServer(serverWire, handlers)
 	done := make(chan struct{})
 	go func() { defer close(done); server.Serve(); server.Close() }()
@@ -116,4 +116,11 @@ func (r *reader) Close() error {
 		return closer.Close()
 	}
 	return nil
+}
+
+func (s *Server) Filecmd(r *sftp.Request) error {
+	if err := s.check(r.Method, r.Filepath); err != nil {
+		return err
+	}
+	return s.handlers.FileCmd.Filecmd(r)
 }
