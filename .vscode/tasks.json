@@ -1,0 +1,35 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "keyparcel: CLI fresh host-trust smoke",
+      "type": "shell",
+      "command": "make smoke-fresh",
+      "problemMatcher": []
+    },
+    {
+      "label": "keyparcel: Android smoke",
+      "type": "shell",
+      "command": "make smoke-android",
+      "problemMatcher": []
+    },
+    {
+      "label": "keyparcel: Android fresh-user smoke",
+      "type": "shell",
+      "command": "make smoke-android-fresh",
+      "problemMatcher": []
+    },
+    {
+      "label": "keyparcel: Linux GTK smoke",
+      "type": "shell",
+      "command": "make smoke-gtk",
+      "problemMatcher": []
+    },
+    {
+      "label": "keyparcel: Linux GTK fresh setup",
+      "type": "shell",
+      "command": "make smoke-gtk-fresh",
+      "problemMatcher": []
+    }
+  ]
+}

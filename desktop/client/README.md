@@ -1,0 +1,67 @@
+# Linux GTK client
+
+Send and receive text or files with a GTK interface. The client shares the CLI's
+profiles, device identity files, peer approvals and OpenSSH `known_hosts` stores.
+
+[Installation](../../docs/installation.md#linux-desktop) · [Builds and tests](DEVELOPMENT.md) ·
+[Security](../../SECURITY.md) · [Screenshots](docs/gallery/README.md)
+
+## Setup and trust
+
+Launch `desktop/client/build/keyparcel-gtk` after [building](DEVELOPMENT.md), or
+open it against an existing CLI profile. `--config`, `--ssh-config` and `--host`
+select alternate settings. In Settings, select/save a target and an existing
+unencrypted Ed25519 or supported RSA identity; copy its public key for enrollment
+on the server. Advanced settings contain remote paths and OpenSSH details.
+
+On first connection, compare the server fingerprint independently before approving
+the graphical OpenSSH prompt. Rejection changes no trust; changed keys block
+connection. OpenSSH continues to handle aliases, routing and jump hosts.
+
+In Devices, compare the peer fingerprint, edit the suggested name if needed and
+**Approve**. A valid unused SSH comment is just a name suggestion. The receiving
+peer must approve your fingerprint too. **This device** needs no peer approval,
+but its identity must still be enrolled on the server.
+
+## Send and receive
+
+Inbox, Send and Devices are available directly in the navigation bar. Settings
+opens separately; Back, Escape or Alt+Left returns to the prior page. Dialogs and
+expanded Advanced sections are dismissed first.
+
+Send text or one local file to an approved peer or this device. Draft text,
+recipient and file survive navigation, dialog cancellation and failed sends.
+Successful sends clear the relevant content; **Discard draft** clears both text
+and file. Server/identity or approval changes clear affected recipient selections
+without discarding content. Drafts do not survive app restarts.
+
+Inbox shows sender, filename/type, size and local upload time. **Details** exposes
+the full transfer ID and its copy action. Content is fully verified before display
+or a destination write. Incoming files use GTK's save dialog; replacing an existing
+regular file requires confirmation.
+
+Receiving or saving **keeps the remote copy**. **Remove & close** deletes it
+explicitly; Back, window closure, cancellation and failed delivery retain it.
+Failed removal leaves the result and retry action available. The
+[CLI removes successful receives by default](../../docs/usage.md#receiving-and-retention).
+
+The read-only text preview is selectable and scrollable, with a 65,536 Unicode
+character limit and visible truncation notice. **Copy complete message** uses the
+full verified message, not the preview, up to 16 MiB inclusive. Clipboard text must
+be UTF-8 without NUL bytes; transfers themselves have no clipboard size cap. NUL
+is displayed as ␀ and disables selection copying so the display symbol cannot
+silently replace the original byte.
+
+## Automatic updates and cancellation
+
+Inbox and Devices update automatically over one reused SSH/SFTP connection. Tabs
+show cached data; Refresh requests an immediate update/retry. A failed refresh
+keeps the last successful data; the small connection status exposes error details.
+Reconnections preserve server-key checks and never open approval dialogs in the
+background: use Connect in Settings when approval is needed. Server/trust changes
+invalidate affected cached results. Monitoring stops when the app exits.
+
+Network/file operations have a two-minute deadline and a Cancel action; a timeout
+or cancellation cleans staging and restores controls. File selection currently
+uses local paths. Candidate installs are checked on Ubuntu 24.04, Debian 13 and
+Fedora 44; native Wayland and other distributions remain unverified; background transfers and notifications are not implemented.

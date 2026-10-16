@@ -1,0 +1,18 @@
+FROM ubuntu@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55 AS base
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-client ca-certificates && rm -rf /var/lib/apt/lists/*
+ARG CLIENT_UID=1000
+ARG CLIENT_GID=1000
+# OpenSSH requires a passwd entry for the UID used with the fixture bind mounts.
+RUN if ! getent group "$CLIENT_GID" >/dev/null; then groupadd --gid "$CLIENT_GID" keyparcel-test; fi && \
+    if ! getent passwd "$CLIENT_UID" >/dev/null; then useradd --uid "$CLIENT_UID" --gid "$CLIENT_GID" --no-create-home keyparcel-test; fi
+FROM base AS client
+COPY keyparcel.bash /usr/local/share/keyparcel/completion.bash
+COPY keyparcel age sftp-probe /usr/local/bin/
+CMD ["sleep", "infinity"]
+
+FROM base AS clipboard
+RUN apt-get update && apt-get install -y --no-install-recommends xvfb xclip && rm -rf /var/lib/apt/lists/*
+COPY keyparcel.bash /usr/local/share/keyparcel/completion.bash
+COPY keyparcel age sftp-probe /usr/local/bin/
+ENV DISPLAY=:99
+CMD ["sh", "-c", "Xvfb :99 -screen 0 800x600x24 -nolisten tcp & wait"]

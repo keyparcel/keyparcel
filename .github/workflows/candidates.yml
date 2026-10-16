@@ -1,0 +1,83 @@
+name: Release candidates
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+defaults:
+  run:
+    shell: bash
+permissions:
+  contents: read
+concurrency:
+  group: candidates-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  linux:
+    name: Linux installed packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      - run: python3 -m unittest discover -s release -p '*_test.py'
+      - run: |
+          mkdir -p release/out
+          python3 release/build.py linux --require-clean --version "$(cat release/VERSION)" 2>&1 | tee release/out/candidate-build.log
+      - run: python3 release/validate.py "release/out/$(cat release/VERSION)" 2>&1 | tee release/out/candidate-validation.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: linux-candidates
+          path: |
+            release/out/**/*.deb
+            release/out/**/*.rpm
+            release/out/**/*.tar.gz
+            release/out/**/build-info.json
+            release/out/candidate-*.log
+            test-artifacts/
+            desktop/client/build/session.*/
+            !**/id_*
+          retention-days: 7
+  android:
+    name: Android ARM64 candidate (static)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: android/go.sum
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
+      - name: Install build-only Android SDK components
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || test "${PIPESTATUS[1]}" = 0
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0' 'ndk;29.0.14206865'
+      - run: |
+          mkdir -p release/out
+          python3 release/build.py android --require-clean --version "$(cat release/VERSION)" --android-code "$(cat release/ANDROID_VERSION_CODE)" 2>&1 | tee release/out/candidate-android.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: android-arm64-candidate
+          path: |
+            release/out/*/android-arm64/*.apk
+            release/out/**/build-info.json
+            release/out/**/apk-*.txt
+            release/out/candidate-android.log
+          retention-days: 7

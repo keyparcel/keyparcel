@@ -1,0 +1,7 @@
+/bin/
+/test-artifacts/
+/.smoke/
+/.smoke-android/
+/android/build/
+/release/out/
+/release/__pycache__/

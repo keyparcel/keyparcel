@@ -1,0 +1,10 @@
+keyparcel
+Copyright 2026 keyparcel contributors
+Source: https://github.com/keyparcel/keyparcel
+
+License: Apache-2.0
+The complete license is in LICENSE in this directory.
+Linked Go components use BSD-2-Clause and BSD-3-Clause; their full copyright, license and patent
+notices, plus Android and build-tool notices, are in THIRD_PARTY_NOTICES.txt.
+See NOTICE for the project attribution. Third-party notices remain under their
+respective licenses.
