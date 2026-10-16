@@ -44,7 +44,7 @@ Linux clipboard copying additionally needs `wl-copy` or `xclip`.
 Install with `sudo apt install ./keyparcel_*.deb` on Ubuntu 24.04/Debian 13, or
 `sudo dnf install ./keyparcel-*.rpm` on Fedora 44. Use the candidate for that
 distro. The package manager resolves runtime dependencies and installs both
-executables, the launcher and Bash completion under `/usr`.
+executables, the launcher, application icon and Bash completion under `/usr`.
 
 Remove with `sudo apt remove keyparcel` or `sudo dnf remove keyparcel`. User
 identities/configuration are not package-owned and remain in your home directory.
@@ -56,7 +56,7 @@ Debian 13; `fedora44-x86_64` is for Fedora 44. Install runtime dependencies firs
 
 ```sh
 # Ubuntu 24.04 / Debian 13:
-sudo apt install openssh-client ca-certificates libgtk-4-1 adwaita-icon-theme
+sudo apt install openssh-client ca-certificates libgtk-4-1 adwaita-icon-theme librsvg2-common
 # Fedora 44 instead:
 sudo dnf install openssh-clients ca-certificates gtk4 adwaita-icon-theme
 ```
@@ -70,13 +70,14 @@ tar -xzf keyparcel-VERSION-TARGET.tar.gz -C keyparcel-candidate
 cd keyparcel-candidate
 sudo install -Dm755 usr/bin/keyparcel /usr/local/bin/keyparcel
 sudo install -Dm755 usr/bin/keyparcel-gtk /usr/local/bin/keyparcel-gtk
-sudo install -Dm644 usr/share/applications/keyparcel.desktop /usr/local/share/applications/keyparcel.desktop
+sudo install -Dm644 usr/share/applications/dev.keyparcel.desktop /usr/local/share/applications/dev.keyparcel.desktop
+sudo install -Dm644 usr/share/icons/hicolor/scalable/apps/dev.keyparcel.svg /usr/local/share/icons/hicolor/scalable/apps/dev.keyparcel.svg
 sudo install -Dm644 usr/share/bash-completion/completions/keyparcel /usr/local/share/bash-completion/completions/keyparcel
 sudo install -d /usr/local/share/doc/keyparcel
 sudo install -m644 usr/share/doc/keyparcel/* /usr/local/share/doc/keyparcel/
 ```
 
-The launcher uses the existing Adwaita `mail-send-symbolic` icon. Ensure
+The launcher uses the bundled keyparcel icon. Ensure
 `/usr/local/bin` is on your normal desktop/shell PATH. Avoid installing an archive
 alongside the DEB/RPM: the earlier PATH entry would select which version runs.
 
@@ -84,7 +85,8 @@ To remove an archive installation made with those commands:
 
 ```sh
 sudo rm -- /usr/local/bin/keyparcel /usr/local/bin/keyparcel-gtk \
-  /usr/local/share/applications/keyparcel.desktop \
+  /usr/local/share/applications/dev.keyparcel.desktop \
+  /usr/local/share/icons/hicolor/scalable/apps/dev.keyparcel.svg \
   /usr/local/share/bash-completion/completions/keyparcel \
   /usr/local/share/doc/keyparcel/README.md /usr/local/share/doc/keyparcel/build-info.json \
   /usr/local/share/doc/keyparcel/LICENSE /usr/local/share/doc/keyparcel/NOTICE \

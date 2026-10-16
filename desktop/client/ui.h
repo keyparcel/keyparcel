@@ -3,7 +3,7 @@
 #include <stdint.h>
 
 typedef struct UI UI;
-UI *ui_new(uintptr_t handle);
+UI *ui_new(uintptr_t handle, const char *icon);
 int ui_run(UI *ui);
 void ui_ref(UI *ui);
 void ui_unref(UI *ui);

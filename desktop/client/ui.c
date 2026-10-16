@@ -244,8 +244,9 @@ static gboolean close_window(GtkWindow *window, gpointer data) {
     return TRUE;
 }
 static void present(GApplication *app, gpointer data) { (void)app; gtk_window_present(((UI *)data)->window); }
-UI *ui_new(uintptr_t handle) {
+UI *ui_new(uintptr_t handle, const char *icon) {
     gtk_init();
+    gtk_window_set_default_icon_name("dev.keyparcel");
     GtkCssProvider *style = gtk_css_provider_new();
     gtk_css_provider_load_from_data(style,
         ".keyparcel .brand { font-size: 1.6em; font-weight: 700; }"
@@ -267,7 +268,7 @@ UI *ui_new(uintptr_t handle) {
     ui->fields = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
     ui->inbox_rows = g_hash_table_new_full(g_str_hash,g_str_equal,g_free,NULL);
     ui->device_rows = g_hash_table_new_full(g_str_hash,g_str_equal,g_free,NULL);
-    ui->app = gtk_application_new("dev.keyparcel.desktop", G_APPLICATION_NON_UNIQUE);
+    ui->app = gtk_application_new("dev.keyparcel", G_APPLICATION_NON_UNIQUE);
     GError *error = NULL;
     if (!g_application_register(G_APPLICATION(ui->app), NULL, &error)) {
         g_printerr("GTK initialization: %s\n", error->message); g_clear_error(&error); ui_unref(ui); return NULL;
@@ -281,6 +282,13 @@ UI *ui_new(uintptr_t handle) {
     GtkWidget *header = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_widget_add_css_class(header, "header");
     GtkWidget *brand_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    GBytes *bytes = g_bytes_new(icon, strlen(icon));
+    GIcon *brand_icon = g_bytes_icon_new(bytes);
+    GtkWidget *mark = gtk_image_new_from_gicon(brand_icon);
+    gtk_image_set_pixel_size(GTK_IMAGE(mark), 40);
+    gtk_accessible_update_state(GTK_ACCESSIBLE(mark), GTK_ACCESSIBLE_STATE_HIDDEN, TRUE, -1);
+    gtk_box_append(GTK_BOX(brand_row), mark);
+    g_object_unref(brand_icon); g_bytes_unref(bytes);
     GtkWidget *brand = label("keyparcel"); gtk_widget_add_css_class(brand, "brand");
     gtk_label_set_selectable(GTK_LABEL(brand), FALSE);
     gtk_widget_set_hexpand(brand, TRUE); gtk_box_append(GTK_BOX(brand_row), brand);

@@ -23,6 +23,7 @@ import (
 	"time"
 	"unsafe"
 
+	"keyparcel/assets/branding"
 	"keyparcel/core"
 	"keyparcel/internal/buildinfo"
 	"keyparcel/internal/display"
@@ -737,7 +738,9 @@ func newModel(o options) *model {
 	m := &model{options: o, store: store{path: o.config}, target: o.host, workers: make(chan struct{}, 2)}
 	m.ctx, m.cancel = context.WithCancel(context.Background())
 	m.session.ctx = m.ctx
-	m.ui = C.ui_new(C.uintptr_t(cgo.NewHandle(m)))
+	cstrings([]string{branding.Icon}, func(v []*C.char) {
+		m.ui = C.ui_new(C.uintptr_t(cgo.NewHandle(m)), v[0])
+	})
 	if m.ui != nil {
 		m.set("target", o.host)
 		m.set("identity", "~/.ssh/id_ed25519")

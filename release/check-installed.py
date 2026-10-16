@@ -8,13 +8,18 @@ from pathlib import Path
 import subprocess
 import sys
 import tarfile
+import gi
+
+gi.require_version('GdkPixbuf', '2.0')
+from gi.repository import GdkPixbuf, Gio
 
 assert os.getuid() != 0, 'Installed binaries must run as an ordinary user'
 assert shutil.which('go') is None and shutil.which('gcc') is None, 'Runtime image contains a build toolchain'
 assert not Path('/usr/local/bin/keyparcel').exists(), 'Development CLI must not be available'
 info = json.loads(Path('/candidate/build-info.json').read_text())
 paths = {'usr/bin/keyparcel': 0o755, 'usr/bin/keyparcel-gtk': 0o755,
-         'usr/share/applications/keyparcel.desktop': 0o644,
+         'usr/share/applications/dev.keyparcel.desktop': 0o644,
+         'usr/share/icons/hicolor/scalable/apps/dev.keyparcel.svg': 0o644,
          'usr/share/bash-completion/completions/keyparcel': 0o644,
          'usr/share/doc/keyparcel/build-info.json': 0o644,
          'usr/share/doc/keyparcel/README.md': 0o644,
@@ -43,9 +48,12 @@ readme = Path('/usr/share/doc/keyparcel/README.md').read_text()
 links = re.findall(r'\]\(([^)]+)\)', readme)
 assert links and all(link.startswith('https://github.com/keyparcel/keyparcel/blob/main/') for link in links), 'Installed guide has unusable relative links'
 assert 'sudo install -Dm755' in readme and 'sudo rm -- /usr/local/bin/keyparcel' in readme, 'Archive install/removal commands missing'
-subprocess.run(['desktop-file-validate', '/usr/share/applications/keyparcel.desktop'], check=True)
-assert 'Exec=keyparcel-gtk\n' in Path('/usr/share/applications/keyparcel.desktop').read_text()
-assert list(Path('/usr/share/icons').rglob('mail-send-symbolic.svg')), 'Declared system icon is missing'
+subprocess.run(['desktop-file-validate', '/usr/share/applications/dev.keyparcel.desktop'], check=True)
+launcher = Path('/usr/share/applications/dev.keyparcel.desktop').read_text()
+assert 'Exec=keyparcel-gtk\n' in launcher and 'Icon=dev.keyparcel\n' in launcher
+assert Gio.DesktopAppInfo.new('dev.keyparcel.desktop').get_icon().to_string() == 'dev.keyparcel', 'Launcher icon does not match the GTK application ID'
+icon = GdkPixbuf.Pixbuf.new_from_file('/usr/share/icons/hicolor/scalable/apps/dev.keyparcel.svg')
+assert (icon.get_width(), icon.get_height()) == (320, 320), 'Application SVG icon did not decode at its expected size'
 subprocess.run(['bash', '-c', 'source /usr/share/bash-completion/completions/keyparcel; complete -p keyparcel'], check=True)
 # Real identity and settings in the normal home location survive package removal.
 home = Path.home()
@@ -57,4 +65,4 @@ subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(identit
 subprocess.run(['/usr/bin/keyparcel', 'setup', '--host', 'not-contacted', '--identity', str(identity), '--default'], check=True)
 files = [config, identity, identity.with_suffix('.pub')]
 (home / 'preserved.json').write_text(json.dumps({str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in files}))
-print(f'Installed/archive paths, permissions, version, launcher, system icon and completion verified as uid {os.getuid()}')
+print(f'Installed/archive paths, permissions, version, launcher, application icon and completion verified as uid {os.getuid()}')

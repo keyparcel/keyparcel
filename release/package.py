@@ -35,7 +35,8 @@ with tempfile.TemporaryDirectory() as temporary:
     env['CGO_ENABLED'] = '1'
     subprocess.run(['go', 'build', '-trimpath', '-ldflags', flags, '-o', str(binary / 'keyparcel-gtk'), '.'], cwd='/src/desktop/client', env=env, check=True)
     for source, destination in [('completions/keyparcel.bash', 'usr/share/bash-completion/completions/keyparcel'),
-                                ('release/keyparcel.desktop', 'usr/share/applications/keyparcel.desktop'),
+                                ('release/dev.keyparcel.desktop', 'usr/share/applications/dev.keyparcel.desktop'),
+                                ('assets/branding/app-icon.svg', 'usr/share/icons/hicolor/scalable/apps/dev.keyparcel.svg'),
                                 ('release/INSTALLED.md', 'usr/share/doc/keyparcel/README.md'),
                                 ('release/copyright', 'usr/share/doc/keyparcel/copyright'),
                                 *[(name, 'usr/share/doc/keyparcel/' + name) for name in ('LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.txt')]]:
@@ -62,7 +63,7 @@ with tempfile.TemporaryDirectory() as temporary:
 Version: {pkg_version}-1
 Architecture: amd64
 Maintainer: keyparcel contributors <noreply@keyparcel.invalid>
-Depends: {deps}, openssh-client, ca-certificates, adwaita-icon-theme
+Depends: {deps}, openssh-client, ca-certificates, adwaita-icon-theme, librsvg2-common
 Description: Encrypted text and file exchange over SSH
  CLI and GTK client for asynchronous verified transfers through SSH/SFTP.
 ''')
@@ -90,7 +91,8 @@ cp -a {stage}/usr %{{buildroot}}/
 %defattr(-,root,root,-)
 /usr/bin/keyparcel
 /usr/bin/keyparcel-gtk
-/usr/share/applications/keyparcel.desktop
+/usr/share/applications/dev.keyparcel.desktop
+/usr/share/icons/hicolor/scalable/apps/dev.keyparcel.svg
 /usr/share/bash-completion/completions/keyparcel
 /usr/share/doc/keyparcel
 ''')

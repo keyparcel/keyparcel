@@ -3,6 +3,6 @@ Type=Application
 Name=keyparcel
 Comment=Send encrypted text and files over SSH
 Exec=keyparcel-gtk
-Icon=mail-send-symbolic
+Icon=dev.keyparcel
 Terminal=false
 Categories=Network;FileTransfer;

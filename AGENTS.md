@@ -1,5 +1,11 @@
 # Repository guidance
 
+## Branding
+
+- Write the product name as `keyparcel`, including headings and sentence starts
+- Use the shared artwork in `assets/branding`; regenerate exports after changing
+  its SVG masters, as described in that directory's README
+
 ## Commits
 
 - Commit only when explicitly requested.
