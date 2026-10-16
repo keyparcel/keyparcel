@@ -59,6 +59,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     var selectedFile by mutableStateOf<SelectedDocument?>(null); private set
     var pendingSave by mutableStateOf<FileSaveRequest?>(null); private set
     var savedFile by mutableStateOf<SavedFile?>(null); private set
+    var pendingDelete by mutableStateOf<InboxDeleteRequest?>(null); private set
     var progress by mutableStateOf<String?>(null); private set
     private val mainHandler = Handler(Looper.getMainLooper())
     private data class Connected(val host: Host, val client: Client, val epoch: Long)
@@ -162,6 +163,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         draft = draft.reconcile(settings, updated)
         if (settings != updated) {
             // Old verification results must never survive a trust-context change.
+            pendingDelete = null
             pollJob?.cancel()
             retireConnection()
             inbox = emptyList(); rejected = emptyList(); devices = emptyList()
@@ -373,6 +375,39 @@ class AppModel(application: Application) : AndroidViewModel(application) {
 
     private fun reportProgress(message: String) { mainHandler.post { if (busy) progress = message } }
 
+    fun beginInboxDelete(item: InboxItem) {
+        if (busy || pendingDelete != null) return
+        if (settings.host?.trusted != true || inbox.none { it.id == item.id }) {
+            error = "The inbox or server changed; select the transfer again"
+            return
+        }
+        pendingDelete = InboxDeleteRequest(item.id, settings)
+    }
+
+    fun cancelInboxDelete() { if (!busy) pendingDelete = null }
+
+    fun confirmInboxDelete() {
+        if (busy) return
+        val request = pendingDelete ?: return
+        pendingDelete = null
+        if (!request.matches(settings, inbox)) {
+            error = "The inbox or server changed; select the transfer again"
+            return
+        }
+        work({
+            withClient(requireNotNull(request.settings.host)) {
+                require(request.matches(settings, inbox)) { "The inbox or approvals changed; select the transfer again" }
+                it.delete(request.id)
+            }
+        }) {
+            // A completed request must not edit a different server's same-ID item.
+            if (request.settings == settings) {
+                inbox = inbox.filterNot { it.id == request.id }
+                notice = "Deleted remote inbox copy; saved local files kept"
+            }
+        }
+    }
+
     fun removeReceived() {
         val id = viewed?.id ?: savedFile?.id ?: return
         val host = viewed?.host ?: savedFile?.host ?: return
@@ -388,7 +423,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun showPage(target: Page) {
-        pendingHost = null; pendingSave = null
+        pendingHost = null; pendingSave = null; pendingDelete = null
         if (target != Page.Text) viewed = null
         if (target != Page.File) savedFile = null
         navigation = navigation.open(target)

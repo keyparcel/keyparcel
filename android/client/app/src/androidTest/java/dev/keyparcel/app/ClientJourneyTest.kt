@@ -506,6 +506,15 @@ class ClientJourneyTest {
 
     @Test fun removalFailure() {
         refresh()
+        val model = ViewModelProvider(compose.activity)[AppModel::class.java]
+        for (id in listOf(arg("text_id"), arg("file_id"))) {
+            compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("delete-$id"))
+            click("delete-$id"); click("confirm-inbox-delete"); finished()
+            compose.onNodeWithTag("error").assertExists()
+            check(model.inbox.any { it.id == id }) { "Failed inbox delete lost the parcel" }
+            compose.onNodeWithTag("delete-$id").assertIsEnabled()
+        }
+
         receive(arg("text_id"))
         click("remove-close"); finished()
         compose.onNodeWithTag("error").assertExists()
@@ -519,6 +528,43 @@ class ClientJourneyTest {
         compose.onNodeWithTag("saved-file").assertExists()
         compose.onNodeWithTag("error").assertExists()
         compose.onNodeWithTag("remove-close").assertIsEnabled()
+    }
+
+    @Test fun inboxDeletion() {
+        refresh()
+        val model = ViewModelProvider(compose.activity)[AppModel::class.java]
+        val unrelated = arg("file_id")
+        val first = arg("delete_text_id")
+        val peer = model.devices.first { it.key == model.settings.peers["laptop"] }
+        compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("delete-$first"))
+        click("delete-$first")
+        // A trust edit while confirmation is open must invalidate the request.
+        compose.runOnIdle { model.forget("laptop") }
+        finished()
+        compose.onNodeWithTag("confirm-inbox-delete").assertDoesNotExist()
+        compose.runOnIdle { model.confirmInboxDelete() }
+        compose.runOnIdle { model.approve(peer, "laptop") }
+        finished(); refresh()
+        check(model.inbox.any { it.id == first }) { "Trust change deleted the pending parcel" }
+        for (id in listOf(first, arg("delete_file_id"))) {
+            compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("delete-$id"))
+            click("delete-$id")
+            compose.onNodeWithText("Delete this device's remote inbox copy without downloading it? Other recipients' copies and saved local files remain untouched.").assertExists()
+            click("cancel-inbox-delete")
+            check(model.inbox.any { it.id == id }) { "Cancel removed the parcel" }
+            click("delete-$id")
+            // Compose can finish the click before the native dialog gains focus.
+            compose.waitUntil(30_000) {
+                pickerNode { it.text?.toString() == "Delete inbox copy?" } != null
+            }
+            InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            compose.waitUntil(30_000) { model.pendingDelete == null }
+            check(model.inbox.any { it.id == id }) { "Back removed the parcel" }
+            click("delete-$id"); click("confirm-inbox-delete"); finished()
+            compose.onNodeWithTag("notice").assertTextEquals("Deleted remote inbox copy; saved local files kept")
+            check(model.inbox.none { it.id == id }) { "Successful delete retained the parcel" }
+            check(model.inbox.any { it.id == unrelated }) { "Delete removed an unrelated parcel" }
+        }
     }
 
     @Test fun restartAndRemove() {

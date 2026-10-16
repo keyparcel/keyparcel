@@ -42,6 +42,12 @@ Receive verifies the whole package before showing text or writing a destination.
 Select an existing writable document and confirm the system overwrite prompt to
 replace it; typing an existing name may instead create a numbered copy.
 
+Use **Delete** on an Inbox item to remove this device's remote copy without
+receiving or saving it. Confirm the deletion, or cancel to keep it. Other
+recipients' copies and saved local files are untouched. A failed deletion keeps
+the item available for retry. **Remove & close** after receiving/saving still
+works as before.
+
 Receiving or saving **keeps the remote transfer**. **Remove & close** removes it
 explicitly; Back, picker cancellation, app closure and failed removal retain it.
 Failures restore controls so you can retry. A failed provider write/close may leave

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -220,4 +221,23 @@ func sortedKeys[V any](values map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// Confirmation belongs to one inbox and approval snapshot, even for identical IDs.
+type pendingDelete struct {
+	ID      string
+	Profile profile
+}
+
+func (p pendingDelete) matches(current profile) bool {
+	return p.Profile.Target == current.Target && p.Profile.Host == current.Host &&
+		p.Profile.Config != nil && current.Config != nil && reflect.DeepEqual(p.Profile.Config.Peers, current.Config.Peers)
+}
+func containsItem(items []core.Item, id string) bool {
+	for _, item := range items {
+		if item.ID == id {
+			return true
+		}
+	}
+	return false
 }

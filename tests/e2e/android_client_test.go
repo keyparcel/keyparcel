@@ -207,6 +207,14 @@ func TestAndroidTextClient(t *testing.T) {
 	w.assertExists(remote(textID), false)
 	w.assertExists(remote(newID), false)
 	w.assertExists(remote(fileID), true)
+	deleteTextID := send([]byte("unwanted text"), "--stdin")
+	deleteFileID := send(nil, "--file", file)
+	phase("inboxDeletion", "delete_text_id", deleteTextID, "delete_file_id", deleteFileID, "file_id", fileID)
+	w.assertExists(remote(deleteTextID), false)
+	w.assertExists(remote(deleteFileID), false)
+	w.assertExists(remote(fileID), true)
+	// Inbox deletion must not touch an earlier provider-saved local file.
+	equalBytes(t, fileBytes, adb("exec-out", "run-as", app, "cat", "files/document-fixtures/removal-retry.bin"))
 	func() {
 		out, diag, err := container(w.ctx, nil, "pause", w.id)
 		if err != nil {
