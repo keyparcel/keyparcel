@@ -47,3 +47,7 @@ void ui_rows_end(UI *ui);
 void ui_watch(UI *ui);
 
 void ui_confirm_delete(UI *ui, const char *id, const char *message);
+
+void ui_add_recipient(UI *ui, const char **names, int count);
+void ui_recipient_token(UI *ui, const char *name, const char *title);
+void ui_send_state(UI *ui, int count, int locked, int retry, int has_file);

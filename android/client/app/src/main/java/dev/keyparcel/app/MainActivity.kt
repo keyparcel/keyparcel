@@ -369,45 +369,72 @@ private fun DevicesScreen(model: AppModel) {
 @Composable
 private fun SendScreen(model: AppModel, chooseFile: () -> Unit) {
     val (text, recipient, fileMode) = model.draft
+    val editable = !model.busy && !model.sendLocked
+    var adding by remember(model.settings, model.publicKey) { mutableStateOf(false) }
+    val candidates = availableRecipients(model.draft, model.settings, model.publicKey)
+    val sendLabel = if (model.draft.recipients.size > 1) "Send to ${model.draft.recipients.size} devices" else "Send"
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(if (fileMode) "Send file" else "Send text", style = MaterialTheme.typography.titleLarge)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                FilterChip(selected = !fileMode, onClick = { model.draft = model.draft.copy(fileMode = false) }, enabled = !model.busy,
+                FilterChip(selected = !fileMode, onClick = { model.draft = model.draft.copy(fileMode = false) }, enabled = editable,
                     label = { Text("Text") }, modifier = Modifier.testTag("send-text-mode"))
-                FilterChip(selected = fileMode, onClick = { model.draft = model.draft.copy(fileMode = true) }, enabled = !model.busy,
+                FilterChip(selected = fileMode, onClick = { model.draft = model.draft.copy(fileMode = true) }, enabled = editable,
                     label = { Text("File") }, modifier = Modifier.testTag("send-file-mode"))
             }
             if (model.settings.host?.trusted != true) Text("Connect a server in Settings before sending.")
-            OutlinedButton(onClick = { model.draft = model.draft.copy(recipient = "self") }, enabled = !model.busy,
+            OutlinedButton(onClick = { model.draft = model.draft.select("self") }, enabled = editable,
                 modifier = Modifier.testTag("recipient-self")) { Text(if (recipient == "self") "✓ This device" else "This device") }
             if (model.settings.peers.isEmpty()) Text("Send to this device, or approve another device in Devices.")
             model.settings.peers.keys.sorted().forEach { name ->
-                OutlinedButton(onClick = { model.draft = model.draft.copy(recipient = name) }, enabled = !model.busy,
+                OutlinedButton(onClick = { model.draft = model.draft.select(name) }, enabled = editable,
                     modifier = Modifier.testTag("recipient-$name")) { Text(if (recipient == name) "✓ To $name" else "To $name") }
             }
+            TextButton(onClick = { adding = true }, enabled = editable && candidates.isNotEmpty(),
+                modifier = Modifier.testTag("add-recipient")) { Text("Add recipient") }
+            if (model.draft.additionalRecipients.isNotEmpty()) {
+                model.draft.recipients.forEach { name ->
+                    InputChip(selected = true, onClick = { model.draft = model.draft.remove(name) }, enabled = editable,
+                        label = { Text("${recipientLabel(name)} ×") },
+                        modifier = Modifier.testTag("remove-recipient-$name").semantics { contentDescription = "Remove recipient ${recipientLabel(name)}" })
+                }
+            }
             if (fileMode) {
-                OutlinedButton(onClick = chooseFile, enabled = !model.busy,
+                OutlinedButton(onClick = chooseFile, enabled = editable,
                     modifier = Modifier.testTag("choose-file")) { Text("Choose file") }
                 model.selectedFile?.let { file ->
                     Text(file.name, modifier = Modifier.testTag("selected-filename"))
                     Text(file.size?.let { Bridge.formatSize(it) } ?: "Size unknown", modifier = Modifier.testTag("selected-size"))
                 }
             } else {
-                OutlinedTextField(value = text, onValueChange = { model.draft = model.draft.copy(text = it) }, enabled = !model.busy,
+                OutlinedTextField(value = text, onValueChange = { model.draft = model.draft.copy(text = it) }, enabled = editable,
                     label = { Text("Message") }, minLines = 4, modifier = Modifier.fillMaxWidth().testTag("message"))
+            }
+            model.sendReport?.let { report ->
+                Text("${model.sendReportHost}\n${report.summary()}", modifier = Modifier.testTag("send-report"))
+            }
+            if (model.sendLocked) {
+                Button(onClick = model::retrySend, enabled = !model.busy && model.canRetrySend,
+                    modifier = Modifier.testTag("retry-send")) { Text("Retry failed recipients") }
+                TextButton(onClick = model::editSend, enabled = !model.busy,
+                    modifier = Modifier.testTag("edit-send")) { Text("Edit draft") }
             }
             TextButton(onClick = model::discardDraft, enabled = !model.busy,
                 modifier = Modifier.testTag("discard-draft")) { Text("Discard draft") }
         }
         if (fileMode) {
-            Button(onClick = { model.sendFile(recipient) }, enabled = !model.busy && model.settings.host?.trusted == true && recipient.isNotEmpty() && model.selectedFile != null,
-                modifier = Modifier.testTag("send-file")) { Text("Send file") }
+            Button(onClick = { model.sendFile(recipient) }, enabled = editable && model.settings.host?.trusted == true && recipient.isNotEmpty() && model.selectedFile != null,
+                modifier = Modifier.testTag("send-file")) { Text(sendLabel) }
         } else {
-            Button(onClick = { model.send(recipient, text) }, enabled = !model.busy && model.settings.host?.trusted == true && recipient.isNotEmpty() && text.isNotEmpty(),
-                modifier = Modifier.testTag("send-message")) { Text("Send") }
+            Button(onClick = { model.send(recipient, text) }, enabled = editable && model.settings.host?.trusted == true && recipient.isNotEmpty() && text.isNotEmpty(),
+                modifier = Modifier.testTag("send-message")) { Text(sendLabel) }
         }
     }
+    if (adding) AlertDialog(onDismissRequest = { adding = false }, title = { Text("Add recipient") },
+        text = { Column(Modifier.verticalScroll(rememberScrollState())) { candidates.forEach { name ->
+            TextButton(onClick = { model.draft = model.draft.add(name); adding = false }, enabled = editable,
+                modifier = Modifier.testTag("add-recipient-$name")) { Text(recipientLabel(name)) }
+        } } }, confirmButton = {}, dismissButton = { TextButton(onClick = { adding = false }) { Text("Cancel") } })
 }
 
 @Composable

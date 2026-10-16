@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -293,28 +294,11 @@ func (c *Client) SendFile(recipient, file string) (string, error) {
 
 // SendNamedFile preserves a document's display name independently of its staging path.
 func (c *Client) SendNamedFile(recipient, file, name string) (string, error) {
-	if !core.SafeFilename(name) {
-		return "", errors.New("invalid filename")
-	}
-	info, err := os.Stat(file)
-	if err != nil {
-		return "", err
-	}
-	if !info.Mode().IsRegular() {
-		return "", errors.New("file input must be a regular file")
-	}
-	f, err := os.Open(file)
+	f, err := openSendFile(file, name)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
-	info, err = f.Stat()
-	if err != nil {
-		return "", err
-	}
-	if !info.Mode().IsRegular() {
-		return "", errors.New("file input must be a regular file")
-	}
 	result, err := clientRequest(c, func(s *core.Session) ([]core.Delivery, error) {
 		return s.Send(c.config, []string{recipient}, "file", &name, f)
 	})
@@ -322,6 +306,64 @@ func (c *Client) SendNamedFile(recipient, file, name string) (string, error) {
 		return "", requestError(c.ctx, err)
 	}
 	return result[0].ID, nil
+}
+
+// Batch sends preserve every per-recipient outcome, including partial failures.
+// A preflight error has no deliveries; callers must not infer success from JSON alone.
+func (c *Client) SendTextTo(recipientsJSON, text string) (string, error) {
+	return c.sendTo(recipientsJSON, "text", nil, strings.NewReader(text))
+}
+func (c *Client) SendNamedFileTo(recipientsJSON, file, name string) (string, error) {
+	f, err := openSendFile(file, name)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	return c.sendTo(recipientsJSON, "file", &name, f)
+}
+func openSendFile(file, name string) (*os.File, error) {
+	if !core.SafeFilename(name) {
+		return nil, errors.New("invalid filename")
+	}
+	info, err := os.Stat(file)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("file input must be a regular file")
+	}
+	f, err := os.Open(file)
+	if err != nil {
+		return nil, err
+	}
+	info, err = f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		f.Close()
+		return nil, errors.New("file input must be a regular file")
+	}
+	return f, nil
+}
+func (c *Client) sendTo(recipientsJSON, kind string, filename *string, input io.Reader) (string, error) {
+	var recipients []string
+	if err := json.Unmarshal([]byte(recipientsJSON), &recipients); err != nil {
+		return "", err
+	}
+	result, err := clientRequest(c, func(s *core.Session) ([]core.Delivery, error) {
+		return s.Send(c.config, recipients, kind, filename, input)
+	})
+	report := struct {
+		Deliveries []core.Delivery `json:"deliveries"`
+		Error      string          `json:"error,omitempty"`
+	}{Deliveries: result}
+	if err != nil {
+		report.Error = err.Error()
+	}
+	data, marshalErr := json.Marshal(report)
+	return string(data), marshalErr
 }
 
 // Delivery consumes an already-verified app-private staging file during Deliver.

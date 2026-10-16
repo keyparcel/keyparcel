@@ -373,7 +373,9 @@ func RunWithConnector(ctx context.Context, args []string, in io.Reader, out, dia
 		}
 		results, e := s.Send(cfg, to, kind, filename, input)
 		for _, d := range results {
-			if d.Error != "" {
+			if d.Unconfirmed {
+				fmt.Fprintf(diag, "%s: delivery unconfirmed; check the recipient before retrying: %s\n", escape(d.Recipient), escape(d.Error))
+			} else if d.Error != "" {
 				fmt.Fprintf(diag, "%s: delivery failed: %s\n", escape(d.Recipient), escape(d.Error))
 			} else {
 				fmt.Fprintf(out, "%s: stored %s\n", escape(d.Recipient), d.ID)

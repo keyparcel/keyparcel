@@ -306,7 +306,73 @@ func TestAndroidTextClient(t *testing.T) {
 		}
 		equalBytes(t, reply.data, got)
 	}
-	for _, name := range []string{"setup", "server-approval", "host-key-changed", "inbox", "inbox-details", "settings-simple", "peer-approval", "send-draft", "received", "sent", "removal-error", "removed", "timeout", "received-copy", "clipboard-unavailable", "send-file", "saved-file"} {
+	// Exercise failed-only GUI retries using the existing phone/CLI fixture.
+	peerInbox := filepath.Dir(w.remote(w.alice, strings.Repeat("0", 32)))
+	beforeOwn := strings.Fields(string(w.admin("ls", "-1", inboxDir)))
+	beforePeer := strings.Fields(string(w.admin("ls", "-1", peerInbox)))
+	for _, kind := range []string{"text", "file"} {
+		for _, stage := range []string{"prepare", "retry"} {
+			adb("shell", "run-as", app, "rm", "-f", "cache/multi-"+kind+"-"+stage+"-ready", "cache/multi-"+kind+"-"+stage+"-go")
+		}
+	}
+	multi := phaseWhile("multipleRecipients", func(ctx context.Context) error {
+		defer func() {
+			cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			container(cleanup, nil, "exec", w.id, "chmod", "700", peerInbox)
+		}()
+		for _, kind := range []string{"text", "file"} {
+			for _, stage := range []string{"prepare", "retry"} {
+				marker := "cache/multi-" + kind + "-" + stage
+				for {
+					_, _, err := command(ctx, nil, filepath.Join(sdk, "platform-tools", "adb"), "-s", serial, "shell", "run-as", app, "test", "-f", marker+"-ready")
+					if err == nil {
+						break
+					}
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-time.After(250 * time.Millisecond):
+					}
+				}
+				mode := "500"
+				if stage == "retry" {
+					mode = "700"
+				}
+				if out, diag, err := container(ctx, nil, "exec", w.id, "chmod", mode, peerInbox); err != nil {
+					return fmt.Errorf("multi-recipient permission fixture: %w: %s%s", err, out, diag)
+				}
+				if _, _, err := command(ctx, nil, filepath.Join(sdk, "platform-tools", "adb"), "-s", serial, "shell", "run-as", app, "touch", marker+"-go"); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	if after := strings.Fields(string(w.admin("ls", "-1", inboxDir))); len(after) != len(beforeOwn)+2 {
+		t.Fatalf("Multi-recipient retry duplicated or omitted self copies: before %v after %v", beforeOwn, after)
+	}
+	if after := strings.Fields(string(w.admin("ls", "-1", peerInbox))); len(after) != len(beforePeer)+2 {
+		t.Fatalf("Multi-recipient retry duplicated or omitted peer copies: before %v after %v", beforePeer, after)
+	}
+	for _, kind := range []string{"text", "file"} {
+		w.assertExists(remote(publicValue(multi, kind+"_self_id")), true)
+		peerID := publicValue(multi, kind+"_peer_id")
+		w.assertExists(w.remote(w.alice, peerID), true)
+		if kind == "text" {
+			equalBytes(t, []byte("multi text 世界\n"), w.ok(w.alice, nil, "receive", peerID, "--stdout"))
+		} else {
+			destination := filepath.Join(w.alice.dir, "multi.bin")
+			w.ok(w.alice, nil, "receive", peerID, "--save-to", destination)
+			got, err := os.ReadFile(destination)
+			if err != nil {
+				t.Fatal(err)
+			}
+			equalBytes(t, []byte{0, 1, 2, 255, 42}, got)
+		}
+	}
+
+	for _, name := range []string{"setup", "server-approval", "host-key-changed", "inbox", "inbox-details", "settings-simple", "peer-approval", "send-draft", "received", "sent", "removal-error", "removed", "timeout", "received-copy", "clipboard-unavailable", "send-file", "saved-file", "send-multiple-text", "send-multiple-file"} {
 		out := adb("exec-out", "run-as", app, "cat", "files/"+name+".png")
 		if len(out) < 8 || string(out[:8]) != "\x89PNG\r\n\x1a\n" {
 			t.Fatalf("Invalid %s screenshot", name)

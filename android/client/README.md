@@ -33,6 +33,13 @@ cancellation within the running app. Successful sends or **Discard draft** clear
 the draft. Host/approval changes clear affected recipient selections; drafts are
 not saved across app restarts.
 
+Choose one recipient as usual, or use **Add recipient** and removable tokens for
+more devices. **Send to N devices** sends the text/file to that selection once.
+Partial results distinguish delivered, failed and unconfirmed copies. **Retry
+failed recipients** retries only confirmed failures with the original bytes;
+check unconfirmed recipients' inboxes before starting another send. **Edit draft**
+keeps the content and clears the selection; it does not undo previous deliveries.
+
 For files, **Send → File → Choose file** opens the system document picker. The
 original display name is preserved; binary, empty and unknown-size documents are
 supported without broad storage permission.
