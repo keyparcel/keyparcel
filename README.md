@@ -6,28 +6,28 @@
 [![CI](https://github.com/keyparcel/keyparcel/actions/workflows/ci.yml/badge.svg)](https://github.com/keyparcel/keyparcel/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-Send text and files between your devices through an SSH account you already
-control. keyparcel encrypts transfers for the receiving devices and signs them
-with the sender's key. Your server stores the encrypted packages for later
-retrieval; it needs SSH/SFTP, not a keyparcel service.
+Share text and files between your devices through your own SSH server.
 
-Use it to move a message, command, photo or document between a phone and a Linux
-computer without setting up another messaging service. Devices need not be online
-at the same time.
+- **Your infrastructure:** an SSH account you control; no third-party relay or extra
+  server software.
+- **Across networks:** no shared LAN required, just an SSH server you can reach.
+- **Explicit sharing:** choose what to send and who receives it. Your clipboard isn’t
+  continuously monitored or synchronized.
+- **Private parcels:** content and metadata, including original filenames, are encrypted
+  before reaching the server.
+- **Simple clients:** Android, Linux desktop and CLI.
 
-## Clients
+## How it works
 
-| Client | What it does |
-| --- | --- |
-| [Android](android/client/README.md) | Text and files, system document pickers, device approval and automatic inbox updates while open |
-| [Linux desktop](desktop/client/README.md) | GTK interface for text and files, shared CLI settings, device approval and automatic inbox updates |
-| [CLI](docs/usage.md) | Scriptable send/receive, multiple hosts, clipboard copying, inbox watch and Bash completion |
-
-The CLI is exercised on Linux; limited native Intel macOS validation also covers
-its clipboard support. Android runtime tests use x86_64 emulators; ARM64 builds
-are checked statically, with physical-device execution still deferred. Linux
-DEB/RPM/archive and unsigned Android candidate builds are available from source;
-signed releases and publication are not yet provided. This is development software.
+- Your devices connect to the **same user account** on your SSH server, using it as an
+  inbox for end-to-end encrypted parcels.
+- Each parcel contains text—such as clipboard content—or a single file.
+- Parcels are stored under `~/.local/share/keyparcel` **on the server** by default.
+- [age](https://age-encryption.org/) encrypts parcels for recipients’ SSH public keys;
+  the sender’s SSH key signs them.
+- Parcels appear on the server as `<random-id>.age`. The server can observe encrypted
+  sizes, timing and recipient inboxes.
+- Only the clients need keyparcel installed. The server needs ordinary SSH/SFTP.
 
 ## Quick start
 
@@ -50,6 +50,20 @@ other's fingerprints before sending. See [installation and enrollment](docs/inst
 GUI clients keep received transfers until you explicitly remove them. CLI receive
 removes the recipient's remote copy after successful delivery unless you use
 `--keep`. See [usage](docs/usage.md) for saving, copying and deletion behavior.
+
+## Clients
+
+| Client | What it does |
+| --- | --- |
+| [Android](android/client/README.md) | Text and files, system document pickers, device approval and automatic inbox updates while open |
+| [Linux desktop](desktop/client/README.md) | GTK interface for text and files, shared CLI settings, device approval and automatic inbox updates |
+| [CLI](docs/usage.md) | Scriptable send/receive, multiple hosts, clipboard copying, inbox watch and Bash completion |
+
+The CLI is exercised on Linux; limited native Intel macOS validation also covers
+its clipboard support. Android runtime tests use x86_64 emulators; ARM64 builds
+are checked statically, with physical-device execution still deferred. Linux
+DEB/RPM/archive and unsigned Android candidate builds are available from source;
+signed releases and publication are not yet provided. This is development software.
 
 ## Documentation
 
