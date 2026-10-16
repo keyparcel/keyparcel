@@ -438,8 +438,8 @@ try:
     control(app, "Not verified: " + stale, Atspi.Role.LABEL)
     click("Delete", dialog)
     status("The inbox or server changed; select the transfer again")
-    assert stale in ids("desktop"), "Stale confirmation deleted a parcel after approval removal"
     fixture.cli("desktop", "trust", fixture.fingerprint("peer"), "--name", "bob")
+    assert stale in ids("desktop"), "Stale confirmation deleted a parcel after approval removal"
     control(app, "Delete transfer " + stale)
     fixture.cli("desktop", "delete", stale)
     for unwanted in [peer_send("unwanted text"), peer_send(file=unwanted_file)]:
