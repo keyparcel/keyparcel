@@ -6,6 +6,12 @@
 - Use the shared artwork in `assets/branding`; regenerate exports after changing
   its SVG masters, as described in that directory's README
 
+## Pull requests
+
+- Prefer a few concise bullets describing the core changes and motivation
+- Omit routine validation details unless unusual risks, limitations or special
+  testing matter to the reviewer
+
 ## Commits
 
 - Commit only when explicitly requested.
