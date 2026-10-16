@@ -70,6 +70,7 @@ type model struct {
 	forget                            *core.Device
 	deleteInbox                       *pendingDelete
 	addingRecipient                   *profile
+	recipient                         string
 	extraRecipients                   []string
 	sending                           *sendAttempt
 }
@@ -241,7 +242,7 @@ func (m *model) applyProfile(p profile) {
 		m.retryAt = time.Time{}
 		m.syncStatus("Loading", "Refreshing after connection or approval changes")
 	}
-	recipient := retainedRecipient(m.get("recipient"), m.target, m.host, m.peers, p)
+	recipient := retainedRecipient(m.recipient, m.target, m.host, m.peers, p)
 	for _, name := range m.extraRecipients {
 		if retainedRecipient(name, m.target, m.host, m.peers, p) == "" {
 			recipient = ""
@@ -278,13 +279,7 @@ func (m *model) applyProfile(p profile) {
 	m.set("active-host", "Host: "+p.Target)
 	m.set("public-key", p.Public)
 	m.set("identity-fingerprint", p.Fingerprint)
-	m.clear("recipient")
-	cstrings([]string{""}, func(v []*C.char) { C.ui_recipients(m.ui, v[0]) })
-	cstrings([]string{"self"}, func(v []*C.char) { C.ui_recipients(m.ui, v[0]) })
-	for _, name := range sortedKeys(p.Config.Peers) {
-		cstrings([]string{name}, func(v []*C.char) { C.ui_recipients(m.ui, v[0]) })
-	}
-	cstrings([]string{recipient}, func(v []*C.char) { C.ui_select_recipient(m.ui, v[0]) })
+	m.recipient = recipient
 	m.set("ssh-config", m.options.sshConfig)
 	m.drawSend()
 }
@@ -488,6 +483,7 @@ func (m *model) event(action, arg, value string) {
 			m.message("File selected")
 		})
 	case "discard-draft":
+		m.recipient = ""
 		m.clearSendAttempt()
 		m.extraRecipients = nil
 		m.set("send-report", "")
@@ -497,18 +493,11 @@ func (m *model) event(action, arg, value string) {
 		C.ui_send_ready(m.ui, 0)
 		m.drawSend()
 		m.message("Draft discarded")
-	case "recipient-changed":
-		primary := m.get("recipient")
-		kept := m.extraRecipients[:0]
-		for _, name := range m.extraRecipients {
-			if name != primary {
-				kept = append(kept, name)
-			}
-		}
-		m.extraRecipients = kept
-		m.drawSend()
 	case "add-recipient-request":
 		m.chooseRecipient()
+	case "recipient-cancel":
+		m.addingRecipient = nil
+		m.message("Recipient selection cancelled")
 	case "add-recipient":
 		m.addRecipient(value)
 	case "remove-recipient":
@@ -518,7 +507,7 @@ func (m *model) event(action, arg, value string) {
 	case "edit-send":
 		m.clearSendAttempt()
 		m.extraRecipients = nil
-		cstrings([]string{""}, func(v []*C.char) { C.ui_select_recipient(m.ui, v[0]) })
+		m.recipient = ""
 		m.set("send-report", "")
 		m.drawSend()
 	case "send-text", "send-file":

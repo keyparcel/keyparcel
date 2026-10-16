@@ -366,6 +366,7 @@ private fun DevicesScreen(model: AppModel) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SendScreen(model: AppModel, chooseFile: () -> Unit) {
     val (text, recipient, fileMode) = model.draft
@@ -383,20 +384,15 @@ private fun SendScreen(model: AppModel, chooseFile: () -> Unit) {
                     label = { Text("File") }, modifier = Modifier.testTag("send-file-mode"))
             }
             if (model.settings.host?.trusted != true) Text("Connect a server in Settings before sending.")
-            OutlinedButton(onClick = { model.draft = model.draft.select("self") }, enabled = editable,
-                modifier = Modifier.testTag("recipient-self")) { Text(if (recipient == "self") "✓ This device" else "This device") }
-            if (model.settings.peers.isEmpty()) Text("Send to this device, or approve another device in Devices.")
-            model.settings.peers.keys.sorted().forEach { name ->
-                OutlinedButton(onClick = { model.draft = model.draft.select(name) }, enabled = editable,
-                    modifier = Modifier.testTag("recipient-$name")) { Text(if (recipient == name) "✓ To $name" else "To $name") }
-            }
-            TextButton(onClick = { adding = true }, enabled = editable && candidates.isNotEmpty(),
-                modifier = Modifier.testTag("add-recipient")) { Text("Add recipient") }
-            if (model.draft.additionalRecipients.isNotEmpty()) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 model.draft.recipients.forEach { name ->
                     InputChip(selected = true, onClick = { model.draft = model.draft.remove(name) }, enabled = editable,
                         label = { Text("${recipientLabel(name)} ×") },
                         modifier = Modifier.testTag("remove-recipient-$name").semantics { contentDescription = "Remove recipient ${recipientLabel(name)}" })
+                }
+                TextButton(onClick = { adding = true }, enabled = editable && candidates.isNotEmpty(),
+                    modifier = Modifier.testTag("add-recipient")) {
+                    Text(if (model.draft.recipients.isEmpty()) "Choose recipient…" else "+ Add another")
                 }
             }
             if (fileMode) {
@@ -411,7 +407,7 @@ private fun SendScreen(model: AppModel, chooseFile: () -> Unit) {
                     label = { Text("Message") }, minLines = 4, modifier = Modifier.fillMaxWidth().testTag("message"))
             }
             model.sendReport?.let { report ->
-                Text("${model.sendReportHost}\n${report.summary()}", modifier = Modifier.testTag("send-report"))
+                Text(report.summary(), modifier = Modifier.testTag("send-report"))
             }
             if (model.sendLocked) {
                 Button(onClick = model::retrySend, enabled = !model.busy && model.canRetrySend,
@@ -430,7 +426,7 @@ private fun SendScreen(model: AppModel, chooseFile: () -> Unit) {
                 modifier = Modifier.testTag("send-message")) { Text(sendLabel) }
         }
     }
-    if (adding) AlertDialog(onDismissRequest = { adding = false }, title = { Text("Add recipient") },
+    if (adding) AlertDialog(onDismissRequest = { adding = false }, title = { Text("Choose recipient") },
         text = { Column(Modifier.verticalScroll(rememberScrollState())) { candidates.forEach { name ->
             TextButton(onClick = { model.draft = model.draft.add(name); adding = false }, enabled = editable,
                 modifier = Modifier.testTag("add-recipient-$name")) { Text(recipientLabel(name)) }

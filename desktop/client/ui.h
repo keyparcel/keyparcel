@@ -21,7 +21,6 @@ char *ui_selection(UI *ui);
 void ui_clear(UI *ui, const char *name);
 void ui_item(UI *ui, const char *id, const char *title, const char *detail, int file);
 void ui_device(UI *ui, const char *fp, const char *detail, int supported, int trusted, int self);
-void ui_recipients(UI *ui, const char *name);
 void ui_host(UI *ui, const char *name);
 void ui_view(UI *ui, const char *text, const char *notice);
 void ui_clear_results(UI *ui);
@@ -34,7 +33,6 @@ void ui_cancel_picker(UI *ui);
 int ui_picker_pending(UI *ui);
 
 void ui_details(UI *ui, const char *id);
-void ui_select_recipient(UI *ui, const char *name);
 void ui_send_ready(UI *ui, int has_file);
 void ui_clear_draft(UI *ui, int file);
 
@@ -50,4 +48,4 @@ void ui_confirm_delete(UI *ui, const char *id, const char *message);
 
 void ui_add_recipient(UI *ui, const char **names, int count);
 void ui_recipient_token(UI *ui, const char *name, const char *title);
-void ui_send_state(UI *ui, int count, int locked, int retry, int has_file);
+void ui_send_state(UI *ui, int count, int locked, int retry, int has_file, int can_add);

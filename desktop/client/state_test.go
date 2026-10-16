@@ -15,6 +15,11 @@ func TestRecipientBelongsToHostAndApprovedKey(t *testing.T) {
 	if got := retainedRecipient("self", "inbox", host, peers, p); got != "self" {
 		t.Fatalf("navigation lost this device: %q", got)
 	}
+	unrelated := p
+	unrelated.Config = &core.Config{Peers: map[string]string{"bob": "key", "other": "other-key"}}
+	if got := retainedRecipient("bob", "inbox", host, peers, unrelated); got != "bob" {
+		t.Fatalf("unrelated approval lost draft selection: %q", got)
+	}
 	for _, test := range []struct {
 		name    string
 		profile profile

@@ -146,22 +146,17 @@ def fill(name, value, root=None):
 
 
 def select_recipient(name):
-    recipient = control(app, "Recipient", Atspi.Role.COMBO_BOX)
-    if find(recipient, name, Atspi.Role.LABEL):
+    # Existing single-recipient scenarios replace their previous selection.
+    others = [node.get_name() for node in walk(app) if node.get_role() == Atspi.Role.PUSH_BUTTON and node.get_name().startswith("Remove recipient ") and node.get_name() != f"Remove recipient {name}"]
+    for other in others:
+        click(other)
+    if find(app, f"Remove recipient {name}", Atspi.Role.PUSH_BUTTON):
         return
-    activate(next(n for n in walk(recipient) if n.get_role() == Atspi.Role.TOGGLE_BUTTON))
-    popup = wait("recipient choices open", lambda: next((n for n in walk(recipient) if n.get_role() == Atspi.Role.LIST_BOX and n.get_state_set().contains(Atspi.StateType.SHOWING)), None))
-    choice = control(popup, name, Atspi.Role.LABEL)
-    # GTK exposes row names but no activation action or global popup position.
-    bounds = choice.get_component_iface().get_extents(Atspi.CoordType.WINDOW)
-    origin = popup.get_component_iface().get_extents(Atspi.CoordType.WINDOW)
-    windows = []
-    for wid in subprocess.check_output(["xdotool", "search", "--onlyvisible", "--pid", str(process.pid)], timeout=5).decode().splitlines():
-        geometry = dict(line.split("=", 1) for line in subprocess.check_output(["xdotool", "getwindowgeometry", "--shell", wid], timeout=5).decode().splitlines())
-        windows.append({key: int(value) for key, value in geometry.items()})
-    native = min(windows, key=lambda w: abs(w["WIDTH"] - origin.width) + abs(w["HEIGHT"] - origin.height))
-    assert Atspi.generate_mouse_event(native["X"] + bounds.x - origin.x + bounds.width // 2, native["Y"] + bounds.y - origin.y + bounds.height // 2, "b1c"), "Cannot choose peer from semantic dropdown row"
-    wait(f"dropdown selected {name!r}", lambda: find(recipient, name, Atspi.Role.LABEL))
+    click("+ Add another" if find(app, "+ Add another", Atspi.Role.PUSH_BUTTON) else "Choose recipient…")
+    dialog = control(app, "Choose recipient", Atspi.Role.DIALOG)
+    click(name, dialog)
+    wait("recipient selection closes chooser", lambda: not find(app, "Choose recipient", Atspi.Role.DIALOG))
+    control(app, f"Remove recipient {name}", Atspi.Role.PUSH_BUTTON)
 
 
 def status(text):
@@ -252,10 +247,9 @@ def send_text_to_peer(message):
     outgoing = wait("GUI delivery to approved peer", lambda: ids("peer") - before_peer)
     assert len(outgoing) == 1, "GUI peer send created unexpected transfers"
     assert fixture.cli("peer", "receive", next(iter(outgoing)), "--stdout", "--keep") == message.encode(), "Independent peer received different GUI text"
-    click("Send")
-    status("Ready.")
+    wait("peer send completion", lambda: any(n.get_name().startswith("Sent ") for n in walk(app)))
     assert text_contents(control(app, "Message")) == "", "Successful text send retained its draft"
-    control(control(app, "Recipient", Atspi.Role.COMBO_BOX), "bob", Atspi.Role.LABEL)
+    control(app, "Remove recipient bob", Atspi.Role.PUSH_BUTTON)
 
 
 started = time.monotonic()
@@ -356,7 +350,7 @@ try:
     click("Send")
     status("Ready.")
     assert text_contents(control(app, "Message")) == message, "Navigation discarded the text draft"
-    control(control(app, "Recipient", Atspi.Role.COMBO_BOX), "bob", Atspi.Role.LABEL)
+    control(app, "Remove recipient bob", Atspi.Role.PUSH_BUTTON)
     control(app, "draft-世界.bin · 11 B", Atspi.Role.LABEL)
     click("Choose file")
     click("Cancel", file_dialog("Choose a file"))
@@ -369,7 +363,7 @@ try:
     wait("missing source reports failed send", lambda: any("no such file or directory" in n.get_name().lower() for n in walk(app)))
     assert text_contents(control(app, "Message")) == message, "Failed file send discarded the text draft"
     control(app, "draft-世界.bin · 11 B", Atspi.Role.LABEL)
-    control(control(app, "Recipient", Atspi.Role.COMBO_BOX), "bob", Atspi.Role.LABEL)
+    control(app, "Remove recipient bob", Atspi.Role.PUSH_BUTTON)
     draft_file.write_bytes(b"draft bytes")
     # A failed send retains both the input and the selected recipient/file.
     fixture.control("pause")
@@ -381,7 +375,7 @@ try:
     finally:
         fixture.control("unpause")
     assert text_contents(control(app, "Message")) == message, "Failed send discarded the text draft"
-    control(control(app, "Recipient", Atspi.Role.COMBO_BOX), "bob", Atspi.Role.LABEL)
+    control(app, "Remove recipient bob", Atspi.Role.PUSH_BUTTON)
     control(app, "draft-世界.bin · 11 B", Atspi.Role.LABEL)
     click("Settings")
     status("Ready.")
@@ -390,7 +384,7 @@ try:
     assert text_contents(control(app, "Message")) == message, "Settings Back discarded the draft or returned to Inbox"
     # A CLI approval edit must invalidate the choice, without clearing contents.
     fixture.cli("desktop", "untrust", "bob")
-    control(control(app, "Recipient", Atspi.Role.COMBO_BOX), "Choose a recipient", Atspi.Role.LABEL)
+    control(app, "Choose recipient…", Atspi.Role.PUSH_BUTTON)
     assert not control(app, "Send text", Atspi.Role.PUSH_BUTTON).get_state_set().contains(Atspi.StateType.SENSITIVE), "Removed approval left sending enabled"
     assert text_contents(control(app, "Message")) == message, "Approval removal discarded draft contents"
     control(app, "draft-世界.bin · 11 B", Atspi.Role.LABEL)
@@ -411,7 +405,7 @@ try:
     status("Ready.")
     click("Back")
     status("Ready.")
-    control(control(app, "Recipient", Atspi.Role.COMBO_BOX), "Choose a recipient", Atspi.Role.LABEL)
+    control(app, "Choose recipient…", Atspi.Role.PUSH_BUTTON)
     assert text_contents(control(app, "Message")) == message, "Host change discarded draft contents"
     control(app, "draft-世界.bin · 11 B", Atspi.Role.LABEL)
     assert not control(app, "Send file", Atspi.Role.PUSH_BUTTON).get_state_set().contains(Atspi.StateType.SENSITIVE), "Host change left sending enabled without a recipient"
@@ -518,6 +512,8 @@ try:
     fill("Message", message)
     click("Send text")
     wait("send completion", lambda: any(n.get_name().startswith("Sent ") for n in walk(app)))
+    assert text_contents(control(app, "Message")) == "", "Self-send did not clear sent text on Send"
+    control(app, "Remove recipient This device", Atspi.Role.PUSH_BUTTON)
     refresh()
     own = ids("desktop")
     assert len(own) == 1, "Send-to-self did not create exactly one transfer"
@@ -529,32 +525,61 @@ try:
     for multi_file in (False, True):
         click("Send")
         status("Ready.")
+        click("Discard draft")
+        control(app, "Choose recipient…", Atspi.Role.PUSH_BUTTON)
+        assert not find(app, "Choose recipient", Atspi.Role.DIALOG), "Entering Send opened the chooser automatically"
+        assert not control(app, "Send text", Atspi.Role.PUSH_BUTTON).get_state_set().contains(Atspi.StateType.SENSITIVE), "Empty selection allowed sending"
+        fill("Message", "chooser draft")
+        click("Choose recipient…")
+        click("Cancel", control(app, "Choose recipient", Atspi.Role.DIALOG))
+        wait("empty chooser closes", lambda: not find(app, "Choose recipient", Atspi.Role.DIALOG))
+        assert text_contents(control(app, "Message")) == "chooser draft", "Cancel discarded draft text"
         select_recipient("This device")
-        click("Add recipient")
-        dialog = control(app, "Add recipient", Atspi.Role.DIALOG)
-        click("Cancel", dialog)
-        wait("recipient cancellation closes dialog", lambda: not find(app, "Add recipient", Atspi.Role.DIALOG))
+        click("Remove recipient This device")
+        control(app, "Choose recipient…", Atspi.Role.PUSH_BUTTON)
+        assert not control(app, "Send text", Atspi.Role.PUSH_BUTTON).get_state_set().contains(Atspi.StateType.SENSITIVE), "Removing last token left Send enabled"
+        select_recipient("This device")
+        click("+ Add another")
+        dialog = control(app, "Choose recipient", Atspi.Role.DIALOG)
+        assert not find(dialog, "This device", Atspi.Role.PUSH_BUTTON), "Chooser offered selected device again"
+        keys("Escape")
+        wait("recipient Escape closes dialog", lambda: not find(app, "Choose recipient", Atspi.Role.DIALOG))
+        control(app, "Remove recipient This device", Atspi.Role.PUSH_BUTTON)
+        click("+ Add another")
+        control(app, "Choose recipient", Atspi.Role.DIALOG)
+        keys("Alt_L", "F4")
+        wait("recipient window close keeps draft", lambda: not find(app, "Choose recipient", Atspi.Role.DIALOG))
+        control(app, "Remove recipient This device", Atspi.Role.PUSH_BUTTON)
+        assert text_contents(control(app, "Message")) == "chooser draft", "Closing chooser discarded content"
         control(app, "Send text", Atspi.Role.PUSH_BUTTON)
-        click("Add recipient")
-        click("Add", control(app, "Add recipient", Atspi.Role.DIALOG))
-        wait("recipient selection closes dialog", lambda: not find(app, "Add recipient", Atspi.Role.DIALOG))
+        click("+ Add another")
+        click("bob", control(app, "Choose recipient", Atspi.Role.DIALOG))
+        wait("recipient selection closes dialog", lambda: not find(app, "Choose recipient", Atspi.Role.DIALOG))
         control(app, "Remove recipient bob", Atspi.Role.PUSH_BUTTON)
+        for destination, marker, role in (("Inbox", "Refresh inbox", Atspi.Role.PUSH_BUTTON),
+                                          ("Devices", "Refresh devices", Atspi.Role.PUSH_BUTTON),
+                                          ("Settings", "SSH target", Atspi.Role.TEXT)):
+            click(destination)
+            control(app, marker, role)
+            click("Send")
+            wait(f"returned from {destination} to Send", lambda: not find(app, marker, role))
+            status("Ready.")
+            control(app, "Remove recipient This device", Atspi.Role.PUSH_BUTTON)
+            control(app, "Remove recipient bob", Atspi.Role.PUSH_BUTTON)
         click("Remove recipient bob")
         control(app, "Send text", Atspi.Role.PUSH_BUTTON)
-        click("Add recipient")
-        click("Add", control(app, "Add recipient", Atspi.Role.DIALOG))
-        wait("recipient selection closes dialog", lambda: not find(app, "Add recipient", Atspi.Role.DIALOG))
-        click("Add recipient")
-        status("All approved devices are already selected")
-        assert not find(app, "Add recipient", Atspi.Role.DIALOG), "Duplicate recipient chooser was offered"
+        click("+ Add another")
+        click("bob", control(app, "Choose recipient", Atspi.Role.DIALOG))
+        wait("recipient selection closes dialog", lambda: not find(app, "Choose recipient", Atspi.Role.DIALOG))
+        assert not control(app, "+ Add another", Atspi.Role.PUSH_BUTTON).get_state_set().contains(Atspi.StateType.SENSITIVE), "Chooser offered already selected devices"
+        assert not find(app, "Choose recipient", Atspi.Role.DIALOG), "Duplicate recipient chooser was offered"
         content = b"multi file bytes\x00\xff" if multi_file else "multi text 世界\n".encode()
-        if multi_file:
-            source_multi = session / "multi.bin"
-            source_multi.write_bytes(content)
-            click("Choose file")
-            picker_path(file_dialog("Choose a file"), source_multi)
-            status("File selected")
-        else:
+        source_multi = session / "multi.bin"
+        source_multi.write_bytes(content)
+        click("Choose file")
+        picker_path(file_dialog("Choose a file"), source_multi)
+        status("File selected")
+        if not multi_file:
             fill("Message", content.decode())
         before = {name: ids(name) for name in ("desktop", "peer")}
         # Refuse the peer copy while allowing self; retry must not resend self.
@@ -574,6 +599,14 @@ try:
             fixture.exec("chmod", "700", fixture.inbox_path("peer"))
         click("Retry failed recipients")
         wait("multi-recipient retry completes", lambda: any(n.get_name().startswith("Sent to 2 devices") for n in walk(app)))
+        control(app, "Remove recipient This device", Atspi.Role.PUSH_BUTTON)
+        control(app, "Remove recipient bob", Atspi.Role.PUSH_BUTTON)
+        if multi_file:
+            control(app, "No file selected", Atspi.Role.LABEL)
+            assert text_contents(control(app, "Message")) == "chooser draft", "File send cleared unrelated draft text"
+        else:
+            assert text_contents(control(app, "Message")) == "", "Text send retained sent text"
+            control(app, f"multi.bin · {len(content)} B", Atspi.Role.LABEL)
         assert ids("desktop") == before["desktop"] | own_new, "Retry resent the successful self copy"
         peer_new = ids("peer") - before["peer"]
         assert len(peer_new) == 1, "Retry did not deliver exactly one failed peer copy"
@@ -588,12 +621,12 @@ try:
 
     click("Send"); status("Ready.")
     select_recipient("This device")
-    click("Add recipient")
-    click("Add", control(app, "Add recipient", Atspi.Role.DIALOG))
+    click("+ Add another")
+    click("bob", control(app, "Choose recipient", Atspi.Role.DIALOG))
     wait("additional recipient selected", lambda: find(app, "Remove recipient bob", Atspi.Role.PUSH_BUTTON))
     fill("Message", "keep multi-recipient draft after trust change")
     fixture.cli("desktop", "untrust", "bob")
-    control(control(app, "Recipient", Atspi.Role.COMBO_BOX), "Choose a recipient", Atspi.Role.LABEL)
+    control(app, "Choose recipient…", Atspi.Role.PUSH_BUTTON)
     assert not find(app, "Remove recipient bob", Atspi.Role.PUSH_BUTTON), "Removed approval silently reduced multi-send selection"
     assert text_contents(control(app, "Message")) == "keep multi-recipient draft after trust change", "Trust change discarded multi-send draft"
     fixture.cli("desktop", "trust", fixture.fingerprint("peer"), "--name", "bob")
@@ -647,8 +680,7 @@ try:
         assert dest.read_bytes() == source.read_bytes(), "Independent CLI file bytes differ"
         item = next(i for i in json.loads(fixture.cli("desktop", "inbox", "--json")) if i["transfer_id"] in new)
         assert item["filename"] == source.name, "GUI send lost original filename"
-        click("Send")
-        status("Ready.")
+        control(app, "Remove recipient This device", Atspi.Role.PUSH_BUTTON)
         control(app, "No file selected", Atspi.Role.LABEL)
         assert not control(app, "Send file", Atspi.Role.PUSH_BUTTON).get_state_set().contains(Atspi.StateType.SENSITIVE), "Successful file send retained a sendable file draft"
         incoming = peer_send(file=source)

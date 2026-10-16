@@ -29,8 +29,9 @@ Inbox, Send and Devices are available directly in the navigation bar. Settings
 opens separately; Back, Escape or Alt+Left returns to the prior page. Dialogs and
 expanded Advanced sections are dismissed first.
 
-Send text or one local file to an approved peer or this device. Use **Add recipient**
-to include more devices; remove a selected token to drop it. **Send to N devices**
+Send text or one local file to an approved peer or this device. Use **Choose recipient…** to select a device, then **+ Add another**
+to include more devices. Each selection is a removable token; removing the last
+restores the chooser button. Closing the chooser leaves the draft unchanged. **Send to N devices**
 sends to that selection once. Partial results identify delivered, failed and
 unconfirmed copies. **Retry failed recipients** sends only to confirmed failures,
 using the original message/file bytes. Unconfirmed deliveries require checking
@@ -39,8 +40,8 @@ selection while keeping the content; previous deliveries are not undone.
 
 Draft text,
 recipient and file survive navigation, dialog cancellation and failed sends.
-Successful sends clear the relevant content; **Discard draft** clears both text
-and file. Server/identity or approval changes clear affected recipient selections
+Successful sends stay on Send, keep recipients and clear only the sent text or
+file attachment. **Discard draft** clears recipients, text and file. Server/identity or approval changes clear affected recipient selections
 without discarding content. Drafts do not survive app restarts.
 
 Inbox shows sender, filename/type, size and local upload time. **Details** exposes

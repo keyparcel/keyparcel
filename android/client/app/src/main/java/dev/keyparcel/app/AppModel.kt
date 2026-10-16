@@ -64,7 +64,6 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     private data class PendingSend(val context: SendContext, val text: String, val file: File?, val filename: String, val report: SendReport)
     private var pendingSend by mutableStateOf<PendingSend?>(null)
     var sendReport by mutableStateOf<SendReport?>(null); private set
-    var sendReportHost by mutableStateOf(""); private set
     val sendLocked get() = pendingSend != null
     val canRetrySend get() = pendingSend?.let { it.context.matches(settings, publicKey) && it.report.failed.isNotEmpty() } == true
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -412,16 +411,13 @@ class AppModel(application: Application) : AndroidViewModel(application) {
             return false
         }
         sendReport = report
-        sendReportHost = context.settings.host?.address.orEmpty()
         if (!report.complete) {
             pendingSend = PendingSend(context, text, file, filename, report)
             notice = "Send incomplete; the draft is retained"
             return true
         }
-        discardDraft()
-        sendReport = report
-        sendReportHost = context.settings.host?.address.orEmpty()
-        showPage(Page.Inbox)
+        clearPendingSend()
+        if (file == null) draft = draft.copy(text = "") else selectedFile = null
         notice = if (context.names.size == 1) "Sent to ${if (context.names.single() == "self") "this device" else context.names.single()} · ${report.deliveries.single().id}"
             else "Sent to ${context.names.size} devices\n${report.summary()}"
         return false

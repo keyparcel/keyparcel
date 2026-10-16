@@ -91,6 +91,14 @@ class ClientJourneyTest {
         compose.waitUntil(120_000) { compose.onAllNodesWithTag("working").fetchSemanticsNodes().isEmpty() }
     }
 
+    private fun chooseRecipient(name: String) {
+        if (compose.onAllNodesWithTag("remove-recipient-$name").fetchSemanticsNodes().isNotEmpty()) return
+        compose.onNodeWithTag("add-recipient").performScrollTo().performClick()
+        click("add-recipient-$name")
+        compose.onNodeWithTag("remove-recipient-$name").assertExists()
+        compose.onNodeWithText("Choose recipient").assertDoesNotExist()
+    }
+
     private fun click(tag: String) {
         val model = ViewModelProvider(compose.activity)[AppModel::class.java]
         val revision = model.refreshRevision
@@ -101,9 +109,12 @@ class ClientJourneyTest {
     }
     private fun field(tag: String, text: String) {
         compose.onNodeWithTag(tag).performScrollTo().performTextReplacement(text)
+        keyboardReady()
+    }
+    private fun keyboardReady() {
         // Compose idle does not include the system keyboard's layout animation.
         compose.waitUntil(30_000) {
-            !imeAnimating && ViewCompat.getRootWindowInsets(compose.activity.window.decorView)
+            compose.activity.hasWindowFocus() && !imeAnimating && ViewCompat.getRootWindowInsets(compose.activity.window.decorView)
                 ?.isVisible(WindowInsetsCompat.Type.ime()) == true
         }
     }
@@ -343,7 +354,7 @@ class ClientJourneyTest {
     @Test fun changedEndpoint() {
         waitFor("refresh-inbox")
         val before = SettingsStore(compose.activity).load()
-        click("send-screen"); click("recipient-self")
+        click("send-screen"); chooseRecipient("self")
         field("message", input)
         repeat(3) {
             click("settings")
@@ -357,7 +368,7 @@ class ClientJourneyTest {
             click("back")
             compose.onNodeWithTag("send-screen").assertIsSelected()
             check(value("message") == input) { "Canceled host approval discarded the send draft" }
-            compose.onNodeWithTag("recipient-self").assertTextEquals("✓ This device")
+            compose.onNodeWithTag("remove-recipient-self").assertExists()
         }
         click("settings")
         field("host-port", arg("port"))
@@ -368,7 +379,7 @@ class ClientJourneyTest {
         check(SettingsStore(compose.activity).load().peers == before.peers) { "Changing endpoint lost device approvals" }
         click("send-screen")
         check(value("message") == input) { "Changing host discarded draft contents" }
-        compose.onNodeWithTag("recipient-self").assertTextEquals("This device")
+        compose.onNodeWithTag("add-recipient").assertTextEquals("Choose recipient…")
         compose.onNodeWithTag("send-message").assertIsNotEnabled()
         compose.onNodeWithTag("discard-draft").performScrollTo().performClick()
     }
@@ -483,13 +494,13 @@ class ClientJourneyTest {
         receive(arg("text_id"))
         screenshot("received")
         click("back")
-        click("send-screen"); click("recipient-laptop")
+        click("send-screen"); chooseRecipient("laptop")
         compose.onNodeWithTag("message").performTextInput(input)
         click("devices-screen"); click("settings"); click("back")
         compose.onNodeWithTag("devices-screen").assertIsSelected()
         click("send-screen")
         check(value("message") == input) { "Navigation discarded the text draft" }
-        compose.onNodeWithTag("recipient-laptop").assertTextEquals("✓ To laptop")
+        compose.onNodeWithTag("remove-recipient-laptop").assertExists()
         click("settings"); click("back")
         compose.onNodeWithTag("send-screen").assertIsSelected()
         check(value("message") == input) { "Settings Back did not preserve the send draft" }
@@ -497,7 +508,7 @@ class ClientJourneyTest {
         val revision = liveModel.refreshRevision
         compose.waitUntil(150_000) { liveModel.refreshRevision >= revision + 2 }
         check(value("message") == input) { "Timed refresh discarded the text draft" }
-        compose.onNodeWithTag("recipient-laptop").assertTextEquals("✓ To laptop")
+        compose.onNodeWithTag("remove-recipient-laptop").assertExists()
         compose.onNodeWithTag("message").performScrollTo().performTouchInput { click() }
         field("message", input)
         compose.onNodeWithTag("send-message").assertIsDisplayed().assertIsEnabled()
@@ -514,6 +525,10 @@ class ClientJourneyTest {
         compose.onNodeWithTag("send-message").performTouchInput { click() }
         finished()
         compose.onNodeWithTag("notice").assertTextContains("Sent to laptop", substring = true)
+        compose.onNodeWithTag("send-screen").assertIsSelected()
+        compose.onNodeWithTag("remove-recipient-laptop").assertExists()
+        check(value("message").isEmpty()) { "Successful text send retained content" }
+        compose.onNodeWithTag("send-message").assertIsNotEnabled()
         screenshot("sent")
     }
 
@@ -646,14 +661,17 @@ class ClientJourneyTest {
     @Test fun sendToThisDevice() {
         waitFor("refresh-inbox")
         click("send-screen")
-        compose.onNodeWithTag("recipient-laptop").assertDoesNotExist()
-        click("recipient-self")
+        compose.onNodeWithTag("add-recipient").assertTextEquals("Choose recipient…")
+        compose.onNodeWithText("Choose recipient").assertDoesNotExist()
+        compose.onNodeWithTag("add-recipient").performScrollTo().performClick()
+        compose.onNodeWithTag("add-recipient-laptop").assertDoesNotExist()
+        click("add-recipient-self")
         field("message", "discard me")
         compose.onNodeWithTag("discard-draft").performScrollTo().performClick()
         check(value("message").isEmpty()) { "Discard left draft text behind" }
-        compose.onNodeWithTag("recipient-self").assertTextEquals("This device")
-        compose.onNodeWithTag("recipient-self").performScrollTo().performClick()
-        compose.onNodeWithTag("recipient-self").assertTextEquals("✓ This device")
+        compose.onNodeWithTag("add-recipient").assertTextEquals("Choose recipient…")
+        chooseRecipient("self")
+        compose.onNodeWithTag("remove-recipient-self").assertExists()
         compose.onNodeWithTag("message").performTextInput(input)
         compose.onNodeWithTag("send-message").assertIsEnabled()
         compose.onNodeWithTag("send-message").performClick()
@@ -662,9 +680,10 @@ class ClientJourneyTest {
         val notice = compose.onNodeWithTag("notice").fetchSemanticsNode().config[SemanticsProperties.Text].single().text
         check(notice.startsWith("Sent to this device")) { "Self-send did not report success" }
         val id = notice.substringAfterLast(" · ")
-        click("send-screen")
+        compose.onNodeWithTag("send-screen").assertIsSelected()
         check(value("message").isEmpty()) { "Successful send retained the sent draft" }
-        compose.onNodeWithTag("recipient-self").assertTextEquals("This device")
+        compose.onNodeWithTag("remove-recipient-self").assertExists()
+        compose.onNodeWithTag("send-message").assertIsNotEnabled()
         click("inbox-screen")
         refresh(); receive(id)
         withClipboard { clipboard ->
@@ -696,26 +715,54 @@ class ClientJourneyTest {
             val kind = if (fileMode) "file" else "text"
             click("send-screen")
             compose.onNodeWithTag("discard-draft").performScrollTo().performClick()
-            compose.onNodeWithTag("recipient-self").performScrollTo().performClick()
-            compose.onNodeWithTag("send-message").assertTextEquals("Send")
+            compose.onNodeWithTag("add-recipient").assertTextEquals("Choose recipient…")
+            compose.onNodeWithText("Choose recipient").assertDoesNotExist()
+            compose.onNodeWithTag("send-message").assertIsNotEnabled()
+            field("message", "chooser draft")
             compose.onNodeWithTag("add-recipient").performScrollTo().performClick()
             compose.onNodeWithText("Cancel").performClick()
+            keyboardReady()
+            check(value("message") == "chooser draft") { "Cancel discarded draft text" }
+            compose.onNodeWithTag("add-recipient").assertTextEquals("Choose recipient…")
+            chooseRecipient("self")
+            keyboardReady()
+            compose.onNodeWithTag("remove-recipient-self").performScrollTo().assertIsDisplayed().assertIsEnabled().performTouchInput { click() }
+            compose.onNodeWithTag("remove-recipient-self").assertDoesNotExist()
+            compose.onNodeWithTag("add-recipient").assertTextEquals("Choose recipient…")
+            compose.onNodeWithTag("send-message").assertIsNotEnabled()
+            chooseRecipient("self")
+            keyboardReady()
+            compose.onNodeWithTag("send-message").assertTextEquals("Send")
+            compose.onNodeWithTag("add-recipient").assertTextEquals("+ Add another")
+            compose.onNodeWithTag("add-recipient").performScrollTo().performClick()
+            compose.onNodeWithTag("add-recipient-self").assertDoesNotExist()
+            // Dismissing the native dialog with Back keeps the first chip.
+            compose.waitUntil(10_000) { pickerNode { it.text?.toString() == "Choose recipient" } != null }
+            InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            keyboardReady()
+            compose.onNodeWithTag("remove-recipient-self").assertExists()
             compose.onNodeWithTag("remove-recipient-laptop").assertDoesNotExist()
+            check(value("message") == "chooser draft") { "Chooser Back discarded draft text" }
             compose.onNodeWithTag("add-recipient").performScrollTo().performClick()
             click("add-recipient-laptop")
+            keyboardReady()
             compose.onNodeWithTag("add-recipient").assertIsNotEnabled()
-            compose.onNodeWithTag("remove-recipient-laptop").performScrollTo().performClick()
+            compose.onNodeWithTag("remove-recipient-laptop").performScrollTo().assertIsDisplayed().assertIsEnabled().performTouchInput { click() }
+            compose.onNodeWithTag("remove-recipient-laptop").assertDoesNotExist()
             compose.onNodeWithTag("send-message").assertTextEquals("Send")
             compose.onNodeWithTag("add-recipient").performScrollTo().performClick()
             click("add-recipient-laptop")
-            click("devices-screen"); click("send-screen")
+            keyboardReady()
+            click("inbox-screen"); click("devices-screen"); click("settings"); click("back"); click("send-screen")
             compose.onNodeWithTag("remove-recipient-self").assertExists()
             compose.onNodeWithTag("remove-recipient-laptop").assertExists()
-            if (fileMode) {
-                compose.onNodeWithTag("send-file-mode").performScrollTo().performClick()
-                compose.onNodeWithTag("choose-file").performScrollTo().performClick(); pickerRoot()
-                pickerClick(scrollFiles = true) { it.text?.toString() == "multi.bin" }; pickerReturned()
-            } else field("message", "multi text 世界\n")
+            compose.onNodeWithTag("send-file-mode").performScrollTo().performClick()
+            compose.onNodeWithTag("choose-file").performScrollTo().performClick(); pickerRoot()
+            pickerClick(scrollFiles = true) { it.text?.toString() == "multi.bin" }; pickerReturned()
+            if (!fileMode) {
+                compose.onNodeWithTag("send-text-mode").performScrollTo().performClick()
+                field("message", "multi text 世界\n")
+            }
             fixture("$kind-prepare")
             val sendTag = if (fileMode) "send-file" else "send-message"
             compose.onNodeWithTag(sendTag).assertTextEquals("Send to 2 devices")
@@ -737,6 +784,23 @@ class ClientJourneyTest {
             check(complete.complete) { "Failed-only retry did not complete: $complete" }
             check(complete.deliveries.first { it.recipient == "self" }.id == ownID) { "Retry replaced the successful self result" }
             evidence.putString("${kind}_peer_id", complete.deliveries.first { it.recipient == "laptop" }.id)
+            compose.onNodeWithTag("send-screen").assertIsSelected()
+            compose.onNodeWithTag("remove-recipient-self").assertExists()
+            compose.onNodeWithTag("remove-recipient-laptop").assertExists()
+            compose.onNodeWithTag(sendTag).assertTextEquals("Send to 2 devices")
+            compose.onNodeWithTag("send-report").assertTextEquals(complete.summary())
+            if (fileMode) {
+                compose.onNodeWithTag("selected-filename").assertDoesNotExist()
+                compose.onNodeWithTag("send-file").assertIsNotEnabled()
+                compose.onNodeWithTag("send-text-mode").performScrollTo().performClick()
+                check(value("message") == "chooser draft") { "File send cleared unrelated draft text" }
+            } else {
+                check(value("message").isEmpty()) { "Text send retained sent text" }
+                compose.onNodeWithTag("send-message").assertIsNotEnabled()
+                compose.onNodeWithTag("send-file-mode").performScrollTo().performClick()
+                compose.onNodeWithTag("selected-filename").assertTextEquals("multi.bin")
+            }
+            click("inbox-screen")
             refresh()
             if (fileMode) {
                 saveFile(ownID, "multi-saved.bin", "multi.bin"); waitFor("saved-file")
@@ -749,7 +813,7 @@ class ClientJourneyTest {
         }
         click("send-screen")
         compose.onNodeWithTag("discard-draft").performScrollTo().performClick()
-        compose.onNodeWithTag("recipient-self").performScrollTo().performClick()
+        chooseRecipient("self")
         compose.onNodeWithTag("add-recipient").performScrollTo().performClick(); click("add-recipient-laptop")
         field("message", "retain after trust change")
         val peer = model.devices.first { it.key == model.settings.peers["laptop"] }
@@ -833,7 +897,7 @@ class ClientJourneyTest {
         }
         val model = ViewModelProvider(compose.activity)[AppModel::class.java]
         blockedProviderRecovery(directory, model)
-        click("send-screen"); click("send-file-mode"); click("recipient-laptop")
+        click("send-screen"); click("send-file-mode"); chooseRecipient("laptop")
         compose.onNodeWithTag("send-file").assertIsNotEnabled()
         click("choose-file"); pickerRoot()
         pickerClick(scrollFiles = true) { it.text?.toString() == "fail-read" }; pickerReturned()
@@ -862,16 +926,16 @@ class ClientJourneyTest {
         click("back"); click("send-screen")
         compose.onNodeWithTag("choose-file").assertExists()
         compose.onNodeWithTag("selected-filename").assertTextEquals("stall-read")
-        compose.onNodeWithTag("recipient-laptop").assertTextEquals("✓ To laptop")
+        compose.onNodeWithTag("remove-recipient-laptop").assertExists()
         click("settings"); click("back")
         compose.onNodeWithTag("send-screen").assertIsSelected()
         compose.onNodeWithTag("selected-filename").assertTextEquals("stall-read")
         compose.onNodeWithTag("choose-file").performScrollTo().performClick(); pickerRoot(); pickerCancel()
         compose.onNodeWithTag("selected-filename").assertTextEquals("stall-read")
-        compose.onNodeWithTag("recipient-laptop").assertTextEquals("✓ To laptop")
+        compose.onNodeWithTag("remove-recipient-laptop").assertExists()
         compose.onNodeWithTag("discard-draft").performScrollTo().performClick()
         compose.onNodeWithTag("selected-filename").assertDoesNotExist()
-        compose.onNodeWithTag("send-file-mode").performScrollTo().performClick(); click("recipient-laptop")
+        compose.onNodeWithTag("send-file-mode").performScrollTo().performClick(); chooseRecipient("laptop")
         compose.onNodeWithTag("send-file").assertIsNotEnabled()
         click("choose-file"); pickerRoot(); pickerCancel()
         compose.onNodeWithTag("send-file").assertIsNotEnabled()
@@ -883,15 +947,23 @@ class ClientJourneyTest {
         screenshot("send-file")
         compose.onNodeWithTag("send-file").performClick(); finished()
         val binaryID = compose.onNodeWithTag("notice").fetchSemanticsNode().config[SemanticsProperties.Text].single().text.substringAfterLast(" · ")
-        click("send-screen"); click("send-file-mode"); click("recipient-laptop")
+        compose.onNodeWithTag("send-screen").assertIsSelected()
+        compose.onNodeWithTag("remove-recipient-laptop").assertExists()
+        compose.onNodeWithTag("selected-filename").assertDoesNotExist()
+        compose.onNodeWithTag("send-file").assertIsNotEnabled()
         click("choose-file"); pickerRoot()
         pickerClick(scrollFiles = true) { it.text?.toString() == "empty.bin" }; pickerReturned()
         compose.onNodeWithTag("selected-size").assertTextEquals("0 B")
         compose.onNodeWithTag("send-file").performClick(); finished()
         val emptyID = compose.onNodeWithTag("notice").fetchSemanticsNode().config[SemanticsProperties.Text].single().text.substringAfterLast(" · ")
+        compose.onNodeWithTag("send-screen").assertIsSelected()
+        compose.onNodeWithTag("remove-recipient-laptop").assertExists()
+        compose.onNodeWithTag("selected-filename").assertDoesNotExist()
+        compose.onNodeWithTag("send-file").assertIsNotEnabled()
         InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
             putString("binary_reply_id", binaryID); putString("empty_reply_id", emptyID)
         })
+        click("inbox-screen")
         refresh()
         val id = arg("file_id")
         compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("save-$id"))
@@ -1055,7 +1127,7 @@ class ClientJourneyTest {
 
     @Test fun pickerCancellation() {
         waitFor("refresh-inbox")
-        click("send-screen"); click("send-file-mode"); click("recipient-self")
+        click("send-screen"); click("send-file-mode"); chooseRecipient("self")
         click("choose-file"); pickerCancel()
         compose.onNodeWithTag("send-file").assertIsNotEnabled()
         var returned = false

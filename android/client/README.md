@@ -29,12 +29,14 @@ canceling leaves saved settings unchanged.
 
 Use Inbox, Send and Devices in the bottom navigation. Settings and Back preserve
 in-progress drafts. Text, selected recipient and file survive navigation and picker
-cancellation within the running app. Successful sends or **Discard draft** clear
-the draft. Host/approval changes clear affected recipient selections; drafts are
+cancellation within the running app. Successful sends stay on Send, keep recipients
+and clear only the sent text or file attachment. **Discard draft** clears recipients,
+text and file. Host/approval changes clear affected recipient selections; drafts are
 not saved across app restarts.
 
-Choose one recipient as usual, or use **Add recipient** and removable tokens for
-more devices. **Send to N devices** sends the text/file to that selection once.
+Use **Choose recipient…**, then **+ Add another** to select devices; each choice
+is a removable token. Removing the last restores the chooser button; Cancel or
+Back leaves the draft unchanged. Text and files share the same selection. **Send to N devices** sends the text/file to that selection once.
 Partial results distinguish delivered, failed and unconfirmed copies. **Retry
 failed recipients** retries only confirmed failures with the original bytes;
 check unconfirmed recipients' inboxes before starting another send. **Edit draft**
