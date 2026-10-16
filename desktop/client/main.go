@@ -67,6 +67,7 @@ type model struct {
 	view                              *received
 	save                              *pendingSave
 	forget                            *core.Device
+	deleteInbox                       *pendingDelete
 }
 
 func cstrings(values []string, call func([]*C.char)) {
@@ -217,6 +218,7 @@ func (m *model) applyProfile(p profile) {
 		m.profileVersion++
 		m.items, m.devices, m.rejected = nil, nil, nil
 		m.view, m.save = nil, nil
+		m.deleteInbox = nil
 		C.ui_clear_results(m.ui)
 		if m.navigation.current == "text" || m.navigation.current == "saved" {
 			m.page("inbox")
@@ -463,6 +465,12 @@ func (m *model) event(action, arg, value string) {
 		m.message("Draft discarded")
 	case "send-text", "send-file":
 		m.send(action == "send-file")
+	case "delete-request":
+		m.requestDelete(arg)
+	case "delete-confirm":
+		m.confirmDelete(arg)
+	case "delete-cancel":
+		m.deleteInbox = nil
 	case "receive-text":
 		m.receiveText(arg)
 	case "receive-file":
@@ -637,6 +645,58 @@ func (m *model) savePath(path string, overwrite bool) {
 		m.message("File saved; remote copy retained")
 	})
 }
+func (m *model) requestDelete(id string) {
+	if m.active != nil || m.deleteInbox != nil || C.ui_picker_pending(m.ui) != 0 {
+		return
+	}
+	if !containsItem(m.items, id) {
+		m.message("Refresh Inbox before deleting this transfer")
+		return
+	}
+	p := profile{Target: m.target, Host: m.host, Config: &core.Config{Peers: m.peers}}
+	m.deleteInbox = &pendingDelete{ID: id, Profile: p}
+	cstrings([]string{id, "Delete this device's remote inbox copy without downloading it?\nOther recipients' copies and saved local files remain untouched."}, func(v []*C.char) { C.ui_confirm_delete(m.ui, v[0], v[1]) })
+}
+
+func (m *model) confirmDelete(id string) {
+	if m.active != nil {
+		return
+	}
+	request := m.deleteInbox
+	m.deleteInbox = nil
+	current := profile{Target: m.target, Host: m.host, Config: &core.Config{Peers: m.peers}}
+	if request == nil || request.ID != id || !request.matches(current) || !containsItem(m.items, id) {
+		m.message("The inbox or server changed; select the transfer again")
+		return
+	}
+	m.run("Deleting remote inbox copy…", func(ctx context.Context) (any, error) {
+		return m.remote(ctx, request.Profile.Target, &request.Profile.Host, func(s *core.Session, p profile) (any, error) {
+			if !request.matches(p) {
+				return nil, errors.New("Approvals changed; select the transfer again")
+			}
+			_, failures, err := s.Delete([]string{request.ID}, false)
+			if len(failures) > 0 {
+				return nil, fmt.Errorf("could not delete transfer: %s", failures[0].Reason)
+			}
+			return nil, err
+		})
+	}, func(any) {
+		current := profile{Target: m.target, Host: m.host, Config: &core.Config{Peers: m.peers}}
+		if !request.matches(current) {
+			return
+		}
+		kept := make([]core.Item, 0, len(m.items))
+		for _, item := range m.items {
+			if item.ID != request.ID {
+				kept = append(kept, item)
+			}
+		}
+		m.items = kept
+		m.drawInbox(m.rejected)
+		m.message("Deleted remote inbox copy; saved local files kept")
+	})
+}
+
 func (m *model) remove() {
 	var id string
 	var p profile

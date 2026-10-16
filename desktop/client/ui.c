@@ -126,7 +126,8 @@ static void response(GtkDialog *dialog, int answer, gpointer data) {
                 const char *value = a->entry ? gtk_editable_get_text(GTK_EDITABLE(a->entry)) : "";
                 goEvent(ui->handle, a->action, a->arg, (char *)value);
             }
-        } else goEvent(ui->handle, "notice", "Selection cancelled; remote transfers retained", "");
+        } else if (strcmp(a->action, "delete-confirm") == 0) goEvent(ui->handle, "delete-cancel", "", "");
+        else goEvent(ui->handle, "notice", "Selection cancelled; remote transfers retained", "");
     }
     gtk_window_destroy(GTK_WINDOW(dialog));
     ui_unref(ui);
@@ -181,6 +182,14 @@ void ui_confirm(UI *ui, const char *action, const char *message) {
         "Cancel", GTK_RESPONSE_CANCEL, "Confirm", GTK_RESPONSE_ACCEPT, NULL);
     gtk_box_append(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(d))), label(message));
     dialog_attach(ui, d, action_new(ui, action, ""));
+}
+void ui_confirm_delete(UI *ui, const char *id, const char *message) {
+    if (ui->picker) return;
+    GtkWidget *d = gtk_dialog_new_with_buttons("Delete inbox copy?", ui->window, GTK_DIALOG_MODAL,
+        "Cancel", GTK_RESPONSE_CANCEL, "Delete", GTK_RESPONSE_ACCEPT, NULL);
+    gtk_dialog_set_default_response(GTK_DIALOG(d), GTK_RESPONSE_CANCEL);
+    gtk_box_append(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(d))), label(message));
+    dialog_attach(ui, d, action_new(ui, "delete-confirm", id));
 }
 void ui_approve(UI *ui, const char *fp, const char *message, const char *name) {
     GtkWidget *d = gtk_dialog_new_with_buttons("Approve device", ui->window, GTK_DIALOG_MODAL,
@@ -517,7 +526,10 @@ void ui_item(UI *ui, const char *id, const char *title, const char *detail, int 
         gtk_box_append(GTK_BOX(actions), b);
         GtkWidget *details = button(ui, "Details", "details", id);
         name = g_strdup_printf("Details transfer %s", id); accessible(details, name); g_free(name);
-        gtk_box_append(GTK_BOX(actions), details); gtk_box_append(GTK_BOX(box), actions);
+        gtk_box_append(GTK_BOX(actions), details);
+        GtkWidget *del = button(ui, "Delete", "delete-request", id);
+        name = g_strdup_printf("Delete transfer %s", id); accessible(del, name); g_free(name);
+        gtk_box_append(GTK_BOX(actions), del); gtk_box_append(GTK_BOX(box), actions);
     }
     add_row(ui,key,content,box); g_free(key); g_free(content);
 }

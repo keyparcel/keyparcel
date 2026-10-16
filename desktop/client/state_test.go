@@ -62,3 +62,36 @@ func TestNavigationParents(t *testing.T) {
 		}
 	}
 }
+
+func TestInboxDeleteContext(t *testing.T) {
+	p := profile{Target: "inbox", Host: core.Host{Identity: "key", Fingerprint: "fp", Root: "root", Discovery: "keys"}, Config: &core.Config{Peers: map[string]string{"bob": "key"}}}
+	request := pendingDelete{ID: "0123456789abcdef0123456789abcdef", Profile: p}
+	if !request.matches(p) || !containsItem([]core.Item{{ID: request.ID}}, request.ID) {
+		t.Fatal("unchanged inbox confirmation was rejected")
+	}
+	for _, field := range []string{"target", "identity", "fingerprint", "root", "discovery", "approvals"} {
+		t.Run(field, func(t *testing.T) {
+			changed := p
+			switch field {
+			case "target":
+				changed.Target = "other"
+			case "identity":
+				changed.Host.Identity = "other"
+			case "fingerprint":
+				changed.Host.Fingerprint = "other"
+			case "root":
+				changed.Host.Root = "other"
+			case "discovery":
+				changed.Host.Discovery = "other"
+			case "approvals":
+				changed.Config = &core.Config{Peers: map[string]string{}}
+			}
+			if request.matches(changed) {
+				t.Fatal("same-ID parcel in a changed context accepted")
+			}
+		})
+	}
+	if containsItem([]core.Item{{ID: "other"}}, request.ID) {
+		t.Fatal("missing parcel accepted")
+	}
+}

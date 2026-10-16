@@ -426,6 +426,49 @@ try:
     status("Draft discarded")
     assert text_contents(control(app, "Message")) == "", "Explicit discard retained text"
     control(app, "No file selected", Atspi.Role.LABEL)
+    # Delete from Inbox without receiving either kind of parcel.
+    unrelated = peer_send("keep this unrelated parcel")
+    unwanted_file = session / "unwanted.bin"
+    unwanted_file.write_bytes(b"local file remains unchanged")
+    stale = peer_send("stale approval confirmation")
+    click("Inbox")
+    click("Delete transfer " + stale)
+    dialog = control(app, "Delete inbox copy?", Atspi.Role.DIALOG)
+    fixture.cli("desktop", "untrust", "bob")
+    control(app, "Not verified: " + stale, Atspi.Role.LABEL)
+    click("Delete", dialog)
+    status("The inbox or server changed; select the transfer again")
+    assert stale in ids("desktop"), "Stale confirmation deleted a parcel after approval removal"
+    fixture.cli("desktop", "trust", fixture.fingerprint("peer"), "--name", "bob")
+    control(app, "Delete transfer " + stale)
+    fixture.cli("desktop", "delete", stale)
+    for unwanted in [peer_send("unwanted text"), peer_send(file=unwanted_file)]:
+        click("Inbox")
+        click("Delete transfer " + unwanted)
+        dialog = control(app, "Delete inbox copy?", Atspi.Role.DIALOG)
+        control(dialog, "Delete this device's remote inbox copy without downloading it?\nOther recipients' copies and saved local files remain untouched.", Atspi.Role.LABEL)
+        click("Cancel", dialog)
+        assert unwanted in ids("desktop"), "Cancel deleted an inbox parcel"
+        click("Delete transfer " + unwanted)
+        control(app, "Delete inbox copy?", Atspi.Role.DIALOG)
+        keys("Escape")
+        wait("delete confirmation dismissed", lambda: not find(app, "Delete inbox copy?"))
+        assert unwanted in ids("desktop"), "Dialog dismissal deleted an inbox parcel"
+        # A real remote failure must preserve the row and permit a retry.
+        fixture.exec("chmod", "500", fixture.inbox_path("desktop"))
+        click("Delete transfer " + unwanted)
+        click("Delete", control(app, "Delete inbox copy?", Atspi.Role.DIALOG))
+        wait("delete failure", lambda: any("could not delete transfer" in n.get_name() for n in walk(app)))
+        assert unwanted in ids("desktop"), "Failed inbox deletion lost the parcel"
+        control(app, "Delete transfer " + unwanted)
+        fixture.exec("chmod", "700", fixture.inbox_path("desktop"))
+        click("Delete transfer " + unwanted)
+        click("Delete", control(app, "Delete inbox copy?", Atspi.Role.DIALOG))
+        status("Deleted remote inbox copy; saved local files kept")
+        assert unwanted not in ids("desktop"), "Inbox delete did not remove the remote parcel"
+        assert unrelated in ids("desktop"), "Inbox delete removed an unrelated parcel"
+        assert unwanted_file.read_bytes() == b"local file remains unchanged", "Inbox delete modified a local file"
+    fixture.cli("desktop", "delete", unrelated)
     removed = peer_send("automatic removal")
     click("Inbox")
     control(app,"Receive transfer " + removed)
@@ -589,6 +632,13 @@ try:
         click("Remove & close")
         status("Removed transfer")
         assert incoming not in ids("desktop"), "Saved-file removal failed"
+        extra = peer_send(file=source)
+        click("Delete transfer " + extra)
+        click("Delete", control(app, "Delete inbox copy?", Atspi.Role.DIALOG))
+        status("Deleted remote inbox copy; saved local files kept")
+        assert extra not in ids("desktop"), "File inbox deletion failed"
+        assert target.read_bytes() == source.read_bytes(), "Inbox deletion modified a saved local file"
+
 
     known = fixture.directory / "desktop/known_hosts"
     approved = known.read_bytes()

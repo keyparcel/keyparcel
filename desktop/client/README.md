@@ -40,6 +40,12 @@ the full transfer ID and its copy action. Content is fully verified before displ
 or a destination write. Incoming files use GTK's save dialog; replacing an existing
 regular file requires confirmation.
 
+Use **Delete** on an Inbox item to remove this device's remote copy without
+receiving or saving it. Confirm the deletion, or cancel to keep it. Other
+recipients' copies and saved local files are untouched. A failed deletion keeps
+the item available for retry. **Remove & close** after receiving/saving still
+works as before.
+
 Receiving or saving **keeps the remote copy**. **Remove & close** deletes it
 explicitly; Back, window closure, cancellation and failed delivery retain it.
 Failed removal leaves the result and retry action available. The

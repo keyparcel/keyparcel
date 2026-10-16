@@ -45,3 +45,5 @@ void ui_rows_begin(UI *ui, const char *name);
 void ui_rows_end(UI *ui);
 
 void ui_watch(UI *ui);
+
+void ui_confirm_delete(UI *ui, const char *id, const char *message);

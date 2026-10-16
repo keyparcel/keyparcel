@@ -49,4 +49,23 @@ class ClientStateTest {
         }
         assertEquals(0L, retry.copy(nextAttemptMillis = 0).nextAttemptMillis)
     }
+
+    @Test fun inboxDeleteBelongsToCapturedContext() {
+        val host = Host("server", 22, "user", "approved-key")
+        val settings = Settings(host, mapOf("bob" to "key"))
+        val item = InboxItem("0123456789abcdef0123456789abcdef", "bob", "file", "file.bin", 1, "")
+        val request = InboxDeleteRequest(item.id, settings)
+        assertTrue(request.matches(settings, listOf(item)))
+        for (changed in listOf(
+            settings.copy(host = host.copy(address = "other")),
+            settings.copy(host = host.copy(port = 2222)),
+            settings.copy(host = host.copy(user = "other")),
+            settings.copy(host = host.copy(key = "replacement")),
+            settings.copy(host = host.copy(root = "other")),
+            settings.copy(host = host.copy(discovery = "other")),
+            settings.copy(peers = emptyMap()),
+        )) assertFalse("Same-ID entry accepted in changed context", request.matches(changed, listOf(item)))
+        assertFalse(request.matches(settings, emptyList()))
+        assertFalse(request.matches(settings, listOf(item.copy(id = "other"))))
+    }
 }

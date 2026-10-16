@@ -121,6 +121,15 @@ private fun ClientScreen(model: AppModel) {
 
 @Composable
 private fun InboxScreen(model: AppModel, save: (InboxItem) -> Unit) {
+    model.pendingDelete?.let {
+        AlertDialog(onDismissRequest = model::cancelInboxDelete,
+            title = { Text("Delete inbox copy?") },
+            text = { Text("Delete this device's remote inbox copy without downloading it? Other recipients' copies and saved local files remain untouched.") },
+            confirmButton = { TextButton(onClick = model::confirmInboxDelete, enabled = !model.busy,
+                modifier = Modifier.testTag("confirm-inbox-delete")) { Text("Delete") } },
+            dismissButton = { TextButton(onClick = model::cancelInboxDelete, enabled = !model.busy,
+                modifier = Modifier.testTag("cancel-inbox-delete")) { Text("Cancel") } })
+    }
     val context = LocalContext.current
     Text("Inbox", style = MaterialTheme.typography.titleLarge)
     Button(onClick = { model.refreshInbox() }, enabled = !model.busy && model.settings.host?.trusted == true,
@@ -153,6 +162,10 @@ private fun InboxScreen(model: AppModel, save: (InboxItem) -> Unit) {
                         TextButton(onClick = { details = !details }, modifier = Modifier.testTag("details-${item.id}")) {
                             Text(if (details) "Hide details" else "Details")
                         }
+                        TextButton(onClick = { model.beginInboxDelete(item) }, enabled = !model.busy,
+                            modifier = Modifier.testTag("delete-${item.id}").semantics {
+                                contentDescription = "Delete ${if (item.type == "text") "text" else item.filename} from ${item.from}"
+                            }) { Text("Delete") }
                     }
                     if (details) {
                         Text("Transfer ID", style = MaterialTheme.typography.labelMedium)
