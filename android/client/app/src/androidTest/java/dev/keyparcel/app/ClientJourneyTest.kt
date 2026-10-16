@@ -498,7 +498,20 @@ class ClientJourneyTest {
         compose.waitUntil(150_000) { liveModel.refreshRevision >= revision + 2 }
         check(value("message") == input) { "Timed refresh discarded the text draft" }
         compose.onNodeWithTag("recipient-laptop").assertTextEquals("✓ To laptop")
-        compose.onNodeWithTag("send-message").performScrollTo().performClick()
+        compose.onNodeWithTag("message").performScrollTo().performTouchInput { click() }
+        field("message", input)
+        compose.onNodeWithTag("send-message").assertIsDisplayed().assertIsEnabled()
+        val sendBounds = compose.onNodeWithTag("send-message").fetchSemanticsNode().boundsInWindow
+        compose.runOnUiThread {
+            val decor = compose.activity.window.decorView
+            val insets = requireNotNull(ViewCompat.getRootWindowInsets(decor))
+            check(insets.isVisible(WindowInsetsCompat.Type.ime())) { "Software keyboard closed before Send" }
+            check(sendBounds.bottom <= decor.height - insets.getInsets(WindowInsetsCompat.Type.ime()).bottom) {
+                "Send overlaps the software keyboard"
+            }
+        }
+        screenshot("send-keyboard")
+        compose.onNodeWithTag("send-message").performTouchInput { click() }
         finished()
         compose.onNodeWithTag("notice").assertTextContains("Sent to laptop", substring = true)
         screenshot("sent")
@@ -643,7 +656,7 @@ class ClientJourneyTest {
         compose.onNodeWithTag("recipient-self").assertTextEquals("✓ This device")
         compose.onNodeWithTag("message").performTextInput(input)
         compose.onNodeWithTag("send-message").assertIsEnabled()
-        compose.onNodeWithTag("send-message").performScrollTo().performClick()
+        compose.onNodeWithTag("send-message").performClick()
         finished()
         compose.onNodeWithTag("error").assertDoesNotExist()
         val notice = compose.onNodeWithTag("notice").fetchSemanticsNode().config[SemanticsProperties.Text].single().text
@@ -742,7 +755,7 @@ class ClientJourneyTest {
         compose.onNodeWithTag("send-file").assertIsNotEnabled()
         click("choose-file"); pickerRoot()
         pickerClick(scrollFiles = true) { it.text?.toString() == "fail-read" }; pickerReturned()
-        compose.onNodeWithTag("send-file").performScrollTo().performClick(); finished()
+        compose.onNodeWithTag("send-file").performClick(); finished()
         compose.onNodeWithTag("error").assertTextContains("Fixture source failed", substring = true)
         compose.onNodeWithTag("notice").assertDoesNotExist()
         compose.onNodeWithTag("send-file").assertIsEnabled()
@@ -751,7 +764,7 @@ class ClientJourneyTest {
         compose.runOnIdle { model.documentTimeoutMillis = 3_000L }
         try {
             val started = android.os.SystemClock.elapsedRealtime()
-            compose.onNodeWithTag("send-file").performScrollTo().performClick(); finished()
+            compose.onNodeWithTag("send-file").performClick(); finished()
             check(android.os.SystemClock.elapsedRealtime() - started < 15_000) { "Stalled source did not return promptly" }
             compose.onNodeWithTag("error").assertTextContains("Document operation timed out", substring = true)
             compose.onNodeWithTag("notice").assertDoesNotExist()
@@ -786,13 +799,13 @@ class ClientJourneyTest {
         compose.onNodeWithTag("selected-filename").assertTextEquals("payload-世界.bin")
         compose.onNodeWithTag("selected-size").assertTextEquals("Size unknown")
         screenshot("send-file")
-        compose.onNodeWithTag("send-file").performScrollTo().performClick(); finished()
+        compose.onNodeWithTag("send-file").performClick(); finished()
         val binaryID = compose.onNodeWithTag("notice").fetchSemanticsNode().config[SemanticsProperties.Text].single().text.substringAfterLast(" · ")
         click("send-screen"); click("send-file-mode"); click("recipient-laptop")
         click("choose-file"); pickerRoot()
         pickerClick(scrollFiles = true) { it.text?.toString() == "empty.bin" }; pickerReturned()
         compose.onNodeWithTag("selected-size").assertTextEquals("0 B")
-        compose.onNodeWithTag("send-file").performScrollTo().performClick(); finished()
+        compose.onNodeWithTag("send-file").performClick(); finished()
         val emptyID = compose.onNodeWithTag("notice").fetchSemanticsNode().config[SemanticsProperties.Text].single().text.substringAfterLast(" · ")
         InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
             putString("binary_reply_id", binaryID); putString("empty_reply_id", emptyID)
