@@ -96,7 +96,7 @@ func (m *model) sendProfile() profile {
 func (m *model) selectedRecipients() []string {
 	var names []string
 	seen := map[string]bool{}
-	for _, name := range append([]string{m.get("recipient")}, m.extraRecipients...) {
+	for _, name := range append([]string{m.recipient}, m.extraRecipients...) {
 		if name != "" && !seen[name] {
 			names = append(names, name)
 			seen[name] = true
@@ -146,8 +146,8 @@ func (m *model) addRecipient(name string) {
 	}
 	for _, candidate := range m.candidates() {
 		if candidate == name {
-			if m.get("recipient") == "" {
-				cstrings([]string{name}, func(v []*C.char) { C.ui_select_recipient(m.ui, v[0]) })
+			if m.recipient == "" {
+				m.recipient = name
 			} else {
 				m.extraRecipients = append(m.extraRecipients, name)
 			}
@@ -160,13 +160,13 @@ func (m *model) removeRecipient(name string) {
 	if m.active != nil || m.sending != nil {
 		return
 	}
-	if m.get("recipient") == name {
+	if m.recipient == name {
 		next := ""
 		if len(m.extraRecipients) > 0 {
 			next = m.extraRecipients[0]
 			m.extraRecipients = m.extraRecipients[1:]
 		}
-		cstrings([]string{next}, func(v []*C.char) { C.ui_select_recipient(m.ui, v[0]) })
+		m.recipient = next
 	} else {
 		var kept []string
 		for _, n := range m.extraRecipients {
@@ -181,16 +181,14 @@ func (m *model) removeRecipient(name string) {
 func (m *model) drawSend() {
 	names := m.selectedRecipients()
 	m.clear("recipient-tokens")
-	if len(m.extraRecipients) > 0 {
-		for _, name := range names {
-			cstrings([]string{name, recipientLabel(name)}, func(v []*C.char) { C.ui_recipient_token(m.ui, v[0], v[1]) })
-		}
+	for _, name := range names {
+		cstrings([]string{name, recipientLabel(name)}, func(v []*C.char) { C.ui_recipient_token(m.ui, v[0], v[1]) })
 	}
 	retry := false
 	if m.sending != nil {
 		retry = len(m.sending.failed()) > 0 && m.sending.matches(m.sendProfile())
 	}
-	C.ui_send_state(m.ui, C.int(len(names)), boolean(m.sending != nil), boolean(retry), boolean(m.file != ""))
+	C.ui_send_state(m.ui, C.int(len(names)), boolean(m.sending != nil), boolean(retry), boolean(m.file != ""), boolean(len(m.candidates()) > 0))
 }
 func (m *model) clearSendAttempt() {
 	if m.sending != nil && m.sending.Stage != nil {
@@ -350,14 +348,12 @@ func (m *model) performSend(a *sendAttempt, names []string, prepare bool) {
 			m.file = ""
 			m.set("selected-file", "No file selected")
 		}
-		m.extraRecipients = nil
 		message := "Sent " + a.Deliveries[0].ID
 		if len(a.Names) > 1 {
 			message = fmt.Sprintf("Sent to %d devices\n%s", len(a.Names), a.summary())
 		}
 		m.clearSendAttempt()
 		m.drawSend()
-		m.page("inbox")
 		m.message(message)
 	}, func(err error) {
 		if m.sending != a {

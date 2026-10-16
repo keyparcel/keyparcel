@@ -4,6 +4,7 @@ import (
 	"keyparcel/core"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -93,5 +94,36 @@ func TestCancelledSendCannotReopenRemovedStagingPath(t *testing.T) {
 	}
 	if m.sending != nil {
 		t.Fatal("cancelled attempt remained active")
+	}
+}
+
+func TestRecipientChooserExcludesSelectedKeys(t *testing.T) {
+	own, err := core.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer, err := core.GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownIdentity, err := core.ParseIdentity(own)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peerIdentity, err := core.ParseIdentity(peer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := &model{public: core.PublicText(ownIdentity.Public), recipient: "self",
+		peers: map[string]string{"own-alias": core.PublicText(ownIdentity.Public), "bob": core.PublicText(peerIdentity.Public)}}
+	if got := m.candidates(); !reflect.DeepEqual(got, []string{"bob"}) {
+		t.Fatalf("chooser included selected key or omitted peer: %v", got)
+	}
+	m.extraRecipients = []string{"bob"}
+	if got := m.candidates(); len(got) != 0 {
+		t.Fatalf("chooser offered selected recipients: %v", got)
+	}
+	if got := m.selectedRecipients(); !reflect.DeepEqual(got, []string{"self", "bob"}) {
+		t.Fatalf("draft recipients lost: %v", got)
 	}
 }

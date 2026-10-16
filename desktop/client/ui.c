@@ -124,10 +124,11 @@ static void response(GtkDialog *dialog, int answer, gpointer data) {
                 g_free(path);
                 g_clear_object(&file);
             } else {
-                const char *value = !a->entry ? "" : GTK_IS_COMBO_BOX(a->entry) ? gtk_combo_box_get_active_id(GTK_COMBO_BOX(a->entry)) : gtk_editable_get_text(GTK_EDITABLE(a->entry));
+                const char *value = strcmp(a->action,"add-recipient")==0 ? a->arg : !a->entry ? "" : gtk_editable_get_text(GTK_EDITABLE(a->entry));
                 goEvent(ui->handle, a->action, a->arg, (char *)value);
             }
-        } else if (strcmp(a->action, "delete-confirm") == 0) goEvent(ui->handle, "delete-cancel", "", "");
+        } else if (strcmp(a->action, "add-recipient") == 0) goEvent(ui->handle,"recipient-cancel","","");
+        else if (strcmp(a->action, "delete-confirm") == 0) goEvent(ui->handle, "delete-cancel", "", "");
         else goEvent(ui->handle, "notice", "Selection cancelled; remote transfers retained", "");
     }
     gtk_window_destroy(GTK_WINDOW(dialog));
@@ -217,12 +218,6 @@ void ui_details(UI *ui, const char *id) {
     dialog_attach(ui, d, action_new(ui, "", ""));
 }
 
-static void recipient_changed(GObject *object, GParamSpec *spec, gpointer data) {
-    (void)object; (void)spec;
-    UI *ui = data;
-    ui_send_ready(ui, ui->has_file);
-    if (!ui->closed) goEvent(ui->handle,"recipient-changed","","");
-}
 static gboolean poll_tick(gpointer data) {
     UI *ui = data;
     if (ui->closed) return G_SOURCE_REMOVE;
@@ -368,14 +363,9 @@ UI *ui_new(uintptr_t handle, const char *icon) {
 
     GtkWidget *send = page(ui, "send", "Send");
     gtk_box_append(GTK_BOX(send), label("Recipient"));
-    GtkWidget *recipient = gtk_drop_down_new(NULL, NULL); accessible(recipient, "Recipient");
-    GtkStringList *recipients = gtk_string_list_new(NULL);
-    gtk_drop_down_set_model(GTK_DROP_DOWN(recipient), G_LIST_MODEL(recipients));
-    g_object_unref(recipients);
-    remember(ui, "recipient", recipient); gtk_box_append(GTK_BOX(send), recipient);
-    GtkWidget *add = button(ui,"Add recipient","add-recipient-request",""); remember(ui,"add-recipient",add); gtk_box_append(GTK_BOX(send),add);
     GtkWidget *tokens = gtk_flow_box_new(); gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(tokens),GTK_SELECTION_NONE);
     remember(ui,"recipient-tokens",tokens); gtk_box_append(GTK_BOX(send),tokens);
+    GtkWidget *add = button(ui,"Choose recipient…","add-recipient-request",""); remember(ui,"add-recipient",add); gtk_flow_box_append(GTK_FLOW_BOX(tokens),add);
     GtkWidget *report=label(""); remember(ui,"send-report",report); gtk_box_append(GTK_BOX(send),report);
     GtkWidget *retry=button(ui,"Retry failed recipients","retry-send",""); remember(ui,"retry-send",retry); gtk_widget_set_visible(retry,FALSE); gtk_box_append(GTK_BOX(send),retry);
     GtkWidget *edit=button(ui,"Edit draft","edit-send",""); remember(ui,"edit-send",edit); gtk_widget_set_visible(edit,FALSE); gtk_box_append(GTK_BOX(send),edit);
@@ -389,7 +379,6 @@ UI *ui_new(uintptr_t handle, const char *icon) {
     gtk_widget_set_sensitive(send_file, FALSE); gtk_box_append(GTK_BOX(file_actions), send_file);
     gtk_box_append(GTK_BOX(send), file_actions);
     gtk_box_append(GTK_BOX(send), button(ui, "Discard draft", "discard-draft", ""));
-    g_signal_connect(recipient, "notify::selected", G_CALLBACK(recipient_changed), ui);
 
     GtkWidget *view = page(ui, "text", "Received text — remote copy retained");
     gtk_box_append(GTK_BOX(view), text_view(ui, "received", FALSE));
@@ -430,14 +419,6 @@ void ui_busy(UI *ui, int busy) {
 }
 const char *ui_get(UI *ui, const char *name) {
     GtkWidget *w = g_hash_table_lookup(ui->fields, name);
-    if (GTK_IS_DROP_DOWN(w)) {
-        GtkDropDown *drop = GTK_DROP_DOWN(w);
-        GtkStringObject *item = gtk_drop_down_get_selected_item(drop);
-        if (!item) return "";
-        guint selected = gtk_drop_down_get_selected(drop);
-        if (selected == 0) return "";
-        return selected == 1 ? "self" : gtk_string_object_get_string(item);
-    }
     if (GTK_IS_COMBO_BOX(w)) { const char *id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(w)); return id ? id : ""; }
     if (GTK_IS_EDITABLE(w)) return gtk_editable_get_text(GTK_EDITABLE(w));
     if (GTK_IS_LABEL(w)) return gtk_label_get_text(GTK_LABEL(w));
@@ -463,33 +444,22 @@ void ui_clear(UI *ui, const char *name) {
     if (strcmp(name,"items") == 0) g_hash_table_remove_all(ui->inbox_rows);
     if (strcmp(name,"device-list") == 0) g_hash_table_remove_all(ui->device_rows);
     GtkWidget *w = g_hash_table_lookup(ui->fields, name);
-    if (GTK_IS_DROP_DOWN(w)) {
-        GtkStringList *list = GTK_STRING_LIST(gtk_drop_down_get_model(GTK_DROP_DOWN(w)));
-        gtk_string_list_splice(list, 0, g_list_model_get_n_items(G_LIST_MODEL(list)), NULL);
-        return;
-    }
     if (GTK_IS_COMBO_BOX_TEXT(w)) { gtk_combo_box_text_remove_all(GTK_COMBO_BOX_TEXT(w)); return; }
     GtkWidget *child;
-    if (GTK_IS_FLOW_BOX(w)) { while ((child = gtk_widget_get_first_child(w))) gtk_flow_box_remove(GTK_FLOW_BOX(w),child); return; }
+    if (GTK_IS_FLOW_BOX(w)) {
+        for (child=gtk_widget_get_first_child(w);child;) {
+            GtkWidget *next=gtk_widget_get_next_sibling(child);
+            if (gtk_flow_box_child_get_child(GTK_FLOW_BOX_CHILD(child)) != g_hash_table_lookup(ui->fields,"add-recipient")) gtk_flow_box_remove(GTK_FLOW_BOX(w),child);
+            child=next;
+        }
+        return;
+    }
     while ((child = gtk_widget_get_first_child(w))) gtk_box_remove(GTK_BOX(w), child);
 }
 void ui_host(UI *ui, const char *name) { gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(g_hash_table_lookup(ui->fields, "hosts")), name); }
-void ui_recipients(UI *ui, const char *name) {
-    GtkDropDown *drop = GTK_DROP_DOWN(g_hash_table_lookup(ui->fields, "recipient"));
-    gtk_string_list_append(GTK_STRING_LIST(gtk_drop_down_get_model(drop)), !name[0] ? "Choose a recipient" : strcmp(name, "self") == 0 ? "This device" : name);
-}
-void ui_select_recipient(UI *ui, const char *name) {
-    GtkDropDown *drop = GTK_DROP_DOWN(g_hash_table_lookup(ui->fields, "recipient"));
-    GtkStringList *list = GTK_STRING_LIST(gtk_drop_down_get_model(drop));
-    guint selected = 0;
-    for (guint i = 1; i < g_list_model_get_n_items(G_LIST_MODEL(list)); i++) {
-        if ((i == 1 && strcmp(name, "self") == 0) || (i > 1 && strcmp(name, gtk_string_list_get_string(list, i)) == 0)) { selected = i; break; }
-    }
-    gtk_drop_down_set_selected(drop, selected);
-}
 void ui_send_ready(UI *ui, int has_file) {
     ui->has_file = has_file;
-    gboolean selected = ui_get(ui, "recipient")[0] != '\0';
+    gboolean selected = ui->send_count > 0;
     gtk_widget_set_sensitive(g_hash_table_lookup(ui->fields, "send-text"), selected && !ui->send_locked);
     gtk_widget_set_sensitive(g_hash_table_lookup(ui->fields, "send-file"), selected && has_file && !ui->send_locked);
 }
@@ -619,23 +589,42 @@ void ui_sync(UI *ui, const char *state, const char *detail) {
 }
 void ui_refreshing(UI *ui, int refreshing) { gtk_widget_set_sensitive(ui->cancel,refreshing); }
 
+static void recipient_chosen(GtkButton *button, gpointer data) {
+    Action *a=data;
+    g_free(a->arg);
+    a->arg=g_strdup(g_object_get_data(G_OBJECT(button),"recipient"));
+    gtk_dialog_response(GTK_DIALOG(gtk_widget_get_root(GTK_WIDGET(button))),GTK_RESPONSE_ACCEPT);
+}
 void ui_add_recipient(UI *ui, const char **names, int count) {
     if (ui->picker || count==0) return;
-    GtkWidget *dialog=gtk_dialog_new_with_buttons("Add recipient",ui->window,GTK_DIALOG_MODAL,"Cancel",GTK_RESPONSE_CANCEL,"Add",GTK_RESPONSE_ACCEPT,NULL);
-    Action *a=action_new(ui,"add-recipient","");a->entry=gtk_combo_box_text_new();accessible(a->entry,"Additional recipient");
-    for (int i=0;i<count;i++) gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(a->entry),names[i],strcmp(names[i],"self")==0 ? "This device" : names[i]);
-    gtk_combo_box_set_active(GTK_COMBO_BOX(a->entry),0);
-    gtk_box_append(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dialog))),a->entry);dialog_attach(ui,dialog,a);
+    GtkWidget *dialog=gtk_dialog_new_with_buttons("Choose recipient",ui->window,GTK_DIALOG_MODAL,"Cancel",GTK_RESPONSE_CANCEL,NULL);
+    Action *a=action_new(ui,"add-recipient","");
+    GtkWidget *list=gtk_box_new(GTK_ORIENTATION_VERTICAL,8);
+    accessible(list,"Available recipients");
+    for (int i=0;i<count;i++) {
+        GtkWidget *choice=gtk_button_new_with_label(strcmp(names[i],"self")==0 ? "This device" : names[i]);
+        g_object_set_data_full(G_OBJECT(choice),"recipient",g_strdup(names[i]),g_free);
+        g_signal_connect(choice,"clicked",G_CALLBACK(recipient_chosen),a);
+        gtk_box_append(GTK_BOX(list),choice);
+    }
+    GtkWidget *scroll=gtk_scrolled_window_new();
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),GTK_POLICY_NEVER,GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroll),180);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll),list);
+    gtk_box_append(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dialog))),scroll);
+    dialog_attach(ui,dialog,a);
 }
 void ui_recipient_token(UI *ui, const char *name, const char *title) {
     char *text=g_strdup_printf("%s ×",title);GtkWidget *b=button(ui,text,"remove-recipient",name);g_free(text);
     text=g_strdup_printf("Remove recipient %s",title);accessible(b,text);g_free(text);gtk_widget_add_css_class(b,"pill");
-    gtk_flow_box_append(GTK_FLOW_BOX(g_hash_table_lookup(ui->fields,"recipient-tokens")),b);
+    GtkWidget *add=g_hash_table_lookup(ui->fields,"add-recipient");
+    int position=gtk_flow_box_child_get_index(GTK_FLOW_BOX_CHILD(gtk_widget_get_parent(add)));
+    gtk_flow_box_insert(GTK_FLOW_BOX(g_hash_table_lookup(ui->fields,"recipient-tokens")),b,position);
 }
-void ui_send_state(UI *ui, int count, int locked, int retry, int has_file) {
+void ui_send_state(UI *ui, int count, int locked, int retry, int has_file, int can_add) {
     ui->send_locked=locked;ui->send_count=count;
-    gtk_widget_set_sensitive(g_hash_table_lookup(ui->fields,"recipient"),!locked);
-    gtk_widget_set_sensitive(g_hash_table_lookup(ui->fields,"add-recipient"),!locked);
+    gtk_button_set_label(GTK_BUTTON(g_hash_table_lookup(ui->fields,"add-recipient")),count ? "+ Add another" : "Choose recipient…");
+    gtk_widget_set_sensitive(g_hash_table_lookup(ui->fields,"add-recipient"),!locked && can_add);
     gtk_widget_set_sensitive(g_hash_table_lookup(ui->fields,"recipient-tokens"),!locked);
     gtk_widget_set_sensitive(g_hash_table_lookup(ui->fields,"choose-file"),!locked);
     gtk_text_view_set_editable(GTK_TEXT_VIEW(g_hash_table_lookup(ui->fields,"draft")),!locked);
