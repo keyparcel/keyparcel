@@ -48,13 +48,29 @@ data class SendReport(val deliveries: List<SendDelivery>) {
     val failed get() = deliveries.filter { it.error.isNotEmpty() && !it.unconfirmed }.map { it.recipient }
     val complete get() = deliveries.isNotEmpty() && deliveries.all { it.error.isEmpty() && !it.unconfirmed }
     fun merge(next: SendReport) = SendReport(deliveries.map { old -> next.deliveries.find { it.recipient == old.recipient } ?: old })
-    fun summary() = deliveries.joinToString("\n") {
-        "${recipientLabel(it.recipient)}: " + when {
-            it.unconfirmed -> "unconfirmed — check the inbox before sending again"
-            it.error.isNotEmpty() -> "failed — ${it.error}"
-            else -> "delivered"
-        }
+    fun headline(): String {
+        if (!complete) return "Send incomplete"
+        val title = if (deliveries.size == 1) "Sent to ${recipientLabel(deliveries.single().recipient)}"
+            else "Sent to ${deliveries.size} devices"
+        val id = deliveries.map { it.id }.distinct().singleOrNull().orEmpty()
+        return title + if (id.isEmpty()) "" else " · ${id.take(8)}"
     }
+}
+
+fun SendDelivery.outcome() = when {
+    unconfirmed -> "unconfirmed — check the inbox before sending again"
+    error.isNotEmpty() -> "failed — $error"
+    else -> "delivered"
+}
+
+const val SEND_FEEDBACK_MILLIS = 5_000L
+
+data class SendFeedback(val report: SendReport, val expanded: Boolean = !report.complete,
+    val visible: Boolean = true, val dismissAt: Long = 0) {
+    fun expand(open: Boolean, now: Long) = copy(expanded = open,
+        dismissAt = if (report.complete && !open) now + SEND_FEEDBACK_MILLIS else 0)
+    fun expire(now: Long) = if (visible && report.complete && !expanded && dismissAt != 0L && now >= dismissAt)
+        copy(visible = false) else this
 }
 
 // A fixed polling tick is skipped during work; only connection retries back off.

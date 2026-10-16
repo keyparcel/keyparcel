@@ -72,6 +72,7 @@ type model struct {
 	addingRecipient                   *profile
 	recipient                         string
 	extraRecipients                   []string
+	feedback                          *sendFeedback
 	sending                           *sendAttempt
 }
 
@@ -230,7 +231,7 @@ func (m *model) applyProfile(p profile) {
 		m.deleteInbox = nil
 		m.addingRecipient = nil
 		if m.target != p.Target || m.host != p.Host {
-			m.set("send-report", "")
+			m.clearSendFeedback()
 		}
 		C.ui_clear_results(m.ui)
 		if m.navigation.current == "text" || m.navigation.current == "saved" {
@@ -256,7 +257,7 @@ func (m *model) applyProfile(p profile) {
 		m.clearSendAttempt()
 		recipient = ""
 		m.extraRecipients = nil
-		m.set("send-report", "Server or recipient approval changed; choose recipients again. Previous deliveries are not undone.")
+		m.message("Server or recipient approval changed; choose recipients again. Previous deliveries are not undone.")
 	}
 	m.peers = p.Config.Peers
 	m.host = p.Host
@@ -386,7 +387,14 @@ func (m *model) event(action, arg, value string) {
 	}
 	switch action {
 	case "poll":
+		if m.feedback != nil && m.feedback.expire(time.Now()) {
+			m.drawFeedback()
+		}
 		m.poll()
+	case "feedback-expanded":
+		if m.feedback != nil {
+			m.feedback.expand(arg == "true", time.Now())
+		}
 	case "notice", "error":
 		m.message(arg)
 	case "back":
@@ -486,7 +494,7 @@ func (m *model) event(action, arg, value string) {
 		m.recipient = ""
 		m.clearSendAttempt()
 		m.extraRecipients = nil
-		m.set("send-report", "")
+		m.clearSendFeedback()
 		C.ui_clear_draft(m.ui, 0)
 		m.file = ""
 		m.set("selected-file", "No file selected")
@@ -508,7 +516,7 @@ func (m *model) event(action, arg, value string) {
 		m.clearSendAttempt()
 		m.extraRecipients = nil
 		m.recipient = ""
-		m.set("send-report", "")
+		m.clearSendFeedback()
 		m.drawSend()
 	case "send-text", "send-file":
 		m.send(action == "send-file")

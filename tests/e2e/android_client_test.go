@@ -372,7 +372,7 @@ func TestAndroidTextClient(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"setup", "server-approval", "host-key-changed", "inbox", "inbox-details", "settings-simple", "peer-approval", "send-draft", "received", "sent", "removal-error", "removed", "timeout", "received-copy", "clipboard-unavailable", "send-file", "saved-file", "send-multiple-text", "send-multiple-file"} {
+	for _, name := range []string{"setup", "server-approval", "host-key-changed", "inbox", "inbox-details", "settings-simple", "peer-approval", "send-draft", "received", "sent", "removal-error", "removed", "timeout", "received-copy", "clipboard-unavailable", "send-file", "saved-file", "send-multiple-text", "send-multiple-file", "send-feedback-details"} {
 		out := adb("exec-out", "run-as", app, "cat", "files/"+name+".png")
 		if len(out) < 8 || string(out[:8]) != "\x89PNG\r\n\x1a\n" {
 			t.Fatalf("Invalid %s screenshot", name)

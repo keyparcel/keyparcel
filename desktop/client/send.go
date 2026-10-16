@@ -71,19 +71,6 @@ func (a *sendAttempt) merge(next []core.Delivery) {
 		}
 	}
 }
-func (a *sendAttempt) summary() string {
-	var lines []string
-	for _, d := range a.Deliveries {
-		state := "delivered"
-		if d.Unconfirmed {
-			state = "unconfirmed — check the inbox before sending again"
-		} else if d.Error != "" {
-			state = "failed — " + d.Error
-		}
-		lines = append(lines, recipientLabel(d.Recipient)+": "+state)
-	}
-	return strings.Join(lines, "\n")
-}
 func recipientLabel(name string) string {
 	if name == "self" {
 		return "This device"
@@ -206,6 +193,7 @@ func (m *model) send(file bool) {
 		m.message("Choose a recipient before sending")
 		return
 	}
+	m.clearSendFeedback()
 	a := &sendAttempt{Profile: m.sendProfile(), Names: names, Keys: map[string]string{}, File: file, Source: m.file, Filename: filepath.Base(m.file)}
 	for _, name := range names {
 		a.Keys[name] = sendKey(a.Profile, name)
@@ -331,16 +319,10 @@ func (m *model) performSend(a *sendAttempt, names []string, prepare bool) {
 			return
 		}
 		a.merge(result.Deliveries)
-		m.set("send-report", a.summary())
-		complete := true
-		for _, d := range a.Deliveries {
-			if d.Error != "" || d.Unconfirmed {
-				complete = false
-			}
-		}
-		if !complete {
+		m.showSendFeedback(a.Deliveries)
+		if !m.feedback.complete() {
 			m.drawSend()
-			m.message("Send incomplete; the draft is retained")
+			m.message("Ready.")
 			return
 		}
 		C.ui_clear_draft(m.ui, boolean(a.File))
@@ -348,13 +330,9 @@ func (m *model) performSend(a *sendAttempt, names []string, prepare bool) {
 			m.file = ""
 			m.set("selected-file", "No file selected")
 		}
-		message := "Sent " + a.Deliveries[0].ID
-		if len(a.Names) > 1 {
-			message = fmt.Sprintf("Sent to %d devices\n%s", len(a.Names), a.summary())
-		}
 		m.clearSendAttempt()
 		m.drawSend()
-		m.message(message)
+		m.message("Ready.")
 	}, func(err error) {
 		if m.sending != a {
 			return
@@ -370,7 +348,7 @@ func (m *model) performSend(a *sendAttempt, names []string, prepare bool) {
 			uncertain = append(uncertain, core.Delivery{Recipient: name, Error: err.Error(), Unconfirmed: true})
 		}
 		a.merge(uncertain)
-		m.set("send-report", a.summary())
+		m.showSendFeedback(a.Deliveries)
 		m.drawSend()
 	})
 	if !started {

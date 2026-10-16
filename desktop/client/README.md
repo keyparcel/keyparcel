@@ -25,6 +25,11 @@ but its identity must still be enrolled on the server.
 
 ## Send and receive
 
+Send feedback shows a short transfer ID when copies share one ID. Open its
+chevron for recipient outcomes, full IDs and Copy ID actions. Successful feedback
+closes after five seconds; opening details pauses dismissal. Incomplete or
+unconfirmed deliveries stay visible, with failed-only retry and editing controls.
+
 Inbox, Send and Devices are available directly in the navigation bar. Settings
 opens separately; Back, Escape or Alt+Left returns to the prior page. Dialogs and
 expanded Advanced sections are dismissed first.

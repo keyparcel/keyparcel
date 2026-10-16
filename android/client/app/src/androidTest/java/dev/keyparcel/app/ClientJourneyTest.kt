@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.os.Bundle
 import android.os.Build
+import android.os.SystemClock
 import android.os.PersistableBundle
 import android.provider.DocumentsContract
 import kotlinx.coroutines.runBlocking
@@ -524,12 +525,37 @@ class ClientJourneyTest {
         screenshot("send-keyboard")
         compose.onNodeWithTag("send-message").performTouchInput { click() }
         finished()
-        compose.onNodeWithTag("notice").assertTextContains("Sent to laptop", substring = true)
+        val model = ViewModelProvider(compose.activity)[AppModel::class.java]
+        val sent = requireNotNull(model.sendReport)
+        compose.onNodeWithTag("send-feedback-toggle").assertTextEquals("▸ ${sent.headline()}")
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Collapsed"))
+        compose.onNodeWithTag("notice").assertDoesNotExist()
+        compose.onNodeWithTag("sent-id-laptop").assertDoesNotExist()
+        compose.onNodeWithTag("send-feedback-toggle").performScrollTo().performClick()
+        compose.onNodeWithTag("send-feedback-toggle")
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Expanded"))
+        compose.onNodeWithTag("sent-id-laptop").assertTextEquals(sent.deliveries.single().id)
+        withClipboard { clipboard ->
+            compose.onNodeWithTag("copy-sent-id-laptop").performScrollTo().performClick()
+            assertClipboard(clipboard, sent.deliveries.single().id)
+        }
+        screenshot("send-feedback-details")
+        val openUntil = SystemClock.elapsedRealtime() + SEND_FEEDBACK_MILLIS + 250
+        compose.waitUntil(SEND_FEEDBACK_MILLIS + 5_000) {
+            check(model.sendFeedback?.visible == true && model.sendFeedback?.expanded == true) {
+                "Success disappeared while its details were open"
+            }
+            SystemClock.elapsedRealtime() >= openUntil
+        }
+        compose.onNodeWithTag("send-feedback-toggle").performScrollTo().performClick()
+        compose.onNodeWithTag("sent-id-laptop").assertDoesNotExist()
         compose.onNodeWithTag("send-screen").assertIsSelected()
         compose.onNodeWithTag("remove-recipient-laptop").assertExists()
         check(value("message").isEmpty()) { "Successful text send retained content" }
         compose.onNodeWithTag("send-message").assertIsNotEnabled()
         screenshot("sent")
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("send-feedback").fetchSemanticsNodes().isEmpty() }
+        check(model.sendReport == sent) { "Dismissal discarded the actual delivery outcomes" }
     }
 
     @Test fun removalFailure() {
@@ -677,9 +703,11 @@ class ClientJourneyTest {
         compose.onNodeWithTag("send-message").performClick()
         finished()
         compose.onNodeWithTag("error").assertDoesNotExist()
-        val notice = compose.onNodeWithTag("notice").fetchSemanticsNode().config[SemanticsProperties.Text].single().text
-        check(notice.startsWith("Sent to this device")) { "Self-send did not report success" }
-        val id = notice.substringAfterLast(" · ")
+        val model = ViewModelProvider(compose.activity)[AppModel::class.java]
+        val report = requireNotNull(model.sendReport)
+        check(report.complete) { "Self-send did not report success" }
+        val id = report.deliveries.single().id
+        compose.onNodeWithTag("send-feedback-toggle").assertTextEquals("▸ Sent to This device · ${id.take(8)}")
         compose.onNodeWithTag("send-screen").assertIsSelected()
         check(value("message").isEmpty()) { "Successful send retained the sent draft" }
         compose.onNodeWithTag("remove-recipient-self").assertExists()
@@ -771,6 +799,12 @@ class ClientJourneyTest {
             val partial = requireNotNull(model.sendReport)
             check(partial.failed == listOf("laptop")) { "Partial delivery lost exact failed recipient: $partial" }
             check(partial.deliveries.first { it.recipient == "self" }.error.isEmpty()) { "Self was not delivered" }
+            compose.onNodeWithTag("send-feedback-toggle").assertTextEquals("▾ Send incomplete")
+            compose.onNodeWithTag("send-outcome-laptop").assertTextContains("failed", substring = true)
+            compose.onNodeWithTag("send-feedback-toggle").performScrollTo().performClick()
+            compose.onNodeWithTag("sent-id-self").assertDoesNotExist()
+            compose.onNodeWithTag("retry-send").assertExists()
+            compose.onNodeWithTag("send-feedback-toggle").performScrollTo().performClick()
             val ownID = partial.deliveries.first { it.recipient == "self" }.id
             evidence.putString("${kind}_self_id", ownID)
             compose.onNodeWithTag(sendTag).assertIsNotEnabled()
@@ -788,7 +822,12 @@ class ClientJourneyTest {
             compose.onNodeWithTag("remove-recipient-self").assertExists()
             compose.onNodeWithTag("remove-recipient-laptop").assertExists()
             compose.onNodeWithTag(sendTag).assertTextEquals("Send to 2 devices")
-            compose.onNodeWithTag("send-report").assertTextEquals(complete.summary())
+            compose.onNodeWithTag("send-feedback-toggle").assertTextEquals("▾ Sent to 2 devices")
+            compose.onNodeWithTag("sent-id-self").assertTextEquals(ownID)
+            compose.onNodeWithTag("sent-id-laptop").assertTextEquals(complete.deliveries.first { it.recipient == "laptop" }.id)
+            check(model.sendFeedback?.expanded == true && model.sendFeedback?.dismissAt == 0L) {
+                "Open retry details must pause dismissal"
+            }
             if (fileMode) {
                 compose.onNodeWithTag("selected-filename").assertDoesNotExist()
                 compose.onNodeWithTag("send-file").assertIsNotEnabled()
@@ -946,7 +985,10 @@ class ClientJourneyTest {
         compose.onNodeWithTag("selected-size").assertTextEquals("Size unknown")
         screenshot("send-file")
         compose.onNodeWithTag("send-file").performClick(); finished()
-        val binaryID = compose.onNodeWithTag("notice").fetchSemanticsNode().config[SemanticsProperties.Text].single().text.substringAfterLast(" · ")
+        val binaryID = requireNotNull(model.sendReport).deliveries.single().id
+        check(model.sendReport?.complete == true) { "File send did not complete" }
+        compose.onNodeWithTag("send-feedback-toggle").assertTextEquals("▸ Sent to laptop · ${binaryID.take(8)}")
+        compose.onNodeWithTag("notice").assertDoesNotExist()
         compose.onNodeWithTag("send-screen").assertIsSelected()
         compose.onNodeWithTag("remove-recipient-laptop").assertExists()
         compose.onNodeWithTag("selected-filename").assertDoesNotExist()
@@ -955,7 +997,10 @@ class ClientJourneyTest {
         pickerClick(scrollFiles = true) { it.text?.toString() == "empty.bin" }; pickerReturned()
         compose.onNodeWithTag("selected-size").assertTextEquals("0 B")
         compose.onNodeWithTag("send-file").performClick(); finished()
-        val emptyID = compose.onNodeWithTag("notice").fetchSemanticsNode().config[SemanticsProperties.Text].single().text.substringAfterLast(" · ")
+        val emptyID = requireNotNull(model.sendReport).deliveries.single().id
+        check(model.sendReport?.complete == true) { "File send did not complete" }
+        compose.onNodeWithTag("send-feedback-toggle").assertTextEquals("▸ Sent to laptop · ${emptyID.take(8)}")
+        compose.onNodeWithTag("notice").assertDoesNotExist()
         compose.onNodeWithTag("send-screen").assertIsSelected()
         compose.onNodeWithTag("remove-recipient-laptop").assertExists()
         compose.onNodeWithTag("selected-filename").assertDoesNotExist()

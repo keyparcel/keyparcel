@@ -63,7 +63,22 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     var progress by mutableStateOf<String?>(null); private set
     private data class PendingSend(val context: SendContext, val text: String, val file: File?, val filename: String, val report: SendReport)
     private var pendingSend by mutableStateOf<PendingSend?>(null)
-    var sendReport by mutableStateOf<SendReport?>(null); private set
+    var sendFeedback by mutableStateOf<SendFeedback?>(null); private set
+    val sendReport get() = sendFeedback?.report
+    private var feedbackJob: Job? = null
+
+    private fun feedback(value: SendFeedback?) {
+        feedbackJob?.cancel()
+        sendFeedback = value
+        if (value != null && value.visible && value.dismissAt != 0L) feedbackJob = viewModelScope.launch {
+            delay((value.dismissAt - SystemClock.elapsedRealtime()).coerceAtLeast(0))
+            if (sendFeedback === value) sendFeedback = value.expire(SystemClock.elapsedRealtime())
+        }
+    }
+
+    fun toggleSendFeedback() {
+        sendFeedback?.let { feedback(it.expand(!it.expanded, SystemClock.elapsedRealtime())) }
+    }
     val sendLocked get() = pendingSend != null
     val canRetrySend get() = pendingSend?.let { it.context.matches(settings, publicKey) && it.report.failed.isNotEmpty() } == true
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -359,7 +374,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         if (busy || sendLocked) return
         val document = selectedFile ?: return
         val context = sendContext(recipient)
-        sendReport = null
+        feedback(null)
         work({
             reportProgress("Preparing ${document.name}…")
             val application = getApplication<Application>()
@@ -410,16 +425,14 @@ class AppModel(application: Application) : AndroidViewModel(application) {
             error = "Send finished for ${context.settings.host?.address}; check those inboxes before sending again"
             return false
         }
-        sendReport = report
+        val open = sendFeedback?.expanded == true || !report.complete
+        feedback(SendFeedback(report).expand(open, SystemClock.elapsedRealtime()))
         if (!report.complete) {
             pendingSend = PendingSend(context, text, file, filename, report)
-            notice = "Send incomplete; the draft is retained"
             return true
         }
         clearPendingSend()
         if (file == null) draft = draft.copy(text = "") else selectedFile = null
-        notice = if (context.names.size == 1) "Sent to ${if (context.names.single() == "self") "this device" else context.names.single()} · ${report.deliveries.single().id}"
-            else "Sent to ${context.names.size} devices\n${report.summary()}"
         return false
     }
 
@@ -441,7 +454,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
 
     fun editSend() {
         if (busy) return
-        clearPendingSend(); sendReport = null
+        clearPendingSend(); feedback(null)
         draft = draft.copy(recipient = "", additionalRecipients = emptyList())
     }
 
@@ -505,12 +518,12 @@ class AppModel(application: Application) : AndroidViewModel(application) {
 
     fun back() { if (!busy) showPage(navigation.back().page) }
 
-    fun discardDraft() { clearPendingSend(); sendReport = null; draft = SendDraft(); selectedFile = null }
+    fun discardDraft() { clearPendingSend(); feedback(null); draft = SendDraft(); selectedFile = null }
 
     fun send(recipient: String, text: String) {
         if (busy || sendLocked) return
         val context = sendContext(recipient)
-        sendReport = null
+        feedback(null)
         work({
             val report = sendBatch(context, context.names, text, null, "")
             withContext(Dispatchers.Main) { finishSend(context, text, null, "", report) }
