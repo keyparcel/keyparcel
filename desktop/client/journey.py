@@ -244,16 +244,19 @@ def send_text_to_peer(message):
     fill("Message", message)
     before_peer = ids("peer")
     click("Send text")
+    # Open brief feedback before independent SSH/byte checks can outlast its timer.
+    disclosure = wait("peer success feedback", lambda: next((n for n in walk(app)
+        if n.get_role() == Atspi.Role.PUSH_BUTTON and n.get_name().startswith("Sent to bob · ")), None))
+    assert not disclosure.get_state_set().contains(Atspi.StateType.EXPANDED), "Disclosure announces expanded while collapsed"
+    assert not find(app, "Copy sent transfer ID for bob"), "Collapsed feedback exposed detail controls"
+    status("Ready.")  # Success appears in feedback, not duplicated in the top status
+    activate(disclosure)
     outgoing = wait("GUI delivery to approved peer", lambda: ids("peer") - before_peer)
     assert len(outgoing) == 1, "GUI peer send created unexpected transfers"
     assert fixture.cli("peer", "receive", next(iter(outgoing)), "--stdout", "--keep") == message.encode(), "Independent peer received different GUI text"
     transfer = next(iter(outgoing))
     title = "Sent to bob · " + transfer[:8]
-    disclosure = control(app, title)
-    assert not disclosure.get_state_set().contains(Atspi.StateType.EXPANDED), "Disclosure announces expanded while collapsed"
-    assert not find(app, transfer), "Collapsed feedback exposed full ID"
-    status("Ready.")  # Success appears in feedback, not duplicated in the top status
-    activate(disclosure)
+    control(app, title)
     control(app, transfer, Atspi.Role.LABEL)
     assert control(app, title).get_state_set().contains(Atspi.StateType.EXPANDED), "Open disclosure lacks expanded accessibility state"
     click("Copy sent transfer ID for bob")
@@ -532,7 +535,7 @@ try:
     select_recipient("This device")
     fill("Message", message)
     click("Send text")
-    wait("send completion", lambda: any(n.get_name().startswith("Sent ") for n in walk(app)))
+    wait("self-send clears sent text", lambda: text_contents(control(app, "Message")) == "")
     assert text_contents(control(app, "Message")) == "", "Self-send did not clear sent text on Send"
     control(app, "Remove recipient This device", Atspi.Role.PUSH_BUTTON)
     refresh()
@@ -703,7 +706,8 @@ try:
         status("File selected")
         before = ids("desktop")
         click("Send file")
-        wait("file send completion", lambda: any(n.get_name().startswith("Sent ") for n in walk(app)))
+        # Completion remains observable after the brief success feedback expires.
+        control(app, "No file selected", Atspi.Role.LABEL)
         after = ids("desktop")
         new = after - before
         assert len(new) == 1, "GUI file send did not create one transfer"
