@@ -51,8 +51,19 @@ without discarding content. Drafts do not survive app restarts.
 
 Inbox shows sender, filename/type, size and local upload time. **Details** exposes
 the full transfer ID and its copy action. Content is fully verified before display
-or a destination write. Incoming files use GTK's save dialog; replacing an existing
-regular file requires confirmation.
+or a destination write. Every parcel offers **View**, **Save file** and **Delete**.
+View accepts up to 16 MiB of verified plaintext, inclusive. Larger parcels have a
+disabled View action with an explanation; Save file has no preview size cap.
+
+The viewer shows valid UTF-8 without NUL bytes, including text files. Other content
+opens an unsupported-text notice with Save file available. It retains one parcel's
+original verified bytes in memory until closed or its trust context changes.
+Saving from the viewer uses those bytes without another download. The saved result's
+**Back to parcel** restores the same viewer; Inbox saves return **Back to Inbox**.
+Canceling or failing a save keeps the originating screen available for retry.
+
+GTK's save dialog suggests the original filename for files, or `<transfer-id>.txt`
+for text. Replacing an existing regular file requires confirmation.
 
 Use **Delete** on an Inbox item to remove this device's remote copy without
 receiving or saving it. Confirm the deletion, or cancel to keep it. Other
@@ -68,9 +79,9 @@ Failed removal leaves the result and retry action available. The
 The read-only text preview is selectable and scrollable, with a 65,536 Unicode
 character limit and visible truncation notice. **Copy complete message** uses the
 full verified message, not the preview, up to 16 MiB inclusive. Clipboard text must
-be UTF-8 without NUL bytes; transfers themselves have no clipboard size cap. NUL
-is displayed as ␀ and disables selection copying so the display symbol cannot
-silently replace the original byte.
+be UTF-8 without NUL bytes. Transfers and direct Inbox saves have no preview or
+clipboard size cap. Saving always uses the complete original bytes, even when the
+preview is truncated or unsupported.
 
 ## Automatic updates and cancellation
 

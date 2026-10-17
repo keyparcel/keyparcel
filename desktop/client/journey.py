@@ -60,7 +60,10 @@ def control(root, name, role=None):
 def file_dialog(title):
     dialog = control(Atspi.get_desktop(0), title)
     # GTK versions differ in reporting ACTIVE; focus the real native window.
-    window = subprocess.check_output(["xdotool", "search", "--onlyvisible", "--pid", str(dialog.get_process_id()), "--name", "^" + re.escape(title) + "$"], timeout=5).decode().splitlines()[-1]
+    def mapped_window():
+        result = subprocess.run(["xdotool", "search", "--onlyvisible", "--pid", str(dialog.get_process_id()), "--name", "^" + re.escape(title) + "$"], timeout=5, capture_output=True)
+        return result.stdout.decode().splitlines()[-1] if result.returncode == 0 else None
+    window = wait(f"mapped dialog {title!r}", mapped_window)
     subprocess.check_call(["xdotool", "windowactivate", "--sync", window], timeout=5)
     wait(f"active dialog {title!r}", lambda: subprocess.check_output(["xdotool", "getactivewindow"], timeout=5).decode().strip() == window)
     return dialog
@@ -200,8 +203,8 @@ def refresh():
 
 def received(id):
     refresh()
-    click("Receive transfer " + id)
-    status("Verified text; remote copy retained")
+    click("View transfer " + id)
+    status("Verified parcel; remote copy retained")
 
 
 def picker_path(dialog, path, save=False):
@@ -489,11 +492,11 @@ try:
     fixture.cli("desktop", "delete", unrelated)
     removed = peer_send("automatic removal")
     click("Inbox")
-    control(app,"Receive transfer " + removed)
+    control(app,"View transfer " + removed)
     fixture.cli("desktop","delete",removed)
-    wait("automatic inbox removal", lambda: not find(app,"Receive transfer " + removed))
+    wait("automatic inbox removal", lambda: not find(app,"View transfer " + removed))
     id = peer_send(message)
-    control(app,"Receive transfer " + id)
+    control(app,"View transfer " + id)
     assert not find(app, id, Atspi.Role.LABEL), "Inbox exposed full transfer ID outside details"
     assert any(re.search(r"Uploaded \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [+-]\d{2}:\d{2}", n.get_name()) for n in walk(app)), "Inbox lost the absolute timestamp with seconds/timezone"
     screenshot("inbox.png")
@@ -667,23 +670,86 @@ try:
     fixture.cli("desktop", "trust", fixture.fingerprint("peer"), "--name", "bob")
     click("Discard draft")
 
+    # The same verified viewer handles text files and unsupported opaque parcels.
+    for filename, payload, text in (
+        ("preview.txt", ("hello 世界\n" * 10000).encode(), True),
+        ("invalid.bin", b"invalid utf8 \xff", False),
+        ("nul.txt", b"before\x00after", False),
+        ("opaque.bin", bytes(range(256)), False),
+    ):
+        source_view = session / filename
+        source_view.write_bytes(payload)
+        incoming = peer_send(file=source_view)
+        received(incoming)
+        if text:
+            assert text_contents(control(app, "Received text")) == payload.decode()[:65536], "Text file preview changed bytes"
+            click("Copy complete message"); status("Copied")
+            assert clipboard() == payload, "Text file Copy used only the truncated preview"
+        else:
+            control(app, "Can’t preview this parcel as text. Save it to open with another application.")
+            assert not find(app, "Received text"), "Unsupported bytes were displayed"
+            assert not find(app, "Copy complete message"), "Unsupported bytes offered whole-text copy"
+        click("Save file")
+        dialog = file_dialog("Save received file")
+        assert text_contents(filename_field(dialog)) == filename, "Viewer save lost original filename"
+        click("Cancel", dialog)
+        wait("viewer save picker dismissed", lambda: not find(Atspi.get_desktop(0),"Save received file"))
+        control(app, "Save file", Atspi.Role.PUSH_BUTTON)
+        # Remove access to the package: viewer Save must use the retained bytes.
+        remote = fixture.inbox_path("desktop") + "/" + incoming + ".age"
+        fixture.exec("mv", remote, remote + ".held")
+        try:
+            blocked = session / (filename + "-blocked")
+            blocked.mkdir(); blocked.chmod(0o500)
+            try:
+                click("Save file"); picker_path(file_dialog("Save received file"), blocked / "saved", True)
+                wait("viewer save failure retains parcel", lambda: any("permission denied" in n.get_name().lower() for n in walk(app)))
+                control(app, "Save file", Atspi.Role.PUSH_BUTTON)
+            finally:
+                blocked.chmod(0o700)
+            target = session / (filename + "-view-saved")
+            click("Save file"); picker_path(file_dialog("Save received file"), target, True)
+            status("File saved; remote copy retained")
+            assert target.read_bytes() == payload, "Viewer Save altered original verified bytes"
+            click("Back to parcel")
+            control(app, "Save file", Atspi.Role.PUSH_BUTTON)
+            if text: assert text_contents(control(app, "Received text")) == payload.decode()[:65536], "Saved result Back lost preview"
+            else: control(app, "Can’t preview this parcel as text. Save it to open with another application.")
+            screenshot("parcel-text.png" if text else "parcel-unsupported.png")
+        finally:
+            fixture.exec("mv", remote + ".held", remote)
+        assert incoming in ids("desktop"), "Viewer Save or Cancel removed remote copy"
+        click("Remove & close"); status("Removed transfer")
+        assert incoming not in ids("desktop"), "Viewer explicit removal retained remote copy"
+
     for size in (16 * 1024 * 1024, 16 * 1024 * 1024 + 1):
         large = "x" * size
         incoming = peer_send(large)
-        received(incoming)
-        preview = control(app, "Received text")
-        assert text_contents(preview) == large[:65536], "Large preview was not bounded/exact"
-        status("Preview truncated; the complete remote transfer is retained.")
-        previous = clipboard()
-        click("Copy complete message")
-        if size == 16 * 1024 * 1024:
-            status("Copied")
+        if size <= 16 * 1024 * 1024:
+            received(incoming)
+            preview = control(app, "Received text")
+            assert text_contents(preview) == large[:65536], "Large preview was not bounded/exact"
+            status("Preview truncated; the complete remote transfer is retained.")
+            click("Copy complete message"); status("Copied")
             assert clipboard() == large.encode(), "Inclusive clipboard boundary copied only preview"
+            target = session / "boundary-view.txt"
+            click("Save file")
+            dialog = file_dialog("Save received file")
+            assert text_contents(filename_field(dialog)) == incoming+".txt", "Text save suggestion lost transfer ID"
+            picker_path(dialog,target,True);status("File saved; remote copy retained")
+            assert target.read_bytes() == large.encode(), "Boundary Save truncated content"
+            click("Back to parcel");click("Remove & close");status("Removed transfer")
         else:
-            status("Complete message exceeds the 16 MiB clipboard limit; its remote copy is retained.")
-            assert clipboard() == previous, "Rejected oversized copy changed clipboard"
-        click("Remove & close")
-        status("Removed transfer")
+            refresh()
+            view = control(app,"View transfer "+incoming,Atspi.Role.PUSH_BUTTON)
+            assert not view.get_state_set().contains(Atspi.StateType.SENSITIVE), "Oversized parcel offered View"
+            control(app,"Too large to preview—save the file instead")
+            target = session / "above-boundary.txt"
+            choose_save(incoming,target);status("File saved; remote copy retained")
+            assert target.read_bytes() == large.encode(), "Inbox Save imposed the viewer cap"
+            click("Back to Inbox")
+            assert incoming in ids("desktop"), "Inbox save removed oversized parcel"
+            click("Delete transfer "+incoming);click("Delete",control(app,"Delete inbox copy?",Atspi.Role.DIALOG));status("Deleted remote inbox copy; saved local files kept")
         assert incoming not in ids("desktop"), "Large text removal failed"
 
     # File open/save journeys share the same SSH fixture.
@@ -756,7 +822,7 @@ try:
         assert target.read_bytes() == source.read_bytes(), "GTK destination differs from peer file"
         assert incoming in ids("desktop"), "Successful save deleted remote file"
         screenshot("saved-file.png")
-        click("Back — keep transfer")
+        click("Back to Inbox")
         # Saving again requires explicit replacement; declining protects old bytes.
         target.write_bytes(b"protected destination")
         choose_save(incoming, target)
@@ -808,11 +874,11 @@ try:
         click("Refresh inbox")
         wait("stalled server reports a bounded failure", lambda: any(n.get_role() == Atspi.Role.LABEL and ("timed out" in n.get_name().lower() or "timeout" in n.get_name().lower() or "deadline exceeded" in n.get_name().lower()) for n in walk(app)), seconds=20)
         wait("timeout restores navigation", lambda: control(app, "Settings").get_state_set().contains(Atspi.StateType.SENSITIVE))
-        control(app,"Receive transfer " + next(iter(own)))
+        control(app,"View transfer " + next(iter(own)))
     finally:
         fixture.control("unpause")
     wait("automatic reconnection after resume", lambda: text_contents(control(app,"Connection status")) == "Current",seconds=40)
-    control(app,"Receive transfer " + next(iter(own)))
+    control(app,"View transfer " + next(iter(own)))
     stop()
     start()
     click("Devices")

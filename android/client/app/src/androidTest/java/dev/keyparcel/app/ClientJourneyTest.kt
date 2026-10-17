@@ -189,14 +189,19 @@ class ClientJourneyTest {
         pickerReturned()
     }
 
-    private fun saveFile(id: String, outputName: String, expectedName: String = "file-世界.bin") {
-        compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("save-$id"))
-        click("save-$id")
+    private fun saveFile(id: String, outputName: String, expectedName: String = "file-世界.bin", fromView: Boolean = false) {
+        if (fromView) click("save-view") else {
+            compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("save-$id"))
+            click("save-$id")
+        }
+        fun filenameField() = pickerNode {
+            it.packageName?.toString() == "com.android.documentsui" && it.className?.toString() == "android.widget.EditText"
+        }
         var filename: AccessibilityNodeInfo? = null
-        compose.waitUntil(30_000) { pickerNode { it.className?.toString() == "android.widget.EditText" }.also { filename = it } != null }
+        compose.waitUntil(30_000) { filenameField().also { filename = it } != null }
         check(filename!!.text.toString() == expectedName) { "Save dialog did not suggest the original filename: ${filename!!.text}" }
         pickerRoot()
-        filename = pickerNode { it.className?.toString() == "android.widget.EditText" }
+        filename = filenameField()
         check(filename?.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, outputName)
         }) == true) { "Could not rename destination in system save dialog" }
@@ -484,14 +489,20 @@ class ClientJourneyTest {
         check(timestamps.isNotEmpty() && timestamps.all {
             Regex("Uploaded \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2} [+-]\\d{2}:\\d{2}").matches(it)
         }) { "Inbox timestamps lost seconds or their explicit timezone" }
-        withClipboard { clipboard -> click("copy-transfer-$textID"); assertClipboard(clipboard, textID) }
+        compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("copy-transfer-$textID"))
+        withClipboard { clipboard ->
+            compose.onNodeWithTag("copy-transfer-$textID").assertIsDisplayed().assertIsEnabled().performTouchInput { click() }
+            assertClipboard(clipboard, textID)
+        }
         screenshot("inbox-details")
+        compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("details-$textID"))
         click("details-$textID")
         compose.onNodeWithTag("transfer-id-$textID").assertDoesNotExist()
         val fileID = arg("file_id")
         compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("item-$fileID"))
         compose.onNodeWithTag("save-$fileID").assertIsEnabled()
-        compose.onNodeWithTag("receive-$fileID").assertDoesNotExist()
+        compose.onNodeWithTag("receive-$fileID").assertIsNotEnabled().assertTextEquals("View")
+            .assertContentDescriptionEquals("View. $TOO_LARGE_TO_VIEW")
         receive(arg("text_id"))
         screenshot("received")
         click("back")
@@ -891,23 +902,35 @@ class ClientJourneyTest {
             assertClipboard(clipboard, complete)
             screenshot("received-copy")
         }
+        val textView = requireNotNull(ViewModelProvider(compose.activity)[AppModel::class.java].viewed)
+        saveFile(largeID,"truncated-view.txt","$largeID.txt",fromView = true); waitFor("saved-file")
+        check(File(compose.activity.filesDir,"document-fixtures/truncated-view.txt").readBytes().contentEquals(complete.toByteArray())) {
+            "Save used truncated preview rather than original text"
+        }
+        click("back");waitFor("received-text")
+        check(ViewModelProvider(compose.activity)[AppModel::class.java].viewed === textView) { "Back from Save lost retained text" }
+        check(value("received-text").length <= 65_536) { "Save/Back expanded preview beyond its bound" }
         click("back"); refresh()
         val nulID = arg("nul_id")
         compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("receive-$nulID"))
-        click("receive-$nulID"); waitFor("received-text")
-        withClipboard { clipboard ->
-            compose.runOnIdle { clipboard.setPrimaryClip(ClipData.newPlainText("sentinel", "keep-clipboard")) }
-            click("copy-received-text")
-            compose.onNodeWithTag("error").assertTextContains("NUL", substring = true)
-            assertClipboard(clipboard, "keep-clipboard")
-            compose.onNodeWithTag("received-text").performClick()
-            compose.onNodeWithTag("received-text").performSemanticsAction(SemanticsActions.SetSelection) { it(0, 12, false) }
-            compose.onNodeWithTag("received-text").performSemanticsAction(SemanticsActions.CopyText) { it() }
-            assertClipboard(clipboard, "keep-clipboard")
-            compose.onNodeWithTag("received-text").performSemanticsAction(SemanticsActions.SetSelection) { it(0, 6, false) }
-            compose.onNodeWithTag("received-text").performSemanticsAction(SemanticsActions.CopyText) { it() }
-            assertClipboard(clipboard, "before")
-        }
+        click("receive-$nulID"); waitFor("unsupported-preview")
+        compose.onNodeWithTag("received-text").assertDoesNotExist()
+        compose.onNodeWithTag("copy-received-text").assertDoesNotExist()
+        screenshot("parcel-unsupported")
+        val model = ViewModelProvider(compose.activity)[AppModel::class.java]
+        val directory = File(compose.activity.filesDir,"document-fixtures")
+        val opaque = requireNotNull(model.viewed)
+        click("save-view"); pickerCancel()
+        check(model.viewed === opaque) { "Canceled viewer save lost original bytes" }
+        compose.onNodeWithTag("unsupported-preview").assertExists()
+        saveFile(nulID,"fail-output.bin","$nulID.txt",fromView = true); finished()
+        compose.onNodeWithTag("error").assertTextContains("Save failed",substring = true)
+        check(model.viewed === opaque) { "Failed viewer save lost parcel" }
+        saveFile(nulID,"nul-view.txt","$nulID.txt",fromView = true); waitFor("saved-file")
+        check(File(directory,"nul-view.txt").readBytes().contentEquals("before\u0000after".toByteArray())) { "Viewer Save changed NUL bytes" }
+        compose.onNodeWithTag("back").assertTextEquals("Back to parcel")
+        click("back"); compose.onNodeWithTag("unsupported-preview").assertExists()
+        check(model.viewed === opaque) { "Saved result Back reloaded or lost parcel" }
         click("back"); refresh()
         val platformID = arg("platform_id")
         compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("receive-$platformID"))
@@ -919,6 +942,53 @@ class ClientJourneyTest {
             assertClipboard(clipboard, "keep-clipboard")
             screenshot("clipboard-unavailable")
         }
+        click("back"); refresh()
+        val fileID = arg("textfile_id")
+        receive(fileID,"text file 世界\n")
+        withClipboard { clipboard -> click("copy-received-text");assertClipboard(clipboard,"text file 世界\n") }
+        saveFile(fileID,"text-file-view.txt","preview.txt",fromView = true);waitFor("saved-file")
+        check(File(directory,"text-file-view.txt").readText() == "text file 世界\n") { "Text file Save changed content" }
+        click("back");waitFor("received-text")
+        screenshot("parcel-text-file")
+        click("back");refresh()
+        for (id in listOf(arg("binary_id"),arg("invalid_id"))) {
+            compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("receive-$id"))
+            click("receive-$id");waitFor("unsupported-preview")
+            compose.onNodeWithTag("received-text").assertDoesNotExist()
+            compose.onNodeWithTag("copy-received-text").assertDoesNotExist()
+            val original = requireNotNull(model.viewed)
+            saveFile(id,"opaque-$id.bin",original.item.filename,fromView = true);waitFor("saved-file")
+            val saved = File(directory,"opaque-$id.bin").readBytes()
+            check(saved.contentEquals(original.content.openStream().readBytes())) { "Opaque Save altered retained bytes" }
+            click("back");waitFor("unsupported-preview")
+            check(model.viewed === original) { "Binary Save Back lost original viewer" }
+            click("back");refresh()
+        }
+        val boundary = arg("boundary_id")
+        compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("receive-$boundary"))
+        compose.onNodeWithTag("receive-$boundary").assertIsEnabled().performClick();waitFor("received-text")
+        check(model.viewed?.content?.size == MAX_VIEW_BYTES) { "Inclusive view boundary rejected" }
+        check(value("received-text").length == 65_536) { "Boundary preview not bounded" }
+        saveFile(boundary,"boundary-view.txt","$boundary.txt",fromView = true);waitFor("saved-file")
+        val boundarySaved = File(directory,"boundary-view.txt")
+        check(boundarySaved.length() == MAX_VIEW_BYTES.toLong() && boundarySaved.readBytes().all { it == 120.toByte() }) {
+            "Boundary viewer Save changed complete bytes"
+        }
+        click("back");waitFor("received-text");click("back");refresh()
+        val above = arg("above_id")
+        compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("receive-$above"))
+        compose.onNodeWithTag("receive-$above").assertIsNotEnabled()
+        compose.onNodeWithTag("view-limit-$above").performClick()
+        compose.onNodeWithTag("error").assertTextEquals(TOO_LARGE_TO_VIEW)
+        check(model.viewed == null) { "Oversized inbox entry loaded viewer bytes" }
+        saveFile(above,"above-limit.txt","$above.txt");waitFor("saved-file")
+        val aboveSaved = File(directory,"above-limit.txt")
+        check(aboveSaved.length() == MAX_VIEW_BYTES+1L && aboveSaved.readBytes().all { it == 120.toByte() }) {
+            "Inbox Save imposed the preview cap"
+        }
+        compose.onNodeWithTag("back").assertTextEquals("Back to Inbox")
+        click("back");waitFor("refresh-inbox")
+
     }
 
     @Test fun fileTransfers() {

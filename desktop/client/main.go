@@ -40,6 +40,7 @@ type inbox struct {
 type pendingSave struct {
 	ID, Path string
 	Profile  profile
+	View     *received
 }
 type model struct {
 	ui                                *C.UI
@@ -307,14 +308,13 @@ func (m *model) drawInbox(rejected []core.Rejected) {
 	}
 	for _, item := range m.items {
 		name := "Text"
-		isFile := C.int(0)
+		canView := boolean(item.Size <= viewLimit)
 		if item.Filename != nil {
 			name = "File: " + *item.Filename
-			isFile = 1
 		}
 		title := visible(item.From + " · " + name)
 		detail := display.Size(item.Size) + " · Uploaded " + item.UploadedAt.Local().Format("2006-01-02 15:04:05 -07:00")
-		cstrings([]string{item.ID, title, detail}, func(v []*C.char) { C.ui_item(m.ui, v[0], v[1], v[2], isFile) })
+		cstrings([]string{item.ID, title, detail}, func(v []*C.char) { C.ui_item(m.ui, v[0], v[1], v[2], canView) })
 	}
 	for _, bad := range rejected {
 		cstrings([]string{"", "Not verified: " + bad.ID, visible(bad.Reason)}, func(v []*C.char) { C.ui_item(m.ui, v[0], v[1], v[2], 0) })
@@ -363,6 +363,8 @@ func (m *model) device(fp string) (core.Device, bool) {
 func (m *model) event(action, arg, value string) {
 	if action == "close" {
 		m.closed = true
+		m.view = nil
+		m.save = nil
 		m.cancel()
 		m.clearSendAttempt()
 		if m.active != nil {
@@ -401,10 +403,18 @@ func (m *model) event(action, arg, value string) {
 		if m.active != nil {
 			return
 		}
+		if m.navigation.current == "saved" && m.save != nil && m.save.View != nil {
+			m.page("text")
+			m.save = nil
+			return
+		}
 		if parent := m.navigation.parent(); parent != "" {
 			m.event("page", parent, "")
 		}
+	case "result-back":
+		m.event("back", "", "")
 	case "page":
+		C.ui_clear_results(m.ui)
 		m.view = nil
 		m.save = nil
 		m.page(arg)
@@ -529,18 +539,11 @@ func (m *model) event(action, arg, value string) {
 	case "receive-text":
 		m.receiveText(arg)
 	case "receive-file":
-		id := arg
-		target := m.target
-		m.run("Preparing save dialog…", func(context.Context) (any, error) { p, err := m.store.load(target); return p, err }, func(v any) {
-			m.save = &pendingSave{ID: id, Profile: v.(profile)}
-			for _, item := range m.items {
-				if item.ID == id && item.Filename != nil {
-					cstrings([]string{*item.Filename}, func(v []*C.char) { C.ui_picker(m.ui, 1, v[0]) })
-					return
-				}
-			}
-			m.message("Refresh Inbox before saving this transfer")
-		})
+		m.beginSave(arg, nil)
+	case "save-view":
+		if m.view != nil {
+			m.beginSave(m.view.ID, m.view)
+		}
 	case "save-path":
 		m.savePath(arg, false)
 	case "replace":
@@ -548,19 +551,14 @@ func (m *model) event(action, arg, value string) {
 			m.savePath(m.save.Path, true)
 		}
 	case "copy-message":
-		if m.view != nil {
-			if m.view.CopyError != "" {
-				m.message(m.view.CopyError)
-			} else {
-				m.copy(m.view.Clipboard)
-			}
+		if m.view != nil && m.view.Text {
+			m.copy(string(m.view.Data))
 		}
 	case "copy-selection":
 		if m.view == nil {
 			return
 		}
-		if m.view.PreviewNUL {
-			m.message("Selection copying is unavailable when NUL bytes are shown")
+		if !m.view.Text {
 			return
 		}
 		text := C.ui_selection(m.ui)
@@ -576,9 +574,28 @@ func (m *model) event(action, arg, value string) {
 }
 
 func (m *model) receiveText(id string) {
+	var item *core.Item
+	for i := range m.items {
+		if m.items[i].ID == id {
+			item = &m.items[i]
+			break
+		}
+	}
+	if item == nil {
+		m.message("Refresh Inbox before viewing this transfer")
+		return
+	}
+	if item.Size > viewLimit {
+		m.message(tooLargeToView)
+		return
+	}
+	captured := profile{Target: m.target, Host: m.host, Config: &core.Config{Peers: m.peers}}
 	target := m.target
-	m.run("Verifying received text…", func(ctx context.Context) (any, error) {
-		return m.remote(ctx, target, nil, func(s *core.Session, p profile) (any, error) {
+	m.run("Verifying parcel…", func(ctx context.Context) (any, error) {
+		return m.remote(ctx, target, &captured.Host, func(s *core.Session, p profile) (any, error) {
+			if !(pendingDelete{Profile: captured}).matches(p) {
+				return nil, &recipientChanged{p}
+			}
 			var view *received
 			_, err := s.Receive(p.Config, id, func(manifest core.Manifest, f *os.File) error {
 				var err error
@@ -588,21 +605,69 @@ func (m *model) receiveText(id string) {
 			return view, err
 		})
 	}, func(v any) {
-		m.view = v.(*received)
+		view := v.(*received)
+		if !(pendingDelete{Profile: view.Profile}).matches(m.currentProfile()) {
+			m.message("The server or approvals changed; view the parcel again")
+			return
+		}
+		m.view = view
 		m.save = nil
-		cstrings([]string{m.view.Preview, m.view.Notice}, func(v []*C.char) { C.ui_view(m.ui, v[0], v[1]) })
+		cstrings([]string{view.Preview, view.Notice}, func(v []*C.char) { C.ui_view(m.ui, v[0], v[1], boolean(view.Text)) })
 		m.page("text")
-		m.message("Verified text; remote copy retained")
+		m.message("Verified parcel; remote copy retained")
 	})
 }
+func (m *model) currentProfile() profile {
+	return profile{Target: m.target, Host: m.host, Config: &core.Config{Peers: m.peers}}
+}
+func (m *model) beginSave(id string, view *received) {
+	if m.active != nil {
+		return
+	}
+	captured := m.currentProfile()
+	name := id + ".txt"
+	if view != nil {
+		if view.ID != id || m.view != view || !(pendingDelete{Profile: view.Profile}).matches(captured) {
+			m.message("The server or approvals changed; view the parcel again")
+			return
+		}
+		if view.Manifest.Filename != nil {
+			name = *view.Manifest.Filename
+		}
+	} else {
+		found := false
+		for _, item := range m.items {
+			if item.ID == id {
+				found = true
+				if item.Filename != nil {
+					name = *item.Filename
+				}
+				break
+			}
+		}
+		if !found {
+			m.message("Refresh Inbox before saving this transfer")
+			return
+		}
+	}
+	m.save = &pendingSave{ID: id, Profile: captured, View: view}
+	cstrings([]string{name}, func(v []*C.char) { C.ui_picker(m.ui, 1, v[0]) })
+}
 func (m *model) savePath(path string, overwrite bool) {
-	if m.save == nil {
+	if m.save == nil || m.active != nil {
 		return
 	}
 	pending := *m.save
 	pending.Path = path
 	m.save = &pending
 	m.run("Verifying and saving file…", func(ctx context.Context) (any, error) {
+		p, err := m.store.load(pending.Profile.Target)
+		if err != nil {
+			return nil, err
+		}
+		if !(pendingDelete{Profile: pending.Profile}).matches(p) {
+			return nil, &recipientChanged{p}
+		}
 		if !overwrite {
 			if info, err := os.Lstat(path); err == nil {
 				if !info.Mode().IsRegular() {
@@ -613,7 +678,14 @@ func (m *model) savePath(path string, overwrite bool) {
 				return nil, err
 			}
 		}
+		if pending.View != nil {
+			_, err := pending.View.save(ctx, path, overwrite)
+			return "saved", err
+		}
 		return m.remote(ctx, pending.Profile.Target, &pending.Profile.Host, func(s *core.Session, p profile) (any, error) {
+			if !(pendingDelete{Profile: pending.Profile}).matches(p) {
+				return nil, &recipientChanged{p}
+			}
 			_, err := s.Receive(p.Config, pending.ID, func(manifest core.Manifest, f *os.File) error {
 				_, err := core.SaveContentContext(ctx, path, manifest, f, overwrite)
 				return err
@@ -625,7 +697,10 @@ func (m *model) savePath(path string, overwrite bool) {
 			cstrings([]string{"replace", "Replace the existing regular file?\n" + path}, func(v []*C.char) { C.ui_confirm(m.ui, v[0], v[1]) })
 			return
 		}
-		m.view = nil
+		if m.save != &pending || !(pendingDelete{Profile: pending.Profile}).matches(m.currentProfile()) {
+			return
+		}
+		C.ui_saved_origin(m.ui, boolean(pending.View != nil))
 		m.set("saved-path", path)
 		m.page("saved")
 		m.message("File saved; remote copy retained")
@@ -686,7 +761,10 @@ func (m *model) confirmDelete(id string) {
 func (m *model) remove() {
 	var id string
 	var p profile
-	if m.view != nil {
+	if m.navigation.current == "saved" && m.save != nil {
+		id = m.save.ID
+		p = m.save.Profile
+	} else if m.view != nil {
 		id = m.view.ID
 		p = m.view.Profile
 	} else if m.save != nil {
@@ -696,7 +774,10 @@ func (m *model) remove() {
 		return
 	}
 	m.run("Removing remote transfer…", func(ctx context.Context) (any, error) {
-		return m.remote(ctx, p.Target, &p.Host, func(s *core.Session, p profile) (any, error) {
+		return m.remote(ctx, p.Target, &p.Host, func(s *core.Session, current profile) (any, error) {
+			if !(pendingDelete{Profile: p}).matches(current) {
+				return nil, &recipientChanged{current}
+			}
 			_, failures, err := s.Delete([]string{id}, false)
 			if len(failures) > 0 {
 				return nil, fmt.Errorf("could not remove transfer: %s", failures[0].Reason)
@@ -704,6 +785,9 @@ func (m *model) remove() {
 			return nil, err
 		})
 	}, func(any) {
+		if !(pendingDelete{Profile: p}).matches(m.currentProfile()) {
+			return
+		}
 		kept := m.items[:0]
 		for _, item := range m.items {
 			if item.ID != id {
@@ -711,6 +795,7 @@ func (m *model) remove() {
 			}
 		}
 		m.items = kept
+		C.ui_clear_results(m.ui)
 		m.view = nil
 		m.save = nil
 		m.drawInbox(m.rejected)

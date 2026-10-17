@@ -69,43 +69,60 @@ func TestSharedSettingsAndApprovals(t *testing.T) {
 	}
 }
 func TestPreviewAndClipboard(t *testing.T) {
-	cases := []struct {
-		name, text                string
-		truncated, nul, copyError bool
-	}{
-		{"unicode", "hello 世界\n\t", false, false, false},
-		{"empty", "", false, false, false},
-		{"truncated", strings.Repeat("🌍", previewLimit+1), true, false, false},
-		{"nul", "a\x00b", false, true, true},
-		{"limit", strings.Repeat("x", clipboardLimit), true, false, false},
-		{"oversize", strings.Repeat("x", clipboardLimit+1), true, false, true},
+	for _, text := range []string{"hello 世界\n\t", "", strings.Repeat("🌍", previewLimit+1), "a\x00b", string([]byte{255}), strings.Repeat("x", previewLimit) + "\xff", strings.Repeat("x", previewLimit) + "\x00", strings.Repeat("x", viewLimit)} {
+		f, err := os.CreateTemp(t.TempDir(), "parcel")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		f.WriteString(text)
+		f.Seek(0, 0)
+		v, err := readText(f, core.Manifest{ID: "id", Type: "file", Size: int64(len(text))}, profile{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(v.Data) != text {
+			t.Fatal("viewer did not retain original bytes")
+		}
+		eligible := clipboardText(text) == nil
+		if v.Text != eligible {
+			t.Fatalf("eligibility mismatch for length %d", len(text))
+		}
+		if !eligible && (v.Preview != "" || v.Notice != unsupportedPreview) {
+			t.Fatal("binary content exposed as text")
+		}
+		if len([]rune(v.Preview)) > previewLimit {
+			t.Fatal("preview exceeded rune bound")
+		}
+		if eligible && strings.Contains(v.Notice, "truncated") != (len([]rune(text)) > previewLimit) {
+			t.Fatal("missing truncation notice")
+		}
+		dest := filepath.Join(t.TempDir(), "saved.bin")
+		if _, err = v.save(context.Background(), dest, false); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(dest)
+		if err != nil || string(data) != text {
+			t.Fatal("save altered retained bytes", err)
+		}
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			f, err := os.CreateTemp(t.TempDir(), "text")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer f.Close()
-			f.WriteString(c.text)
-			f.Seek(0, 0)
-			v, err := readText(f, core.Manifest{ID: "id", Size: int64(len(c.text))}, profile{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if strings.Contains(v.Notice, "truncated") != c.truncated || v.PreviewNUL != c.nul || (v.CopyError != "") != c.copyError {
-				t.Fatalf("unexpected preview policy: %+v", v)
-			}
-			if !c.copyError && v.Clipboard != c.text {
-				t.Fatal("whole-message copy substituted preview")
-			}
-			if len([]rune(v.Preview)) > previewLimit {
-				t.Fatal("preview exceeded rune bound")
-			}
-		})
+	f, err := os.CreateTemp(t.TempDir(), "oversize")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := clipboardText(string([]byte{0xff})); err == nil {
-		t.Fatal("invalid UTF-8 accepted")
+	defer f.Close()
+	f.Truncate(viewLimit + 1)
+	for _, size := range []int64{1, viewLimit + 1} {
+		f.Seek(0, 0)
+		if _, err = readText(f, core.Manifest{Size: size}, profile{}); err == nil {
+			t.Fatal("oversized actual or signed size accepted")
+		}
+	}
+	if clipboardText(strings.Repeat("x", clipboardLimit+1)) == nil {
+		t.Fatal("clipboard cap changed")
+	}
+	if clipboardText(string([]byte{255})) == nil {
+		t.Fatal("invalid UTF8 clipboard accepted")
 	}
 }
 func TestFileValidationEdges(t *testing.T) {

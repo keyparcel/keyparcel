@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -165,53 +167,75 @@ func clipboardText(text string) error {
 	return nil
 }
 
+const viewLimit = 16 * 1024 * 1024
+const tooLargeToView = "Too large to preview—save the file instead"
+const unsupportedPreview = "Can’t preview this parcel as text. Save it to open with another application."
+
 type received struct {
-	ID                                    string
-	Profile                               profile
-	Preview, Notice, Clipboard, CopyError string
-	PreviewNUL                            bool
+	ID              string
+	Profile         profile
+	Manifest        core.Manifest
+	Data            []byte
+	Preview, Notice string
+	Text            bool
 }
 
+// Called only after the core has verified the complete disk-backed transfer.
 func readText(f *os.File, m core.Manifest, p profile) (*received, error) {
-	b, err := io.ReadAll(io.LimitReader(f, 4*previewLimit+4))
+	info, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
-	end := 0
-	for count := 0; count < previewLimit && end < len(b); count++ {
-		_, size := utf8.DecodeRune(b[end:])
-		end += size
+	if m.Size > viewLimit || info.Size() > viewLimit {
+		return nil, errors.New(tooLargeToView)
 	}
-	raw := string(b[:end])
-	if !utf8.ValidString(raw) {
-		return nil, errors.New("received text is not valid UTF-8")
+	if info.Size() != m.Size || m.Size < 0 {
+		return nil, errors.New("verified parcel size changed")
 	}
-	v := &received{ID: m.ID, Profile: p, Preview: raw}
-	if int64(end) < m.Size {
-		v.Notice = "Preview truncated; the complete remote transfer is retained."
+	data := make([]byte, int(m.Size))
+	if _, err = io.ReadFull(f, data); err != nil {
+		return nil, err
 	}
-	if strings.ContainsRune(raw, 0) {
-		v.PreviewNUL = true
-		v.Preview = strings.ReplaceAll(raw, "\x00", "␀")
-		v.Notice += " NUL bytes are displayed as ␀; selection copying is unavailable for this preview."
+	var extra [1]byte
+	if n, err := f.Read(extra[:]); n != 0 || err != io.EOF {
+		return nil, errors.New("verified parcel size changed")
 	}
-	if m.Size > clipboardLimit {
-		v.CopyError = "Complete message exceeds the 16 MiB clipboard limit; its remote copy is retained."
+	v := &received{ID: m.ID, Profile: p, Manifest: m, Data: data}
+	v.Text = utf8.Valid(data) && !bytes.ContainsRune(data, 0)
+	if !v.Text {
+		v.Notice = unsupportedPreview
 		return v, nil
 	}
-	if _, err = f.Seek(0, io.SeekStart); err != nil {
-		return nil, err
+	end := 0
+	for count := 0; count < previewLimit && end < len(data); count++ {
+		_, size := utf8.DecodeRune(data[end:])
+		end += size
 	}
-	b, err = io.ReadAll(io.LimitReader(f, clipboardLimit+1))
-	if err != nil {
-		return nil, err
-	}
-	if err = clipboardText(string(b)); err != nil {
-		v.CopyError = err.Error()
-	} else {
-		v.Clipboard = string(b)
+	v.Preview = string(data[:end])
+	if end < len(data) {
+		v.Notice = "Preview truncated; the complete remote transfer is retained."
 	}
 	return v, nil
+}
+
+// Keep the existing atomic replacement and cancellation rules without a remote read.
+func (v *received) save(ctx context.Context, path string, overwrite bool) (string, error) {
+	f, err := os.CreateTemp("", "keyparcel-view-save-*")
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	defer os.Remove(f.Name())
+	if err = ctx.Err(); err != nil {
+		return "", err
+	}
+	if _, err = f.Write(v.Data); err != nil {
+		return "", err
+	}
+	if _, err = f.Seek(0, io.SeekStart); err != nil {
+		return "", err
+	}
+	return core.SaveContentContext(ctx, path, v.Manifest, f, overwrite)
 }
 
 func sortedKeys[V any](values map[string]V) []string {

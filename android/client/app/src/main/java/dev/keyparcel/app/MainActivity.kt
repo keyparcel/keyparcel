@@ -80,7 +80,7 @@ private fun ClientScreen(model: AppModel) {
                 if (model.page != Page.Inbox) {
                     val parent = model.navigation.back().page.name
                     TextButton(onClick = model::back, enabled = !model.busy,
-                        modifier = Modifier.testTag("back").semantics { contentDescription = "Back to $parent" }) { Text("Back") }
+                        modifier = Modifier.testTag("back").semantics { contentDescription = if (model.page == Page.Text || model.page == Page.File) model.backLabel else "Back to $parent" }) { Text(model.backLabel) }
                 }
                 if (model.page != Page.Settings && model.page != Page.Text && model.page != Page.File) {
                     TextButton(onClick = { model.navigate(Page.Settings) }, enabled = !model.busy && model.ready,
@@ -105,12 +105,17 @@ private fun ClientScreen(model: AppModel) {
             } else when (model.page) {
                 Page.Inbox -> InboxScreen(model) { item ->
                     model.beginFileSave(item)
-                    saveFile.launch(item.filename)
+                    model.pendingSave?.let { saveFile.launch(it.filename) }
                 }
                 Page.Settings -> SettingsScreen(model)
                 Page.Devices -> DevicesScreen(model)
                 Page.Send -> SendScreen(model) { pickFile.launch(arrayOf("*/*")) }
-                Page.Text -> TextScreen(model)
+                Page.Text -> TextScreen(model) {
+                    model.viewed?.let { view ->
+                        model.beginFileSave(view.item,view)
+                        model.pendingSave?.let { saveFile.launch(it.filename) }
+                    }
+                }
                 Page.File -> FileScreen(model)
             }
         }
@@ -161,11 +166,17 @@ private fun InboxScreen(model: AppModel, save: (InboxItem) -> Unit) {
                     val time = OffsetDateTime.parse(item.uploaded).atZoneSameInstant(ZoneId.systemDefault())
                     Text("Uploaded ${time.format(DateTimeFormatter.ofPattern("uuuu-MM-dd HH:mm:ss xxx"))}",
                         style = MaterialTheme.typography.bodySmall)
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        if (item.type == "text") {
-                            Button(onClick = { model.receive(item) }, enabled = !model.busy,
-                                modifier = Modifier.testTag("receive-${item.id}")) { Text("Receive") }
-                        } else Button(onClick = { save(item) }, enabled = !model.busy,
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (item.size <= MAX_VIEW_BYTES) Button(onClick = { model.receive(item) }, enabled = !model.busy,
+                            modifier = Modifier.testTag("receive-${item.id}")) { Text("View") }
+                        else Column {
+                            Button(onClick = {}, enabled = false, modifier = Modifier.testTag("receive-${item.id}")
+                                .semantics { contentDescription = "View. $TOO_LARGE_TO_VIEW" }) { Text("View") }
+                            TextButton(onClick = model::explainViewLimit, modifier = Modifier.testTag("view-limit-${item.id}")) {
+                                Text("Preview limit")
+                            }
+                        }
+                        Button(onClick = { save(item) }, enabled = !model.busy,
                             modifier = Modifier.testTag("save-${item.id}")) { Text("Save file") }
                         TextButton(onClick = { details = !details }, modifier = Modifier.testTag("details-${item.id}")) {
                             Text(if (details) "Hide details" else "Details")
@@ -457,7 +468,7 @@ private fun SendFeedbackArea(model: AppModel) {
 }
 
 @Composable
-private fun TextScreen(model: AppModel) {
+private fun TextScreen(model: AppModel, save: () -> Unit) {
     val viewed = model.viewed ?: return
     val context = LocalContext.current
     val clipboard = LocalClipboard.current
@@ -465,19 +476,23 @@ private fun TextScreen(model: AppModel) {
         ReceivedTextClipboard(clipboard) { copyText(context, it, "Received text", true, model::clipboardError) }
     }
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Received text", style = MaterialTheme.typography.titleLarge)
-        Text("The remote copy remains until you choose Remove & close. Back keeps it in your inbox.")
-        if (viewed.preview.truncated) Text("Showing only the beginning of this large text. The complete transfer remains on the server.")
+        Text("Parcel", style = MaterialTheme.typography.titleLarge)
+        Text("The remote copy remains until you choose Remove & close.")
+        Button(onClick = save, enabled = !model.busy, modifier = Modifier.testTag("save-view")) { Text("Save file") }
+        if (viewed.preview?.truncated == true) Text("Showing only the beginning of this large text. The complete transfer remains on the server.")
         Button(onClick = { model.removeReceived() }, enabled = !model.busy,
             modifier = Modifier.testTag("remove-close")) { Text("Remove & close") }
-        CompositionLocalProvider(LocalClipboard provides selectionClipboard) {
-            OutlinedTextField(value = viewed.preview.text, onValueChange = {}, readOnly = true,
-                modifier = Modifier.fillMaxWidth().weight(1f).testTag("received-text"),
-                trailingIcon = {
-                    CopyButton("Copy the complete received text", "copy-received-text", enabled = !model.busy) {
-                        copyText(context, viewed.clipboard, "Received text", true, model::clipboardError)
-                    }
-                })
+        if (viewed.preview == null) Text(UNSUPPORTED_PREVIEW, modifier = Modifier.testTag("unsupported-preview"))
+        else {
+            CompositionLocalProvider(LocalClipboard provides selectionClipboard) {
+                OutlinedTextField(value = requireNotNull(viewed.preview).text, onValueChange = {}, readOnly = true,
+                    modifier = Modifier.fillMaxWidth().weight(1f).testTag("received-text"),
+                    trailingIcon = {
+                        CopyButton("Copy the complete received text", "copy-received-text", enabled = !model.busy) {
+                            copyText(context, viewed.content.clipboard(), "Received text", true, model::clipboardError)
+                        }
+                    })
+            }
         }
     }
 }
@@ -486,9 +501,9 @@ private fun TextScreen(model: AppModel) {
 private fun FileScreen(model: AppModel) {
     val file = model.savedFile ?: return
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("File saved", style = MaterialTheme.typography.titleLarge)
+        Text("File saved — remote copy retained", style = MaterialTheme.typography.titleLarge)
         Text("Transfer: ${file.name}", modifier = Modifier.testTag("saved-file"))
-        Text("The remote copy remains until you choose Remove & close. Back keeps it in your inbox.")
+        Text("The remote copy remains until you choose Remove & close.")
         Button(onClick = { model.removeReceived() }, enabled = !model.busy,
             modifier = Modifier.testTag("remove-close")) { Text("Remove & close") }
     }

@@ -51,8 +51,19 @@ For files, **Send → File → Choose file** opens the system document picker. T
 original display name is preserved; binary, empty and unknown-size documents are
 supported without broad storage permission.
 
-Receive verifies the whole package before showing text or writing a destination.
-**Save file** opens the system save dialog with the original filename suggested.
+Every Inbox parcel offers **View**, **Save file** and **Delete**. View accepts up to
+16 MiB of verified plaintext, inclusive. Larger parcels have a disabled View action
+and a tappable explanation; direct Inbox Save has no preview size cap. Verification
+finishes before displaying content or writing a destination.
+
+The viewer displays valid UTF-8 without NUL bytes, including text files. Unsupported
+content opens a notice with Save file available. One parcel's original verified
+bytes stay in memory until closed or its trust context changes. Viewer Save uses
+those bytes without another download; **Back to parcel** restores the same viewer.
+Inbox saves return **Back to Inbox**. Picker cancellation and save failure retain
+the originating screen so you can retry.
+
+**Save file** suggests the original filename, or `<transfer-id>.txt` for text.
 Select an existing writable document and confirm the system overwrite prompt to
 replace it; typing an existing name may instead create a numbered copy.
 
