@@ -168,6 +168,11 @@ Unsigned APKs, AARs, logs and fixture output are not release assets.
 
 The draft contains the DEB, RPM, their two matching archives, signed APK, three
 per-target build-info files, Android certificate fingerprint and `SHA256SUMS`.
+Release asset filenames use the product's hyphen prerelease (for example,
+`keyparcel_0.1.0-rc.1-1_amd64.deb`); internal DEB/RPM versions still use `~` for
+package-manager ordering. This avoids GitHub's normalization of `~` in uploaded
+filenames. Before any upload, checksums must cover exactly the intended final
+asset names and bytes; upload responses must preserve names, sizes and digests.
 Checksums cover every other asset. They detect changed bytes; they do not replace
 trust in GitHub or provide Linux package/repository signatures.
 
