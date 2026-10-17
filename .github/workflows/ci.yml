@@ -149,16 +149,38 @@ jobs:
           key: docker-ssh-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tests/e2e/Dockerfile*', 'go.mod', 'go.sum') }}-${{ github.sha }}
           restore-keys: |
             docker-ssh-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tests/e2e/Dockerfile*', 'go.mod', 'go.sum') }}-
-      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+      - name: Prepare user-owned Android SDK
+        id: sdk-layout
+        run: bash tests/ci/prepare-android-sdk.sh
+      - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        id: sdk-cache
         with:
           path: |
-            ${{ env.ANDROID_HOME }}/platforms/android-35
-            ${{ env.ANDROID_HOME }}/build-tools/35.0.0
-            ${{ env.ANDROID_HOME }}/ndk/29.0.14206865
-            ${{ env.ANDROID_HOME }}/system-images/android-35/default/x86_64
-          key: android-sdk-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tests/ci/setup-android.sh') }}
+            ${{ runner.temp }}/keyparcel-android-sdk/platform-tools
+            ${{ runner.temp }}/keyparcel-android-sdk/emulator
+            ${{ runner.temp }}/keyparcel-android-sdk/platforms
+            ${{ runner.temp }}/keyparcel-android-sdk/build-tools
+            ${{ runner.temp }}/keyparcel-android-sdk/ndk
+            ${{ runner.temp }}/keyparcel-android-sdk/system-images
+            ${{ runner.temp }}/keyparcel-android-sdk/licenses
+          key: android-sdk-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.sdk-layout.outputs.image }}-${{ hashFiles('tests/ci/*android*.sh') }}
+          restore-keys: |
+            android-sdk-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.sdk-layout.outputs.image }}-${{ hashFiles('tests/ci/*android*.sh') }}-
       - name: Install Android SDK components
+        id: sdk-install
         run: bash tests/ci/setup-android.sh
+      - uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        if: matrix.suite == 'verification' && steps.sdk-cache.outputs.cache-matched-key != format('{0}-{1}', steps.sdk-cache.outputs.cache-primary-key, steps.sdk-install.outputs.revision)
+        with:
+          path: |
+            ${{ runner.temp }}/keyparcel-android-sdk/platform-tools
+            ${{ runner.temp }}/keyparcel-android-sdk/emulator
+            ${{ runner.temp }}/keyparcel-android-sdk/platforms
+            ${{ runner.temp }}/keyparcel-android-sdk/build-tools
+            ${{ runner.temp }}/keyparcel-android-sdk/ndk
+            ${{ runner.temp }}/keyparcel-android-sdk/system-images
+            ${{ runner.temp }}/keyparcel-android-sdk/licenses
+          key: ${{ steps.sdk-cache.outputs.cache-primary-key }}-${{ steps.sdk-install.outputs.revision }}
       - name: Enable KVM access
         run: |
           test -c /dev/kvm
