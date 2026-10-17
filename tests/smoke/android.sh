@@ -138,6 +138,7 @@ PY
         touch "$state_dir/linux-configured"
     fi
     if [[ "$mode" == preconfigured ]]; then
+        client_home=$(client sh -c 'printf "%s" "$HOME"')
         phone_fingerprint=$(client ssh-keygen -lf - < "$state_dir/phone.pub" | awk '{print $2}')
         client keyparcel devices --json > "$state_dir/linux-devices.json"
         if ! python3 - "$state_dir" <<'PY'
@@ -153,10 +154,8 @@ PY
         fi
         port=$("${docker_cmd[@]}" port "$name-server" 22/tcp)
         adb -s "$serial" reverse tcp:2333 "tcp:${port##*:}"
-        if [[ ! -f "$state_dir/greeting-sent" ]]; then
-            printf 'Hello from Alice!\n' | client keyparcel send --to phone --stdin
-            touch "$state_dir/greeting-sent"
-        fi
+        python3 tests/smoke/parcels.py "$state_dir/alice/parcels" "$client_home/parcels" \
+            "${docker_cmd[@]}" exec -i "$name-alice" keyparcel send --to phone
         echo 'Ready. In Settings → Devices, refresh and approve Alice after comparing this fingerprint:'
         client ssh-keygen -lf .ssh/id_ed25519.pub
     else

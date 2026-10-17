@@ -158,6 +158,7 @@ func TestAndroidTextClient(t *testing.T) {
 	w.put("/home/parcel/.ssh/authorized_keys", append(authorized, []byte(public+" phone\n")...))
 	phase("connectRememberedServer")
 	phase("foregroundRefresh")
+	phase("confirmationTouchThrough")
 	phase("pickerCancellation")
 	w.admin("sh", "-c", "rm /etc/ssh/ssh_host_ed25519_key /etc/ssh/ssh_host_ed25519_key.pub && ssh-keygen -q -t ed25519 -N '' -f /etc/ssh/ssh_host_ed25519_key")
 	w.reloadSSHD()
@@ -407,7 +408,7 @@ func TestAndroidTextClient(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"setup", "server-approval", "host-key-changed", "inbox", "inbox-details", "settings-simple", "peer-approval", "send-draft", "received", "sent", "removal-error", "removed", "timeout", "received-copy", "clipboard-unavailable", "send-file", "saved-file", "send-multiple-text", "send-multiple-file", "send-feedback-details", "parcel-unsupported", "parcel-text-file", "status-confirmation", "status-connected", "status-error"} {
+	for _, name := range []string{"setup", "server-approval", "host-key-changed", "inbox", "inbox-details", "settings-simple", "peer-approval", "send-draft", "received", "sent", "removal-error", "removed", "timeout", "received-copy", "clipboard-unavailable", "send-file", "saved-file", "send-multiple-text", "send-multiple-file", "send-feedback-details", "parcel-unsupported", "parcel-text-file", "status-confirmation", "status-connected", "status-error", "devices", "refreshing-inbox", "refreshing-devices"} {
 		out := adb("exec-out", "run-as", app, "cat", "files/"+name+".png")
 		if len(out) < 8 || string(out[:8]) != "\x89PNG\r\n\x1a\n" {
 			t.Fatalf("Invalid %s screenshot", name)

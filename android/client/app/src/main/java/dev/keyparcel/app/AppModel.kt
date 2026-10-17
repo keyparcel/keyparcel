@@ -377,8 +377,6 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun explainViewLimit() { error = TOO_LARGE_TO_VIEW }
-
     fun beginFileSave(item: InboxItem, view: ViewedText? = null) {
         if (busy) return
         if (view != null && (!view.matches(settings, publicKey) || viewed !== view)) {

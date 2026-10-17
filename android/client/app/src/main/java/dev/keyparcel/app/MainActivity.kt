@@ -15,6 +15,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
@@ -49,6 +52,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ClientScreen(model: AppModel) {
     var connectionDetails by remember { mutableStateOf(false) }
@@ -75,12 +79,26 @@ private fun ClientScreen(model: AppModel) {
         Box(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets).imePadding()) {
             Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                Row(Modifier.fillMaxWidth().testTag("app-header"), horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically) {
-                    Icon(painterResource(R.drawable.ic_keyparcel), contentDescription = null,
-                        tint = Color.Unspecified, modifier = Modifier.size(32.dp))
-                    Text("keyparcel", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f))
+                    Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(painterResource(R.drawable.ic_keyparcel), contentDescription = null,
+                            tint = Color.Unspecified, modifier = Modifier.size(32.dp))
+                        Text("keyparcel", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        val state = model.connectionState
+                        val color = when(state) {
+                            "Connected" -> Color(0xff287d38)
+                            "Connecting" -> Color(0xff947000)
+                            "Disconnected" -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.outline
+                        }
+                        TextButton(onClick = { connectionDetails = true }, contentPadding = PaddingValues(0.dp),
+                            modifier = Modifier.size(48.dp).testTag("connection-status").semantics {
+                                contentDescription = "Connection: $state"; stateDescription = state
+                            }) {
+                            Text(when(state) { "Connected" -> "●"; "Connecting" -> "↻"; "Disconnected" -> "⊗"; else -> "○" },color = color)
+                        }
+                    }
                     if (model.page != Page.Inbox) {
                         val parent = model.navigation.back().page.name
                         TextButton(onClick = model::back, enabled = !model.busy,
@@ -91,29 +109,18 @@ private fun ClientScreen(model: AppModel) {
                             modifier = Modifier.testTag("settings")) { Text("Settings") }
                     }
                 }
-                Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val state = model.connectionState
-                    val color = when(state) {
-                        "Connected" -> Color(0xff287d38)
-                        "Connecting" -> Color(0xff947000)
-                        "Disconnected" -> MaterialTheme.colorScheme.error
-                        else -> MaterialTheme.colorScheme.outline
-                    }
-                    TextButton(onClick = { connectionDetails = true }, contentPadding = PaddingValues(0.dp),
-                        modifier = Modifier.size(48.dp).testTag("connection-status").semantics {
-                            contentDescription = "Connection: $state"; stateDescription = state
-                        }) {
-                        Text(when(state) { "Connected" -> "●"; "Connecting" -> "↻"; "Disconnected" -> "⊗"; else -> "○" },color = color)
-                    }
-                    if (model.busy || model.refreshing) {
-                        CircularProgressIndicator(Modifier.size(16.dp).testTag("working"), strokeWidth = 2.dp)
-                        Text(model.progress ?: "Refreshing…", style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.testTag("operation-progress"))
-                        if (model.refreshing && !model.busy) TextButton(onClick = model::cancelRefresh) { Text("Cancel") }
-                    }
-                }
                 Column(Modifier.weight(1f).fillMaxWidth(),verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (model.busy) Row(Modifier.testTag("content-progress"), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CircularProgressIndicator(Modifier.size(16.dp).testTag("working"), strokeWidth = 2.dp)
+                        Text(model.progress ?: "Working…", style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.testTag("operation-progress"))
+                    } else if (model.refreshing && model.page != Page.Inbox && model.page != Page.Devices) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            PullToRefreshDefaults.Indicator(state = rememberPullToRefreshState(), isRefreshing = true)
+                            RefreshCancel(model)
+                        }
+                    }
                     model.error?.let {
                         Surface(color = MaterialTheme.colorScheme.errorContainer) {
                             Column(Modifier.padding(12.dp)) {
@@ -143,13 +150,7 @@ private fun ClientScreen(model: AppModel) {
                 }
             }
             model.notice?.let { message ->
-                Box(modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp)
-                    .shadow(4.dp, MaterialTheme.shapes.small)
-                    .background(MaterialTheme.colorScheme.inverseSurface, MaterialTheme.shapes.small)
-                    .semantics { liveRegion = LiveRegionMode.Polite }) {
-                    Text(message, color = MaterialTheme.colorScheme.inverseOnSurface,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp).testTag("notice"))
-                }
+                ConfirmationNotice(message, Modifier.align(Alignment.BottomCenter))
             }
         }
     }
@@ -168,6 +169,26 @@ private fun ClientScreen(model: AppModel) {
 }
 
 @Composable
+internal fun ConfirmationNotice(message: String, modifier: Modifier = Modifier) {
+    Box(modifier = modifier.padding(16.dp)
+        .shadow(4.dp, MaterialTheme.shapes.small)
+        .background(MaterialTheme.colorScheme.inverseSurface, MaterialTheme.shapes.small)
+        .semantics { liveRegion = LiveRegionMode.Polite }) {
+        Text(message, color = MaterialTheme.colorScheme.inverseOnSurface,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp).testTag("notice"))
+    }
+}
+
+@Composable
+private fun RefreshCancel(model: AppModel) {
+    if (model.refreshing && !model.busy) TextButton(onClick = model::cancelRefresh,
+        modifier = Modifier.testTag("cancel-refresh").semantics { contentDescription = "Cancel refresh" }) {
+        Text("Cancel")
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 private fun InboxScreen(model: AppModel, save: (InboxItem) -> Unit) {
     model.pendingDelete?.let {
         AlertDialog(onDismissRequest = model::cancelInboxDelete,
@@ -179,62 +200,70 @@ private fun InboxScreen(model: AppModel, save: (InboxItem) -> Unit) {
                 modifier = Modifier.testTag("cancel-inbox-delete")) { Text("Cancel") } })
     }
     val context = LocalContext.current
-    Text("Inbox", style = MaterialTheme.typography.titleLarge)
-    Button(onClick = { model.refreshInbox() }, enabled = !model.busy && model.settings.host?.trusted == true,
-        modifier = Modifier.testTag("refresh-inbox")) { Text("Refresh") }
-    if (model.settings.host?.trusted != true) {
-        Text("Set up your server and enroll this device through Settings to get started.")
-    } else if (!model.inboxLoaded) {
-        Text("Press Refresh to check for incoming transfers.")
-    } else if (model.inbox.isEmpty() && model.rejected.isEmpty()) {
-        Text("Inbox is empty", modifier = Modifier.testTag("empty-inbox"))
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Inbox", style = MaterialTheme.typography.titleLarge)
+        IconButton(onClick = model::refreshInbox, enabled = !model.busy && model.settings.host?.trusted == true,
+            modifier = Modifier.testTag("refresh-inbox")) {
+            Icon(painterResource(R.drawable.ic_refresh), contentDescription = "Refresh inbox")
+        }
+        RefreshCancel(model)
     }
-    LazyColumn(Modifier.testTag("inbox-list"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        items(model.inbox, key = { it.id }) { item ->
-            var details by rememberSaveable(item.id) { mutableStateOf(false) }
-            Card(Modifier.fillMaxWidth().testTag("item-${item.id}")) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(if (item.type == "text") "Text" else item.filename, style = MaterialTheme.typography.titleMedium)
-                    Text("From ${item.from}", style = MaterialTheme.typography.titleSmall)
-                    val size = Bridge.formatSize(item.size)
-                    Text("${if (item.type == "text") "Text" else "File"} · $size", style = MaterialTheme.typography.bodySmall)
-                    val time = OffsetDateTime.parse(item.uploaded).atZoneSameInstant(ZoneId.systemDefault())
-                    Text("Uploaded ${time.format(DateTimeFormatter.ofPattern("uuuu-MM-dd HH:mm:ss xxx"))}",
-                        style = MaterialTheme.typography.bodySmall)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (item.size <= MAX_VIEW_BYTES) Button(onClick = { model.receive(item) }, enabled = !model.busy,
-                            modifier = Modifier.testTag("receive-${item.id}")) { Text("View") }
-                        else Column {
-                            Button(onClick = {}, enabled = false, modifier = Modifier.testTag("receive-${item.id}")
-                                .semantics { contentDescription = "View. $TOO_LARGE_TO_VIEW" }) { Text("View") }
-                            TextButton(onClick = model::explainViewLimit, modifier = Modifier.testTag("view-limit-${item.id}")) {
-                                Text("Preview limit")
+    PullToRefreshBox(isRefreshing = model.refreshing && !model.busy,
+        onRefresh = { if (!model.busy && model.settings.host?.trusted == true) model.refreshInbox() },
+        modifier = Modifier.fillMaxSize().testTag("inbox-pull-refresh")) {
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (model.settings.host?.trusted != true) {
+                Text("Set up your server and enroll this device through Settings to get started.")
+            } else if (!model.inboxLoaded) {
+                Text("Press Refresh to check for incoming transfers.")
+            } else if (model.inbox.isEmpty() && model.rejected.isEmpty()) {
+                Text("Inbox is empty", modifier = Modifier.testTag("empty-inbox"))
+            }
+            LazyColumn(Modifier.fillMaxSize().testTag("inbox-list"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                items(model.inbox, key = { it.id }) { item ->
+                    var details by rememberSaveable(item.id) { mutableStateOf(false) }
+                    Card(Modifier.fillMaxWidth().testTag("item-${item.id}")) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(if (item.type == "text") "Text" else item.filename, style = MaterialTheme.typography.titleMedium)
+                            Text("From ${item.from}", style = MaterialTheme.typography.titleSmall)
+                            val size = Bridge.formatSize(item.size)
+                            Text("${if (item.type == "text") "Text" else "File"} · $size", style = MaterialTheme.typography.bodySmall)
+                            val time = OffsetDateTime.parse(item.uploaded).atZoneSameInstant(ZoneId.systemDefault())
+                            Text("Uploaded ${time.format(DateTimeFormatter.ofPattern("uuuu-MM-dd HH:mm:ss xxx"))}",
+                                style = MaterialTheme.typography.bodySmall)
+                            if (item.size > MAX_VIEW_BYTES) Text(TOO_LARGE_TO_VIEW,
+                                style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("view-limit-${item.id}"))
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                if (item.size <= MAX_VIEW_BYTES) Button(onClick = { model.receive(item) }, enabled = !model.busy,
+                                    modifier = Modifier.testTag("receive-${item.id}")) { Text("View") }
+                                else Button(onClick = {}, enabled = false, modifier = Modifier.testTag("receive-${item.id}")
+                                    .semantics { contentDescription = "View. $TOO_LARGE_TO_VIEW" }) { Text("View") }
+                                Button(onClick = { save(item) }, enabled = !model.busy,
+                                    modifier = Modifier.testTag("save-${item.id}")) { Text("Save file") }
+                                TextButton(onClick = { details = !details }, modifier = Modifier.testTag("details-${item.id}")) {
+                                    Text(if (details) "Hide details" else "Details")
+                                }
+                                TextButton(onClick = { model.beginInboxDelete(item) }, enabled = !model.busy,
+                                    modifier = Modifier.testTag("delete-${item.id}").semantics {
+                                        contentDescription = "Delete ${if (item.type == "text") "text" else item.filename} from ${item.from}"
+                                    }) { Text("Delete") }
                             }
-                        }
-                        Button(onClick = { save(item) }, enabled = !model.busy,
-                            modifier = Modifier.testTag("save-${item.id}")) { Text("Save file") }
-                        TextButton(onClick = { details = !details }, modifier = Modifier.testTag("details-${item.id}")) {
-                            Text(if (details) "Hide details" else "Details")
-                        }
-                        TextButton(onClick = { model.beginInboxDelete(item) }, enabled = !model.busy,
-                            modifier = Modifier.testTag("delete-${item.id}").semantics {
-                                contentDescription = "Delete ${if (item.type == "text") "text" else item.filename} from ${item.from}"
-                            }) { Text("Delete") }
-                    }
-                    if (details) {
-                        Text("Transfer ID", style = MaterialTheme.typography.labelMedium)
-                        Row {
-                            Text(item.id, style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.weight(1f).testTag("transfer-id-${item.id}"))
-                            CopyButton("Copy transfer ID", "copy-transfer-${item.id}") {
-                                copyText(context, clipboardText(item.id), "Transfer ID", false, model::clipboardError, { model.confirm("Copied") })
+                            if (details) {
+                                Text("Transfer ID", style = MaterialTheme.typography.labelMedium)
+                                Row {
+                                    Text(item.id, style = MaterialTheme.typography.bodySmall,
+                                        modifier = Modifier.weight(1f).testTag("transfer-id-${item.id}"))
+                                    CopyButton("Copy transfer ID", "copy-transfer-${item.id}") {
+                                        copyText(context, clipboardText(item.id), "Transfer ID", false, model::clipboardError, { model.confirm("Copied") })
+                                    }
+                                }
                             }
                         }
                     }
                 }
+                items(model.rejected) { Text("Not verified: $it", color = MaterialTheme.colorScheme.error) }
             }
         }
-        items(model.rejected) { Text("Not verified: $it", color = MaterialTheme.colorScheme.error) }
     }
 }
 
@@ -341,49 +370,61 @@ private fun Field(label: String, tag: String, value: String, busy: Boolean, sing
         label = { Text(label) }, modifier = Modifier.fillMaxWidth().testTag(tag))
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DevicesScreen(model: AppModel) {
     val context = LocalContext.current
     var candidate by remember { mutableStateOf<Device?>(null) }
     var name by remember { mutableStateOf("") }
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Devices", style = MaterialTheme.typography.titleLarge)
-        Button(onClick = { model.refreshDevices() }, enabled = !model.busy && model.settings.host?.trusted == true,
-            modifier = Modifier.testTag("refresh-devices")) { Text("Refresh") }
-        Text("Compare fingerprints through a trusted channel before approval.")
-        if (!model.devicesLoaded) Text("Press Refresh to discover enrolled devices.")
-        else if (model.devices.isEmpty()) Text("No devices found")
-        LazyColumn(Modifier.testTag("device-list"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(model.settings.peers.entries.toList(), key = { "approved-${it.key}" }) { (peerName, public) ->
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("$peerName · approved")
-                        val fp = Bridge.fingerprint(public)
-                        Row {
-                            Text(fp, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                            CopyButton("Copy $peerName's fingerprint", "copy-approved-$peerName") {
-                                copyText(context, clipboardText(fp), "Device fingerprint", false, model::clipboardError, { model.confirm("Copied") })
-                            }
-                        }
-                        TextButton(onClick = { model.forget(peerName) }, enabled = !model.busy) { Text("Remove approval") }
-                    }
-                }
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Devices", style = MaterialTheme.typography.titleLarge)
+            IconButton(onClick = model::refreshDevices, enabled = !model.busy && model.settings.host?.trusted == true,
+                modifier = Modifier.testTag("refresh-devices")) {
+                Icon(painterResource(R.drawable.ic_refresh), contentDescription = "Refresh devices")
             }
-            items(model.devices.filter { it.key !in model.settings.peers.values }, key = { it.fingerprint }) { device ->
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(if (device.self) "This device" else device.comment.ifEmpty { "Unnamed device" })
-                        Row {
-                            Text(device.fingerprint, modifier = Modifier.weight(1f).testTag("device-${device.fingerprint}"))
-                            CopyButton("Copy ${if (device.self) "this device's" else "the discovered device's"} fingerprint",
-                                "copy-device-${device.fingerprint}") {
-                                copyText(context, clipboardText(device.fingerprint), "Device fingerprint", false, model::clipboardError, { model.confirm("Copied") })
+            RefreshCancel(model)
+        }
+        PullToRefreshBox(isRefreshing = model.refreshing && !model.busy,
+            onRefresh = { if (!model.busy && model.settings.host?.trusted == true) model.refreshDevices() },
+            modifier = Modifier.fillMaxSize().testTag("devices-pull-refresh")) {
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Compare fingerprints through a trusted channel before approval.")
+                if (!model.devicesLoaded) Text("Press Refresh to discover enrolled devices.")
+                else if (model.devices.isEmpty()) Text("No devices found")
+                LazyColumn(Modifier.fillMaxSize().testTag("device-list"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(model.settings.peers.entries.toList(), key = { "approved-${it.key}" }) { (peerName, public) ->
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(16.dp)) {
+                                Text("$peerName · approved")
+                                val fp = Bridge.fingerprint(public)
+                                Row {
+                                    Text(fp, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                                    CopyButton("Copy $peerName's fingerprint", "copy-approved-$peerName") {
+                                        copyText(context, clipboardText(fp), "Device fingerprint", false, model::clipboardError, { model.confirm("Copied") })
+                                    }
+                                }
+                                TextButton(onClick = { model.forget(peerName) }, enabled = !model.busy) { Text("Remove approval") }
                             }
                         }
-                        if (!device.supported) Text("Unsupported transfer key")
-                        else if (!device.self) Button(onClick = {
-                            candidate = device; name = model.suggestedPeerName(device)
-                        }, enabled = !model.busy, modifier = Modifier.testTag("approve-${device.fingerprint}")) { Text("Approve…") }
+                    }
+                    items(model.devices.filter { it.key !in model.settings.peers.values }, key = { it.fingerprint }) { device ->
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(if (device.self) "This device" else device.comment.ifEmpty { "Unnamed device" })
+                                Row {
+                                    Text(device.fingerprint, modifier = Modifier.weight(1f).testTag("device-${device.fingerprint}"))
+                                    CopyButton("Copy ${if (device.self) "this device's" else "the discovered device's"} fingerprint",
+                                        "copy-device-${device.fingerprint}") {
+                                        copyText(context, clipboardText(device.fingerprint), "Device fingerprint", false, model::clipboardError, { model.confirm("Copied") })
+                                    }
+                                }
+                                if (!device.supported) Text("Unsupported transfer key")
+                                else if (!device.self) Button(onClick = {
+                                    candidate = device; name = model.suggestedPeerName(device)
+                                }, enabled = !model.busy, modifier = Modifier.testTag("approve-${device.fingerprint}")) { Text("Approve…") }
+                            }
+                        }
                     }
                 }
             }
@@ -513,10 +554,7 @@ private fun TextScreen(model: AppModel, save: () -> Unit) {
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Parcel", style = MaterialTheme.typography.titleLarge)
         Text("The remote copy remains until you choose Remove & close.")
-        Button(onClick = save, enabled = !model.busy, modifier = Modifier.testTag("save-view")) { Text("Save file") }
         if (viewed.preview?.truncated == true) Text("Showing only the beginning of this large text. The complete transfer remains on the server.")
-        Button(onClick = { model.removeReceived() }, enabled = !model.busy,
-            modifier = Modifier.testTag("remove-close")) { Text("Remove & close") }
         if (viewed.preview == null) Text(UNSUPPORTED_PREVIEW, modifier = Modifier.testTag("unsupported-preview"))
         else {
             CompositionLocalProvider(LocalClipboard provides selectionClipboard) {
@@ -529,6 +567,9 @@ private fun TextScreen(model: AppModel, save: () -> Unit) {
                     })
             }
         }
+        Button(onClick = save, enabled = !model.busy, modifier = Modifier.testTag("save-view")) { Text("Save file") }
+        Button(onClick = { model.removeReceived() }, enabled = !model.busy,
+            modifier = Modifier.testTag("remove-close")) { Text("Remove & close") }
     }
 }
 

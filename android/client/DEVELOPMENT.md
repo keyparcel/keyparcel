@@ -185,3 +185,9 @@ source ../env.sh
 
 The pinned Gradle wrapper and project build files specify SDK 35, AGP, Kotlin and
 Compose versions. See [toolchain setup](../DEVELOPMENT.md) before building.
+
+The preconfigured smoke Inbox is seeded once with six representative parcels:
+small text, a UTF-8 text file, small binary, bounded-preview text, oversized text
+and oversized binary, newest first. Approve the smoke peer to view them; reopening
+retains the fixture and does not resend the samples. Fresh Android setup remains
+manual and does not seed parcels before enrollment.

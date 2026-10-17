@@ -59,6 +59,13 @@ static void accessible(GtkWidget *widget, const char *label) {
     gtk_accessible_reset_relation(GTK_ACCESSIBLE(widget), GTK_ACCESSIBLE_RELATION_LABELLED_BY);
     gtk_accessible_update_property(GTK_ACCESSIBLE(widget), GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
 }
+static GtkWidget *icon_button(UI *ui, const char *icon, const char *name, const char *action) {
+    GtkWidget *b = button(ui, "", action, "");
+    gtk_button_set_child(GTK_BUTTON(b), gtk_image_new_from_icon_name(icon));
+    accessible(b, name); gtk_widget_set_tooltip_text(b, name);
+    gtk_widget_add_css_class(b, "flat");
+    return b;
+}
 static GtkWidget *label(const char *text) {
     GtkWidget *w = gtk_label_new(text);
     gtk_label_set_xalign(GTK_LABEL(w), 0);
@@ -85,7 +92,11 @@ static GtkWidget *page(UI *ui, const char *name, const char *title) {
     char *page_name=g_strdup_printf("Page: %s",title);accessible(frame,page_name);g_free(page_name);
     GtkWidget *heading = label(title);
     gtk_widget_add_css_class(heading, "page-title");
-    gtk_box_append(GTK_BOX(frame), heading);
+    GtkWidget *title_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_box_append(GTK_BOX(title_row), heading);
+    if (strcmp(name,"inbox")==0 || strcmp(name,"devices")==0)
+        gtk_box_append(GTK_BOX(title_row), icon_button(ui,"view-refresh-symbolic",strcmp(name,"inbox")==0 ? "Refresh inbox" : "Refresh devices",name));
+    gtk_box_append(GTK_BOX(frame), title_row);
     GtkWidget *error_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     GtkWidget *error_text = label("");
     gtk_widget_add_css_class(error_text,"error"); gtk_widget_set_hexpand(error_text,TRUE);
@@ -98,6 +109,7 @@ static GtkWidget *page(UI *ui, const char *name, const char *title) {
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box);
     gtk_widget_set_vexpand(scroll,TRUE);gtk_box_append(GTK_BOX(frame),scroll);
     gtk_stack_add_named(ui->pages, frame, name);
+    g_object_set_data(G_OBJECT(box),"frame",frame);
     return box;
 }
 static GtkWidget *text_view(UI *ui, const char *name, gboolean editable) {
@@ -311,6 +323,7 @@ UI *ui_new(uintptr_t handle, const char *icon) {
     gtk_label_set_selectable(GTK_LABEL(brand), FALSE);
     gtk_widget_set_hexpand(brand, FALSE); gtk_box_append(GTK_BOX(brand_row), brand);
     GtkWidget *sync = label("○"); remember(ui, "sync", sync);
+    gtk_label_set_selectable(GTK_LABEL(sync), FALSE);
     gtk_widget_add_css_class(sync, "dim-label"); gtk_widget_add_css_class(sync, "connection-status");
     gtk_label_set_width_chars(GTK_LABEL(sync),2); gtk_widget_set_focusable(sync,TRUE);
     accessible(sync, "Connection status"); gtk_box_append(GTK_BOX(brand_row), sync);
@@ -348,7 +361,6 @@ UI *ui_new(uintptr_t handle, const char *icon) {
 
     GtkWidget *inbox = page(ui, "inbox", "Inbox");
     GtkWidget *host = label(""); remember(ui, "active-host", host); gtk_box_append(GTK_BOX(inbox), host);
-    gtk_box_append(GTK_BOX(inbox), button(ui, "Refresh inbox", "inbox", ""));
     GtkWidget *items = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14); remember(ui, "items", items);
     gtk_box_append(GTK_BOX(inbox), items);
 
@@ -380,7 +392,6 @@ UI *ui_new(uintptr_t handle, const char *icon) {
     gtk_expander_set_child(GTK_EXPANDER(advanced), advanced_box); gtk_box_append(GTK_BOX(settings), advanced);
 
     GtkWidget *devices = page(ui, "devices", "Devices and approvals");
-    gtk_box_append(GTK_BOX(devices), button(ui, "Refresh devices", "devices", ""));
     GtkWidget *list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14); remember(ui, "device-list", list);
     gtk_box_append(GTK_BOX(devices), list);
 
@@ -409,14 +420,24 @@ UI *ui_new(uintptr_t handle, const char *icon) {
     gtk_box_append(GTK_BOX(send), file_actions);
     gtk_box_append(GTK_BOX(send), button(ui, "Discard draft", "discard-draft", ""));
 
-    GtkWidget *view = page(ui, "text", "Parcel — remote copy retained");
+    GtkWidget *view = page(ui, "text", "Parcel");
+    GtkWidget *retained = label("The remote copy remains until you choose Remove & close.");
+    gtk_widget_add_css_class(retained,"dim-label"); gtk_box_append(GTK_BOX(view),retained);
+    GtkWidget *preview_header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
+    GtkWidget *copy_message=icon_button(ui,"edit-copy-symbolic","Copy complete text","copy-message");
+    remember(ui,"copy-message",copy_message);
+    gtk_widget_set_hexpand(copy_message,TRUE);gtk_widget_set_halign(copy_message,GTK_ALIGN_END);
+    gtk_box_append(GTK_BOX(preview_header),copy_message);gtk_box_append(GTK_BOX(view),preview_header);
     gtk_box_append(GTK_BOX(view), text_view(ui, "received", FALSE));
     g_signal_connect(g_hash_table_lookup(ui->fields, "received"), "copy-clipboard", G_CALLBACK(selected_copy), ui);
     GtkWidget *notice = label(""); remember(ui, "view-notice", notice); gtk_box_append(GTK_BOX(view), notice);
-    GtkWidget *copy_message=button(ui,"Copy complete message","copy-message","");remember(ui,"copy-message",copy_message);gtk_box_append(GTK_BOX(view),copy_message);
     gtk_box_append(GTK_BOX(view),button(ui,"Save file","save-view",""));
     gtk_box_append(GTK_BOX(view), button(ui, "Remove & close", "remove", ""));
-    gtk_box_append(GTK_BOX(view), button(ui, "Back to Inbox", "result-back", ""));
+    GtkWidget *viewer_frame = g_object_get_data(G_OBJECT(view),"frame");
+    GtkWidget *viewer_footer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
+    GtkWidget *inbox_back = button(ui,"← Inbox","result-back","");
+    accessible(inbox_back,"Back to inbox");gtk_widget_add_css_class(inbox_back,"flat");
+    gtk_box_append(GTK_BOX(viewer_footer),inbox_back);gtk_box_append(GTK_BOX(viewer_frame),viewer_footer);
     GtkWidget *saved = page(ui, "saved", "File saved — remote copy retained");
     GtkWidget *dest = label(""); remember(ui, "saved-path", dest); gtk_box_append(GTK_BOX(saved), dest);
     gtk_box_append(GTK_BOX(saved), button(ui, "Remove & close", "remove", ""));
@@ -454,6 +475,7 @@ void ui_page(UI *ui, const char *name) {
     const char *section = (strcmp(name, "text") == 0 || strcmp(name, "saved") == 0) ? "inbox" : name;
     char *nav = g_strdup_printf("nav-%s", section);
     gtk_toggle_button_set_active(g_hash_table_lookup(ui->fields, nav), TRUE); g_free(nav);
+    gtk_widget_set_visible(g_hash_table_lookup(ui->fields,"back"),strcmp(name,"text")!=0);
     gtk_widget_set_sensitive(g_hash_table_lookup(ui->fields, "back"), strcmp(name, "settings") == 0 || strcmp(name, "text") == 0 || strcmp(name, "saved") == 0);
 }
 void ui_message(UI *ui, const char *text) {
