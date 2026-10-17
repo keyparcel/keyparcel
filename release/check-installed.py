@@ -17,6 +17,10 @@ assert os.getuid() != 0, 'Installed binaries must run as an ordinary user'
 assert shutil.which('go') is None and shutil.which('gcc') is None, 'Runtime image contains a build toolchain'
 assert not Path('/usr/local/bin/keyparcel').exists(), 'Development CLI must not be available'
 info = json.loads(Path('/candidate/build-info.json').read_text())
+contact = (subprocess.check_output(['dpkg-query', '-W', '-f=${Maintainer}', 'keyparcel'], text=True)
+           if shutil.which('dpkg-query') else
+           subprocess.check_output(['rpm', '-q', '--qf', '%{PACKAGER}', 'keyparcel'], text=True))
+assert contact == 'keyparcel contributors <packetwright@proton.me>', 'Wrong package contact'
 paths = {'usr/bin/keyparcel': 0o755, 'usr/bin/keyparcel-gtk': 0o755,
          'usr/share/applications/dev.keyparcel.desktop': 0o644,
          'usr/share/icons/hicolor/scalable/apps/dev.keyparcel.svg': 0o644,

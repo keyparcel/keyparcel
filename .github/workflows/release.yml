@@ -1,0 +1,155 @@
+name: Draft release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  tag:
+    if: ${{ !github.event.deleted }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      revision: ${{ steps.tag.outputs.revision }}
+      code: ${{ steps.tag.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - id: tag
+        run: python3 release/automation.py tag
+  linux:
+    needs: tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      RELEASE_VERSION: ${{ needs.tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      - run: python3 -m unittest discover -s release -p '*_test.py'
+      - name: Build and test installed Linux packages
+        run: |
+          mkdir -p release/out
+          python3 release/build.py linux --require-clean --version "$RELEASE_VERSION" 2>&1 | tee release/out/linux-build.log
+          python3 release/validate.py "release/out/$RELEASE_VERSION" 2>&1 | tee release/out/linux-validation.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-linux
+          if-no-files-found: error
+          path: |
+            release/out/${{ env.RELEASE_VERSION }}/**/*.deb
+            release/out/${{ env.RELEASE_VERSION }}/**/*.rpm
+            release/out/${{ env.RELEASE_VERSION }}/**/*.tar.gz
+            release/out/${{ env.RELEASE_VERSION }}/**/build-info.json
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: failure()
+        with:
+          name: release-linux-diagnostics
+          path: |
+            release/out/*.log
+            test-artifacts/
+            desktop/client/build/session.*/
+            !**/id_*
+          retention-days: 7
+  android:
+    needs: tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      RELEASE_VERSION: ${{ needs.tag.outputs.version }}
+      RELEASE_CODE: ${{ needs.tag.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
+      - name: Install build-only Android SDK components
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || test "${PIPESTATUS[1]}" = 0
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0' 'ndk;29.0.14206865'
+      - run: python3 release/build.py android --require-clean --version "$RELEASE_VERSION" --android-code "$RELEASE_CODE"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-android-unsigned
+          if-no-files-found: error
+          path: |
+            release/out/${{ env.RELEASE_VERSION }}/android-arm64/*.apk
+            release/out/${{ env.RELEASE_VERSION }}/android-arm64/build-info.json
+            release/out/${{ env.RELEASE_VERSION }}/android-arm64/apk-*.txt
+            release/out/${{ env.RELEASE_VERSION }}/android-arm64/build/keyparcel.aar
+            release/out/${{ env.RELEASE_VERSION }}/android-arm64/LICENSE
+            release/out/${{ env.RELEASE_VERSION }}/android-arm64/NOTICE
+            release/out/${{ env.RELEASE_VERSION }}/android-arm64/THIRD_PARTY_NOTICES.txt
+          retention-days: 7
+  draft:
+    needs: [tag, linux, android]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: write
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      RELEASE_VERSION: ${{ needs.tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install pinned Android signing tools
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || test "${PIPESTATUS[1]}" = 0
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'build-tools;35.0.0'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: release-linux
+          path: release/out/${{ env.RELEASE_VERSION }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: release-android-unsigned
+          path: release/out/${{ env.RELEASE_VERSION }}/android-arm64
+      - name: Sign and verify Android APK
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: python3 release/sign.py "release/out/$RELEASE_VERSION/android-arm64"
+      - name: Assemble exact tagged assets and checksums
+        run: python3 release/automation.py assets
+      - name: Create or resume unpublished draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 release/automation.py draft

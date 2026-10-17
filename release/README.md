@@ -1,7 +1,8 @@
-# Release candidates
+# Release builds
 
 Build and validate candidates without tags, signing keys or publication rights.
-Checksums, signing and publication are separate from candidate builds.
+Candidate builds stay unsigned and need no secrets. The tag workflow below adds
+protected Android signing and an unpublished release draft.
 Project code is [Apache-2.0](../LICENSE); linked Go components retain their BSD
 licenses. Linux packages/archives and Android APK assets include the project
 license, copyright notice and [third-party notices](../THIRD_PARTY_NOTICES.txt).
@@ -36,12 +37,13 @@ sorting alpha, beta, rc, then the corresponding final version;
 packages have revision/release `1`. The Android versionName keeps the product
 version. `ANDROID_VERSION_CODE` is an independently assigned integer, 1 through
 2,100,000,000: increase it for every published Android build, including prereleases;
-never reset it for a final version. Publication and enforcing a remote counter
-are outside this build-only stage.
+never reset it for a final version. The workflow reads this committed value; it does not infer a counter from a tag
+or enforce a remote counter. Maintainers must check prior distributions before
+assigning the next code.
 
 CLI and GTK expose `--version`; each candidate also has `build-info.json` with
 version, source revision and target (and Go toolchain for Linux). Dirty local
-checkouts append `-dirty`; CI checks out the exact PR head and uses
+checkouts append `-dirty`; candidate CI checks out the exact PR head and uses
 `--require-clean` to reject source changes. Ignored output/log files do not affect
 that check. One revision value is shared by all targets in a build invocation. Android records
 source revision in manifest metadata `dev.keyparcel.sourceRevision` and exposes
@@ -98,15 +100,104 @@ Finally, removal through apt/dnf must leave a generated user identity and config
 byte-identical. Each run owns and cleans its own fixtures.
 
 Android's stable production application ID is `dev.keyparcel.app`; smoke/scenario
-retain their suffixes and x86_64 workflow. The production release is unsigned and
+retain their suffixes and x86_64 workflow. Candidate production APKs are unsigned and
 non-debuggable, with ARM64-only native libraries. Static checks inspect package
 version/ID/provenance, AAR-to-APK library completeness, ELF machine/load alignment,
 APK 16 KiB library alignment, and absence of a valid signature. These checks do
 **not** establish ARM runtime behavior; first physical-device execution remains
-deferred. No device farm, signing, release creation, upgrade matrix, package
-repository, macOS packaging or auto-update implementation is included.
+deferred. No device farm, upgrade matrix, package repository, macOS packaging or auto-update
+implementation is included. Signing and release drafts are described below.
 
-CI keeps the existing seven checks and adds two candidate jobs. Artifacts and
+Candidate CI preserves the broad source suites, including both Android client
+shards, and adds two candidate jobs. Its Android job also signs a private copy
+with a disposable test key and checks failure cleanup; the uploaded candidate
+remains unsigned. Artifacts and
 logs are retained for seven days. Local logs go to stdout; GTK/test failure
 artifacts use the existing fixture locations. Do not distribute failure artifacts
 as releases; they can contain disposable fixture keys and plaintext.
+
+## Tagged release drafts
+
+The `Draft release` workflow runs only on pushed `v*` tags. It accepts exactly
+`vMAJOR.MINOR.PATCH`, optionally `-alpha.N`, `-beta.N` or `-rc.N`, with the same
+no-leading-zero grammar as the builders. The tag must match `release/VERSION`,
+and checkout, event SHA and tag must resolve to the same commit. Linux amd64
+packages and archives are built and installed/tested on the baselines above;
+Android ARM64 uses the unchanged unsigned production build and static checks.
+Neither the broad scenario suites nor an ARM emulator are added to this workflow.
+Run ordinary PR CI before tagging.
+
+1. Commit the intended `release/VERSION` and `release/ANDROID_VERSION_CODE` through
+   normal review. **Increase versionCode for every distributed Android build**,
+   including prereleases; a stable release must also have a higher code than its
+   prereleases. Never reuse a code for different APK contents or reset it with a
+   new version. Check any previously distributed APKs/drafts as well as published
+   releases. Re-executing the same tag does not allocate a new code.
+2. From the reviewed clean main commit, create and push the matching tag, for example:
+
+   ```sh
+   git tag -a v0.1.0-rc.1 -m 'keyparcel 0.1.0-rc.1'
+   git push origin v0.1.0-rc.1
+   ```
+
+   Never move a distributed version tag. Unsupported tags fail validation.
+3. After both build/test jobs pass, inspect their logs and exact source revision,
+   then approve the `release` environment deployment within seven days (before
+   the same-run build artifacts expire). This environment protects signing and
+   draft upload, not the unsigned PR candidates. Its configured reviewer/tag rules
+   remain in force; the workflow does not change settings or secrets.
+4. Inspect the resulting **unpublished draft** and its assets. There is no automatic
+   publish action. Tags with alpha/beta/rc remain marked prerelease; stable drafts
+   are not prereleases. Creation explicitly does not select a latest release;
+   choose the appropriate prerelease/latest status when publishing manually.
+
+Only the protected job has `contents: write`. Its signing step receives the four
+environment secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
+`ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`; the upload step receives the job's
+GitHub token. Signing uses SDK Build Tools 35.0.0 and JDK 21. The keystore is decoded
+into a 0600 file in a private temporary directory, removed even on tool failure.
+Passwords are passed through environment variables rather than command arguments;
+secret tool diagnostics are not printed. No keystore or password is an artifact.
+
+Signing uses v2/v3 APK signatures (Android 8 minimum), with no legacy v1 or v4
+sidecar. After signing, the workflow verifies the APK signature against the selected
+keystore certificate, ZIP alignment, production ID/version/provenance and unchanged
+manifest, every original payload entry, notices and ARM64 libraries. The public
+certificate SHA-256 fingerprint is an asset for comparison with the offline backup.
+Unsigned APKs, AARs, logs and fixture output are not release assets.
+
+The draft contains the DEB, RPM, their two matching archives, signed APK, three
+per-target build-info files, Android certificate fingerprint and `SHA256SUMS`.
+Checksums cover every other asset. They detect changed bytes; they do not replace
+trust in GitHub or provide Linux package/repository signatures.
+
+### Inspection, first device test and publication
+
+Download the draft assets and verify `sha256sum -c SHA256SUMS`; compare all three
+build-info revisions with the tag's commit and Android versionCode with the
+committed value. Check the APK certificate fingerprint against the backed-up
+signing key (SDK `apksigner verify --verbose --print-certs APK` reports it).
+Before the first publication, install the signed production APK on a physical
+ARM64 Android device and try enrollment, peer approval and verified text/file
+send, view, save and deletion. This remains a manual gate: CI provides static
+ARM64 packaging evidence, **not ARM runtime or upgrade assurance**. Retain the
+explicit Linux distro limits when editing release notes. Then publish manually
+in GitHub after reviewing the draft, prerelease/latest choices and device results.
+
+Keep the original keystore, alias and passwords in separate secure offline
+backups, and record its public certificate fingerprint. Test that backups can be
+read before relying on the key for updates. Never commit them, place them in
+workflow artifacts or rotate/delete the only copy; Android updates require the
+same signing identity. This workflow introduces no key rotation or recovery service.
+
+### Reruns and interrupted uploads
+
+Tag runs are serialized. A rerun can resume an existing draft only when its tag,
+exact source SHA and prerelease flag match. Already-uploaded assets must have
+identical sizes and GitHub SHA-256 digests; missing assets can then be uploaded.
+Published releases are refused, and assets are never deleted or overwritten.
+Do not publish/edit a draft while a run is active. If rebuilding produces different
+bytes (builds are not claimed byte-reproducible), the rerun deliberately fails.
+Inspect the discrepancy; if the release is still wholly undistributed, explicitly
+delete the incomplete draft before retrying. Otherwise use a new version and
+versionCode. The workflow never performs that destructive cleanup for you.
