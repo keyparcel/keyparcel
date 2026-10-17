@@ -407,6 +407,32 @@ func copyTree(src, dst string) error {
 	})
 }
 
+// Wait for the restarted daemon, rather than connecting during SIGHUP re-exec.
+func (w *world) reloadSSHD() {
+	w.t.Helper()
+	const listening = "Server listening on 0.0.0.0 port 22."
+	before := bytes.Count(w.logs(), []byte(listening))
+	w.admin("kill", "-HUP", "1")
+	ctx, cancel := context.WithTimeout(w.ctx, 10*time.Second)
+	defer cancel()
+	var logs []byte
+	for {
+		out, diag, err := container(ctx, nil, "logs", w.id)
+		if err != nil {
+			w.t.Fatalf("SSH reload readiness: read daemon log: %v\n%s%s\nLast daemon log:\n%s", err, out, diag, logs)
+		}
+		logs = append(out, diag...)
+		if bytes.Count(logs, []byte(listening)) > before {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			w.t.Fatalf("SSH reload readiness: no new listener within 10 seconds: %v\n%s", ctx.Err(), logs)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
 func (w *world) logs() []byte {
 	w.t.Helper()
 	out, diag, err := container(w.ctx, nil, "logs", w.id)
