@@ -20,6 +20,10 @@ import (
 )
 
 func TestAndroidTextClient(t *testing.T) {
+	shard := os.Getenv("KEYPARCEL_ANDROID_CLIENT_SHARD")
+	if shard != "" && shard != "network" && shard != "files" {
+		t.Fatalf("Select Android client shard network or files, or leave unset for the complete journey: %q", shard)
+	}
 	const app = "dev.keyparcel.app.scenario"
 	sdk := os.Getenv("ANDROID_HOME")
 	if sdk == "" {
@@ -209,159 +213,58 @@ func TestAndroidTextClient(t *testing.T) {
 		t.Fatalf("Expected one Android reply, found %d", len(items))
 	}
 	equalBytes(t, text, w.ok(w.alice, nil, "receive", items[0].ID, "--stdout"))
-	w.admin("chmod", "0555", inboxDir)
-	phase("removalFailure", "text_id", textID, "file_id", fileID)
-	w.assertExists(remote(textID), true)
-	w.assertExists(remote(fileID), true)
-	w.admin("chmod", "0755", inboxDir)
-	adb("shell", "am", "force-stop", app)
-	newID := send(text, "--stdin")
-	phase("restartAndRemove", "text_id", textID, "new_text_id", newID, "expected_public", public)
-	w.assertExists(remote(textID), false)
-	w.assertExists(remote(newID), false)
-	w.assertExists(remote(fileID), true)
-	deleteTextID := send([]byte("unwanted text"), "--stdin")
-	deleteFileID := send(nil, "--file", file)
-	phase("inboxDeletion", "delete_text_id", deleteTextID, "delete_file_id", deleteFileID, "file_id", fileID)
-	w.assertExists(remote(deleteTextID), false)
-	w.assertExists(remote(deleteFileID), false)
-	w.assertExists(remote(fileID), true)
-	// Inbox deletion must not touch an earlier provider-saved local file.
-	equalBytes(t, fileBytes, adb("exec-out", "run-as", app, "cat", "files/document-fixtures/removal-retry.bin"))
-	func() {
-		out, diag, err := container(w.ctx, nil, "pause", w.id)
-		if err != nil {
-			t.Fatalf("Could not stall the SSH fixture: %v\n%s%s", err, out, diag)
-		}
-		defer func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-			defer cancel()
-			out, diag, err := container(ctx, nil, "unpause", w.id)
+	if shard != "network" {
+		w.admin("chmod", "0555", inboxDir)
+		phase("removalFailure", "text_id", textID, "file_id", fileID)
+		w.assertExists(remote(textID), true)
+		w.assertExists(remote(fileID), true)
+		w.admin("chmod", "0755", inboxDir)
+		adb("shell", "am", "force-stop", app)
+		newID := send(text, "--stdin")
+		phase("restartAndRemove", "text_id", textID, "new_text_id", newID, "expected_public", public)
+		w.assertExists(remote(textID), false)
+		w.assertExists(remote(newID), false)
+		w.assertExists(remote(fileID), true)
+		deleteTextID := send([]byte("unwanted text"), "--stdin")
+		deleteFileID := send(nil, "--file", file)
+		phase("inboxDeletion", "delete_text_id", deleteTextID, "delete_file_id", deleteFileID, "file_id", fileID)
+		w.assertExists(remote(deleteTextID), false)
+		w.assertExists(remote(deleteFileID), false)
+		w.assertExists(remote(fileID), true)
+		// Inbox deletion must not touch an earlier provider-saved local file.
+		equalBytes(t, fileBytes, adb("exec-out", "run-as", app, "cat", "files/document-fixtures/removal-retry.bin"))
+	}
+	if shard != "files" {
+		func() {
+			out, diag, err := container(w.ctx, nil, "pause", w.id)
 			if err != nil {
-				t.Fatalf("Could not resume the SSH fixture: %v\n%s%s", err, out, diag)
+				t.Fatalf("Could not stall the SSH fixture: %v\n%s%s", err, out, diag)
 			}
-		}()
-		phase("discoveryTimeout", "port", "2444")
-	}()
-	func() {
-		defer func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-			defer cancel()
-			out, diag, err := container(ctx, nil, "unpause", w.id)
-			if err != nil && !t.Failed() {
-				t.Errorf("Could not resume the SSH fixture: %v\n%s%s", err, out, diag)
-			}
-		}()
-		adb("shell", "run-as", app, "rm", "-f", "cache/stalled-ready", "cache/stalled-go")
-		phaseWhile("stalledRequest", func(ctx context.Context) error {
-			ctx, cancel := context.WithTimeout(ctx, 150*time.Second)
-			defer cancel()
-			for {
-				_, _, err := command(ctx, nil, filepath.Join(sdk, "platform-tools", "adb"), "-s", serial, "shell", "run-as", app, "test", "-f", "cache/stalled-ready")
-				if err == nil {
-					break
+			defer func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer cancel()
+				out, diag, err := container(ctx, nil, "unpause", w.id)
+				if err != nil {
+					t.Fatalf("Could not resume the SSH fixture: %v\n%s%s", err, out, diag)
 				}
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(250 * time.Millisecond):
-				}
-			}
-			if out, diag, err := container(ctx, nil, "pause", w.id); err != nil {
-				return fmt.Errorf("pause SSH fixture: %w: %s%s", err, out, diag)
-			}
-			_, _, err := command(ctx, nil, filepath.Join(sdk, "platform-tools", "adb"), "-s", serial, "shell", "run-as", app, "touch", "cache/stalled-go")
-			return err
-		}, "file_id", fileID)
-	}()
-	phase("retryAfterStall", "file_id", fileID)
-	prefix, tail := "prefix\n", " 世界 🌍\ncomplete-tail\n"
-	large := []byte(prefix + strings.Repeat("x", 193638-len(prefix)-len(tail)) + tail)
-	largeID := send(large, "--stdin")
-	nulID := send([]byte("before\x00after"), "--stdin")
-	platformID := send([]byte(strings.Repeat("x", 1024*1024)), "--stdin")
-	previewFile := filepath.Join(w.alice.dir, "preview.txt")
-	if err := os.WriteFile(previewFile, []byte("text file 世界\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	textFileID := send(nil, "--file", previewFile)
-	binaryFile := filepath.Join(w.alice.dir, "opaque.bin")
-	binaryBytes := []byte{0, 1, 2, 3}
-	if err := os.WriteFile(binaryFile, binaryBytes, 0600); err != nil {
-		t.Fatal(err)
-	}
-	binaryID := send(nil, "--file", binaryFile)
-	invalidFile := filepath.Join(w.alice.dir, "invalid.bin")
-	if err := os.WriteFile(invalidFile, []byte{255, 254, 1}, 0600); err != nil {
-		t.Fatal(err)
-	}
-	invalidID := send(nil, "--file", invalidFile)
-	boundaryID := send(bytes.Repeat([]byte("x"), 16*1024*1024), "--stdin")
-	aboveID := send(bytes.Repeat([]byte("x"), 16*1024*1024+1), "--stdin")
-	phase("receivedClipboardCases", "large_id", largeID, "nul_id", nulID, "platform_id", platformID,
-		"textfile_id", textFileID, "binary_id", binaryID, "invalid_id", invalidID, "boundary_id", boundaryID, "above_id", aboveID)
-	equalBytes(t, large, adb("exec-out", "run-as", app, "cat", "files/document-fixtures/truncated-view.txt"))
-	equalBytes(t, []byte("before\x00after"), adb("exec-out", "run-as", app, "cat", "files/document-fixtures/nul-view.txt"))
-	equalBytes(t, binaryBytes, adb("exec-out", "run-as", app, "cat", "files/document-fixtures/opaque-"+binaryID+".bin"))
-	equalBytes(t, []byte{255, 254, 1}, adb("exec-out", "run-as", app, "cat", "files/document-fixtures/opaque-"+invalidID+".bin"))
-	for _, id := range []string{largeID, nulID, platformID, textFileID, fileID, binaryID, invalidID, boundaryID, aboveID} {
-		w.assertExists(remote(id), true)
-	}
-	fileReport := phase("fileTransfers", "file_id", fileID)
-	w.assertExists(remote(fileID), false)
-	for _, name := range []string{"removal-retry.bin", "renamed-世界.bin", "renamed-世界(1).bin"} {
-		equalBytes(t, fileBytes, adb("exec-out", "run-as", app, "cat", "files/document-fixtures/"+name))
-	}
-	if err := json.Unmarshal(w.ok(w.alice, nil, "inbox", "--json"), &items); err != nil {
-		t.Fatal(err)
-	}
-	if len(items) != 2 {
-		t.Fatalf("Expected binary and empty Android file replies, found %d", len(items))
-	}
-	for _, reply := range []struct {
-		id, name string
-		data     []byte
-	}{
-		{publicValue(fileReport, "binary_reply_id"), "payload-世界.bin", fileBytes},
-		{publicValue(fileReport, "empty_reply_id"), "empty.bin", nil},
-	} {
-		found := false
-		for _, item := range items {
-			if item.ID == reply.id {
-				found = item.Type == "file" && item.Filename != nil && *item.Filename == reply.name && item.Size == int64(len(reply.data))
-			}
-		}
-		if !found {
-			t.Fatalf("Android file reply lost its signed filename, size, or type: %s", reply.name)
-		}
-		destination := filepath.Join(w.alice.dir, "received-"+reply.name)
-		w.ok(w.alice, nil, "receive", reply.id, "--save-to", destination)
-		got, err := os.ReadFile(destination)
-		if err != nil {
-			t.Fatalf("Read Android file reply %s: %v", reply.name, err)
-		}
-		equalBytes(t, reply.data, got)
-	}
-	// Exercise failed-only GUI retries using the existing phone/CLI fixture.
-	peerInbox := filepath.Dir(w.remote(w.alice, strings.Repeat("0", 32)))
-	beforeOwn := strings.Fields(string(w.admin("ls", "-1", inboxDir)))
-	beforePeer := strings.Fields(string(w.admin("ls", "-1", peerInbox)))
-	for _, kind := range []string{"text", "file"} {
-		for _, stage := range []string{"prepare", "retry"} {
-			adb("shell", "run-as", app, "rm", "-f", "cache/multi-"+kind+"-"+stage+"-ready", "cache/multi-"+kind+"-"+stage+"-go")
-		}
-	}
-	multi := phaseWhile("multipleRecipients", func(ctx context.Context) error {
-		defer func() {
-			cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-			defer cancel()
-			container(cleanup, nil, "exec", w.id, "chmod", "700", peerInbox)
+			}()
+			phase("discoveryTimeout", "port", "2444")
 		}()
-		for _, kind := range []string{"text", "file"} {
-			for _, stage := range []string{"prepare", "retry"} {
-				marker := "cache/multi-" + kind + "-" + stage
+		func() {
+			defer func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer cancel()
+				out, diag, err := container(ctx, nil, "unpause", w.id)
+				if err != nil && !t.Failed() {
+					t.Errorf("Could not resume the SSH fixture: %v\n%s%s", err, out, diag)
+				}
+			}()
+			adb("shell", "run-as", app, "rm", "-f", "cache/stalled-ready", "cache/stalled-go")
+			phaseWhile("stalledRequest", func(ctx context.Context) error {
+				ctx, cancel := context.WithTimeout(ctx, 150*time.Second)
+				defer cancel()
 				for {
-					_, _, err := command(ctx, nil, filepath.Join(sdk, "platform-tools", "adb"), "-s", serial, "shell", "run-as", app, "test", "-f", marker+"-ready")
+					_, _, err := command(ctx, nil, filepath.Join(sdk, "platform-tools", "adb"), "-s", serial, "shell", "run-as", app, "test", "-f", "cache/stalled-ready")
 					if err == nil {
 						break
 					}
@@ -371,44 +274,161 @@ func TestAndroidTextClient(t *testing.T) {
 					case <-time.After(250 * time.Millisecond):
 					}
 				}
-				mode := "500"
-				if stage == "retry" {
-					mode = "700"
+				if out, diag, err := container(ctx, nil, "pause", w.id); err != nil {
+					return fmt.Errorf("pause SSH fixture: %w: %s%s", err, out, diag)
 				}
-				if out, diag, err := container(ctx, nil, "exec", w.id, "chmod", mode, peerInbox); err != nil {
-					return fmt.Errorf("multi-recipient permission fixture: %w: %s%s", err, out, diag)
-				}
-				if _, _, err := command(ctx, nil, filepath.Join(sdk, "platform-tools", "adb"), "-s", serial, "shell", "run-as", app, "touch", marker+"-go"); err != nil {
-					return err
+				_, _, err := command(ctx, nil, filepath.Join(sdk, "platform-tools", "adb"), "-s", serial, "shell", "run-as", app, "touch", "cache/stalled-go")
+				return err
+			}, "file_id", fileID)
+		}()
+		phase("retryAfterStall", "file_id", fileID)
+		prefix, tail := "prefix\n", " 世界 🌍\ncomplete-tail\n"
+		large := []byte(prefix + strings.Repeat("x", 193638-len(prefix)-len(tail)) + tail)
+		largeID := send(large, "--stdin")
+		nulID := send([]byte("before\x00after"), "--stdin")
+		platformID := send([]byte(strings.Repeat("x", 1024*1024)), "--stdin")
+		previewFile := filepath.Join(w.alice.dir, "preview.txt")
+		if err := os.WriteFile(previewFile, []byte("text file 世界\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		textFileID := send(nil, "--file", previewFile)
+		binaryFile := filepath.Join(w.alice.dir, "opaque.bin")
+		binaryBytes := []byte{0, 1, 2, 3}
+		if err := os.WriteFile(binaryFile, binaryBytes, 0600); err != nil {
+			t.Fatal(err)
+		}
+		binaryID := send(nil, "--file", binaryFile)
+		invalidFile := filepath.Join(w.alice.dir, "invalid.bin")
+		if err := os.WriteFile(invalidFile, []byte{255, 254, 1}, 0600); err != nil {
+			t.Fatal(err)
+		}
+		invalidID := send(nil, "--file", invalidFile)
+		boundaryID := send(bytes.Repeat([]byte("x"), 16*1024*1024), "--stdin")
+		aboveID := send(bytes.Repeat([]byte("x"), 16*1024*1024+1), "--stdin")
+		phase("receivedClipboardCases", "large_id", largeID, "nul_id", nulID, "platform_id", platformID,
+			"textfile_id", textFileID, "binary_id", binaryID, "invalid_id", invalidID, "boundary_id", boundaryID, "above_id", aboveID)
+		equalBytes(t, large, adb("exec-out", "run-as", app, "cat", "files/document-fixtures/truncated-view.txt"))
+		equalBytes(t, []byte("before\x00after"), adb("exec-out", "run-as", app, "cat", "files/document-fixtures/nul-view.txt"))
+		equalBytes(t, binaryBytes, adb("exec-out", "run-as", app, "cat", "files/document-fixtures/opaque-"+binaryID+".bin"))
+		equalBytes(t, []byte{255, 254, 1}, adb("exec-out", "run-as", app, "cat", "files/document-fixtures/opaque-"+invalidID+".bin"))
+		for _, id := range []string{largeID, nulID, platformID, textFileID, fileID, binaryID, invalidID, boundaryID, aboveID} {
+			w.assertExists(remote(id), true)
+		}
+	}
+	if shard != "network" {
+		fileReport := phase("fileTransfers", "file_id", fileID)
+		w.assertExists(remote(fileID), false)
+		for _, name := range []string{"removal-retry.bin", "renamed-世界.bin", "renamed-世界(1).bin"} {
+			equalBytes(t, fileBytes, adb("exec-out", "run-as", app, "cat", "files/document-fixtures/"+name))
+		}
+		if err := json.Unmarshal(w.ok(w.alice, nil, "inbox", "--json"), &items); err != nil {
+			t.Fatal(err)
+		}
+		if len(items) != 2 {
+			t.Fatalf("Expected binary and empty Android file replies, found %d", len(items))
+		}
+		for _, reply := range []struct {
+			id, name string
+			data     []byte
+		}{
+			{publicValue(fileReport, "binary_reply_id"), "payload-世界.bin", fileBytes},
+			{publicValue(fileReport, "empty_reply_id"), "empty.bin", nil},
+		} {
+			found := false
+			for _, item := range items {
+				if item.ID == reply.id {
+					found = item.Type == "file" && item.Filename != nil && *item.Filename == reply.name && item.Size == int64(len(reply.data))
 				}
 			}
-		}
-		return nil
-	})
-	if after := strings.Fields(string(w.admin("ls", "-1", inboxDir))); len(after) != len(beforeOwn)+2 {
-		t.Fatalf("Multi-recipient retry duplicated or omitted self copies: before %v after %v", beforeOwn, after)
-	}
-	if after := strings.Fields(string(w.admin("ls", "-1", peerInbox))); len(after) != len(beforePeer)+2 {
-		t.Fatalf("Multi-recipient retry duplicated or omitted peer copies: before %v after %v", beforePeer, after)
-	}
-	for _, kind := range []string{"text", "file"} {
-		w.assertExists(remote(publicValue(multi, kind+"_self_id")), true)
-		peerID := publicValue(multi, kind+"_peer_id")
-		w.assertExists(w.remote(w.alice, peerID), true)
-		if kind == "text" {
-			equalBytes(t, []byte("multi text 世界\n"), w.ok(w.alice, nil, "receive", peerID, "--stdout"))
-		} else {
-			destination := filepath.Join(w.alice.dir, "multi.bin")
-			w.ok(w.alice, nil, "receive", peerID, "--save-to", destination)
+			if !found {
+				t.Fatalf("Android file reply lost its signed filename, size, or type: %s", reply.name)
+			}
+			destination := filepath.Join(w.alice.dir, "received-"+reply.name)
+			w.ok(w.alice, nil, "receive", reply.id, "--save-to", destination)
 			got, err := os.ReadFile(destination)
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("Read Android file reply %s: %v", reply.name, err)
 			}
-			equalBytes(t, []byte{0, 1, 2, 255, 42}, got)
+			equalBytes(t, reply.data, got)
+		}
+	}
+	if shard != "files" {
+		// Exercise failed-only GUI retries using the existing phone/CLI fixture.
+		peerInbox := filepath.Dir(w.remote(w.alice, strings.Repeat("0", 32)))
+		beforeOwn := strings.Fields(string(w.admin("ls", "-1", inboxDir)))
+		beforePeer := strings.Fields(string(w.admin("ls", "-1", peerInbox)))
+		for _, kind := range []string{"text", "file"} {
+			for _, stage := range []string{"prepare", "retry"} {
+				adb("shell", "run-as", app, "rm", "-f", "cache/multi-"+kind+"-"+stage+"-ready", "cache/multi-"+kind+"-"+stage+"-go")
+			}
+		}
+		multi := phaseWhile("multipleRecipients", func(ctx context.Context) error {
+			defer func() {
+				cleanup, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer cancel()
+				container(cleanup, nil, "exec", w.id, "chmod", "700", peerInbox)
+			}()
+			for _, kind := range []string{"text", "file"} {
+				for _, stage := range []string{"prepare", "retry"} {
+					marker := "cache/multi-" + kind + "-" + stage
+					for {
+						_, _, err := command(ctx, nil, filepath.Join(sdk, "platform-tools", "adb"), "-s", serial, "shell", "run-as", app, "test", "-f", marker+"-ready")
+						if err == nil {
+							break
+						}
+						select {
+						case <-ctx.Done():
+							return ctx.Err()
+						case <-time.After(250 * time.Millisecond):
+						}
+					}
+					mode := "500"
+					if stage == "retry" {
+						mode = "700"
+					}
+					if out, diag, err := container(ctx, nil, "exec", w.id, "chmod", mode, peerInbox); err != nil {
+						return fmt.Errorf("multi-recipient permission fixture: %w: %s%s", err, out, diag)
+					}
+					if _, _, err := command(ctx, nil, filepath.Join(sdk, "platform-tools", "adb"), "-s", serial, "shell", "run-as", app, "touch", marker+"-go"); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		})
+		if after := strings.Fields(string(w.admin("ls", "-1", inboxDir))); len(after) != len(beforeOwn)+2 {
+			t.Fatalf("Multi-recipient retry duplicated or omitted self copies: before %v after %v", beforeOwn, after)
+		}
+		if after := strings.Fields(string(w.admin("ls", "-1", peerInbox))); len(after) != len(beforePeer)+2 {
+			t.Fatalf("Multi-recipient retry duplicated or omitted peer copies: before %v after %v", beforePeer, after)
+		}
+		for _, kind := range []string{"text", "file"} {
+			w.assertExists(remote(publicValue(multi, kind+"_self_id")), true)
+			peerID := publicValue(multi, kind+"_peer_id")
+			w.assertExists(w.remote(w.alice, peerID), true)
+			if kind == "text" {
+				equalBytes(t, []byte("multi text 世界\n"), w.ok(w.alice, nil, "receive", peerID, "--stdout"))
+			} else {
+				destination := filepath.Join(w.alice.dir, "multi.bin")
+				w.ok(w.alice, nil, "receive", peerID, "--save-to", destination)
+				got, err := os.ReadFile(destination)
+				if err != nil {
+					t.Fatal(err)
+				}
+				equalBytes(t, []byte{0, 1, 2, 255, 42}, got)
+			}
 		}
 	}
 
-	for _, name := range []string{"setup", "server-approval", "host-key-changed", "inbox", "inbox-details", "settings-simple", "peer-approval", "send-draft", "received", "sent", "removal-error", "removed", "timeout", "received-copy", "clipboard-unavailable", "send-file", "saved-file", "send-multiple-text", "send-multiple-file", "send-feedback-details", "parcel-unsupported", "parcel-text-file", "status-confirmation", "status-connected", "status-error", "devices", "refreshing-inbox", "refreshing-devices"} {
+	// Every screenshot remains required in the shard that runs its producing phase.
+	screenshots := []string{"setup", "server-approval", "host-key-changed", "inbox", "inbox-details", "settings-simple", "peer-approval", "send-draft", "received", "sent", "send-feedback-details", "status-confirmation", "status-connected", "devices"}
+	if shard != "network" {
+		screenshots = append(screenshots, "removal-error", "removed", "send-file", "saved-file")
+	}
+	if shard != "files" {
+		screenshots = append(screenshots, "timeout", "received-copy", "clipboard-unavailable", "send-multiple-text", "send-multiple-file", "parcel-unsupported", "parcel-text-file", "status-error", "refreshing-inbox", "refreshing-devices")
+	}
+	for _, name := range screenshots {
 		out := adb("exec-out", "run-as", app, "cat", "files/"+name+".png")
 		if len(out) < 8 || string(out[:8]) != "\x89PNG\r\n\x1a\n" {
 			t.Fatalf("Invalid %s screenshot", name)

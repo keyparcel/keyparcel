@@ -142,6 +142,11 @@ fit within the sharing limit; paste them with **Ctrl+V** in a host editor or
 make test-android-client
 ```
 
+The target runs the complete sequential journey by default. Set
+`KEYPARCEL_ANDROID_CLIENT_SHARD=network` or `files` for one independent shard,
+as described in [CI](../../tests/ci/README.md#android-client-shards). Each shard
+builds its own APKs and performs real enrollment against its own SSH fixture.
+
 The target builds the bridge/app/test APKs and uses a separate headless AVD,
 `keyparcel-ui-tests` on `emulator-5556`. It creates/reuses test state under
 `android/build/ui-avd/` from the installed image and baseline calibration. Manual

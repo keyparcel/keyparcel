@@ -1,7 +1,7 @@
 # GitHub Actions checks
 
 [CI](../../.github/workflows/ci.yml) runs on pull requests, pushes to `main` and
-manual dispatch. Seven independent standard `ubuntu-24.04` jobs start together:
+manual dispatch. Eight independent standard `ubuntu-24.04` jobs start together:
 
 | Job | Checks |
 | --- | --- |
@@ -9,12 +9,12 @@ manual dispatch. Seven independent standard `ubuntu-24.04` jobs start together:
 | CLI × 3 | Automatically discovered scenarios, both supported SSH transports, two independent scenarios at a time per shard |
 | GTK | Containerized client unit/lifecycle checks, real AT-SPI transfer journey and smoke lifecycle |
 | Android verification | Go mobile AAR, headless verification APK and real Android/Linux exchange |
-| Android client | Compose APK/JVM tests and the complete real UI/file-transfer journey |
+| Android client × 2 | Independent network/viewer and removal/file-transfer journeys; each builds Compose APK/JVM tests and enrolls its own device |
 
 The separate [candidate workflow](../../.github/workflows/candidates.yml) builds
 Linux packages and an unsigned ARM64 Android APK, with installed-package and
 static APK checks. Neither workflow publishes releases or deploys anything.
-The seven broad jobs do not depend on fast checks succeeding. Matrix failures leave sibling jobs running. New commits cancel
+The eight broad jobs do not depend on fast checks succeeding. Matrix failures leave sibling jobs running. New commits cancel
 superseded runs for the same branch/PR; job limits are 15 minutes for fast checks,
 25 minutes for CLI/GTK and 45 minutes for Android. Actions are pinned to upstream
 release commits; Go comes from `go.mod` (also pinned in the GTK image), JDK is 21,
@@ -56,6 +56,27 @@ parallel with its build, then waits for both before running tests. Build/readine
 timings are printed in the job log. The development launcher's acceleration
 stays `off` unless `KEYPARCEL_ANDROID_ACCEL` is explicitly set (`on`, `off`, `auto`).
 Use normal Android targets on a development host without KVM.
+
+## Android client shards
+
+CI runs `network` and `files` on separate VMs, each with its own emulator,
+SSH fixture, real enrollment, host/device trust checks and text exchange.
+The `network` shard keeps timeout/recovery, viewer/clipboard boundaries and
+multi-recipient retries together. The `files` shard keeps failed removal,
+restart, inbox deletion and file transfers together, including their shared
+provider-saved file and independent CLI byte/count checks. Kotlin scenario
+bodies, software keyboard and touch assertions are unchanged.
+
+Both jobs retain build/emulator-boot overlap and build their own APKs; no app or
+fixture state crosses shards. The required `Android client` aggregate passes
+only after both shards and the separate verification suite succeed. Failure
+artifacts and screenshots are named by shard. This uses an extra client runner
+and duplicates setup/build work in exchange for a shorter critical path.
+
+An unset `KEYPARCEL_ANDROID_CLIENT_SHARD` keeps the complete sequential journey
+for `make test-android-client`. Set it to `network` or `files` to select one
+independent journey; other values fail. Run journeys sequentially on a local
+test emulator. Hosted CI measures the shard wall time and runner cost.
 
 ## Caches and diagnostics
 
