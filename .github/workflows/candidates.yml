@@ -71,6 +71,8 @@ jobs:
       - run: |
           mkdir -p release/out
           python3 release/build.py android --require-clean --version "$(cat release/VERSION)" --android-code "$(cat release/ANDROID_VERSION_CODE)" 2>&1 | tee release/out/candidate-android.log
+      - name: Test signing with a disposable key (never release secrets)
+        run: python3 release/sign_test.py "release/out/$(cat release/VERSION)/android-arm64"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:

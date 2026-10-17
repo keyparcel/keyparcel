@@ -62,7 +62,7 @@ with tempfile.TemporaryDirectory() as temporary:
         (control / 'control').write_text(f'''Package: keyparcel
 Version: {pkg_version}-1
 Architecture: amd64
-Maintainer: keyparcel contributors <noreply@keyparcel.invalid>
+Maintainer: keyparcel contributors <packetwright@proton.me>
 Depends: {deps}, openssh-client, ca-certificates, adwaita-icon-theme, librsvg2-common
 Description: Encrypted text and file exchange over SSH
  CLI and GTK client for asynchronous verified transfers through SSH/SFTP.
@@ -80,6 +80,7 @@ Description: Encrypted text and file exchange over SSH
 Version: {pkg_version}
 Release: 1
 Summary: Encrypted text and file exchange over SSH
+Packager: keyparcel contributors <packetwright@proton.me>
 License: Apache-2.0 AND BSD-2-Clause AND BSD-3-Clause
 Requires: openssh-clients, ca-certificates, adwaita-icon-theme
 %description
