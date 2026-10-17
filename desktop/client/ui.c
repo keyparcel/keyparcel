@@ -327,14 +327,18 @@ UI *ui_new(uintptr_t handle, const char *icon) {
     gtk_widget_add_css_class(sync, "dim-label"); gtk_widget_add_css_class(sync, "connection-status");
     gtk_label_set_width_chars(GTK_LABEL(sync),2); gtk_widget_set_focusable(sync,TRUE);
     accessible(sync, "Connection status"); gtk_box_append(GTK_BOX(brand_row), sync);
-    ui->progress = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    // Measure the active controls while idle so showing Cancel cannot grow the header.
+    ui->progress = gtk_stack_new();
+    gtk_stack_set_hhomogeneous(GTK_STACK(ui->progress), FALSE);
+    GtkWidget *work = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     ui->spinner = gtk_spinner_new(); ui->status = label("");
     accessible(ui->status,"Operation progress");
     ui->cancel = button(ui, "Cancel operation", "cancel", "");
     gtk_widget_add_css_class(ui->cancel, "flat");
-    gtk_box_append(GTK_BOX(ui->progress), ui->spinner); gtk_box_append(GTK_BOX(ui->progress), ui->status);
-    gtk_box_append(GTK_BOX(ui->progress), ui->cancel);
-    gtk_widget_set_visible(ui->progress,FALSE);
+    gtk_box_append(GTK_BOX(work), ui->spinner); gtk_box_append(GTK_BOX(work), ui->status);
+    gtk_box_append(GTK_BOX(work), ui->cancel);
+    gtk_stack_add_named(GTK_STACK(ui->progress), gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0), "idle");
+    gtk_stack_add_named(GTK_STACK(ui->progress), work, "active");
     gtk_box_append(GTK_BOX(brand_row),ui->progress);
     gtk_box_append(GTK_BOX(header), brand_row);
     gtk_box_append(GTK_BOX(outer), header);
@@ -493,7 +497,7 @@ void ui_confirmation(UI *ui,const char *text) {
 void ui_progress(UI *ui,const char *text) {
     gtk_label_set_text(GTK_LABEL(ui->status),text);
     accessible(ui->status,"Operation progress");
-    gtk_widget_set_visible(ui->progress,text[0]!=0);
+    gtk_stack_set_visible_child_name(GTK_STACK(ui->progress),text[0] ? "active" : "idle");
     if (text[0]) gtk_spinner_start(GTK_SPINNER(ui->spinner)); else gtk_spinner_stop(GTK_SPINNER(ui->spinner));
 }
 void ui_busy(UI *ui, int busy) {

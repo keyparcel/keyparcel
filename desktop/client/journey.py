@@ -181,6 +181,16 @@ def status(text):
     return wait(f"visible feedback {text!r}", matching_text)
 
 
+def header_geometry():
+    nav = control(app, "Send", Atspi.Role.TOGGLE_BUTTON).get_parent()
+    body = nav.get_parent()
+    def height(node):
+        return node.get_component_iface().get_extents(Atspi.CoordType.SCREEN).height
+    # GTK/X11 reports zero AT-SPI positions; stacked heights give the body offset.
+    return (height(body.get_parent()) - height(body), height(nav),
+            height(control(app, "Page: Send")))
+
+
 def idle():
     wait("operation finishes", lambda: not find(app,"Operation progress"))
 
@@ -427,12 +437,23 @@ try:
     control(app, "Remove recipient bob", Atspi.Role.PUSH_BUTTON)
     draft_file.write_bytes(b"draft bytes")
     # A failed send retains both the input and the selected recipient/file.
+    idle()
+    header_idle = header_geometry()
+    screenshot("header-idle.png")
     fixture.control("pause")
     try:
         click("Send text")
         status("Sending…")
+        control(app, "Cancel operation", Atspi.Role.PUSH_BUTTON)
+        screenshot("header-working.png")
+        print(f"Header geometry idle={header_idle}, working={header_geometry()}", flush=True)
+        assert header_geometry() == header_idle, f"Progress moved navigation/content: {header_idle} -> {header_geometry()}"
         click("Cancel operation")
         status("Operation cancelled; remote transfers retained.")
+        idle()
+        screenshot("header-idle-after.png")
+        assert header_geometry() == header_idle, f"Clearing progress moved navigation/content: {header_idle} -> {header_geometry()}"
+        assert not find(app, "Cancel operation", Atspi.Role.PUSH_BUTTON), "Idle Cancel remains accessible"
     finally:
         fixture.control("unpause")
     assert text_contents(control(app, "Message")) == message, "Failed send discarded the text draft"
