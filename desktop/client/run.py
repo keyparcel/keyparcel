@@ -14,6 +14,9 @@ import threading
 
 from fixture import CLIENT, REPO, DOCKER, IMAGE, CONTROL, Fixture, client_args, command
 
+sys.path.insert(0, str(REPO / "tests/smoke"))
+from parcels import seed
+
 BUILD = CLIENT / "build"
 
 
@@ -163,6 +166,9 @@ def smoke(action):
         fixture.start(fresh=action == "fresh")
         exchange = state / "files"
         exchange.mkdir(exist_ok=True)
+        seed(exchange / "parcels", lambda kind, path: fixture.cli("peer", "send", "--to", "desktop",
+            *( ["--stdin"] if kind == "text" else ["--file", str(path)] ),
+            **({"input": path.read_bytes()} if kind == "text" else {})))
         print(f"Smoke files (host and container): {exchange}", flush=True)
         if action == "peer":
             shell = state / "peer-shell.sh"

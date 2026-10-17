@@ -5,7 +5,8 @@ import subprocess
 import tempfile
 import time
 from fixture import Fixture, DOCKER, command
-from run import check_smoke_idle, handle_control
+from run import check_smoke_idle, handle_control, seed
+from parcels import samples
 
 with tempfile.TemporaryDirectory(prefix="keyparcel-gtk-smoke-check-") as temporary:
     fixture = Fixture(Path(temporary) / "owned")
@@ -81,6 +82,16 @@ with tempfile.TemporaryDirectory(prefix="keyparcel-gtk-smoke-check-") as tempora
             shell.stdin.write(b"exit\n")
             shell.stdin.close()
             shell.wait(timeout=10)
+
+        seed_directory = files / "parcels"
+        seed(seed_directory, lambda kind, path: fixture.cli("peer", "send", "--to", "desktop",
+            *(["--stdin"] if kind == "text" else ["--file", str(path)]),
+            **({"input": path.read_bytes()} if kind == "text" else {})))
+        seeded = json.loads(fixture.cli("desktop", "inbox", "--json"))[:6]
+        expected = [(kind, "" if kind == "text" else path.name, path.stat().st_size)
+            for kind, path in samples(seed_directory)]
+        assert [(item["type"], (item.get("filename") or ""), item["size"]) for item in seeded] == expected, "Smoke parcels lost newest-first representative order"
+        seed(seed_directory, lambda *_: (_ for _ in ()).throw(AssertionError("Reopen resent smoke parcels")))
 
         other_trust = Path(temporary) / "other-profile-known_hosts"
         other_trust.write_bytes(b"other profile's approved server\n")

@@ -49,6 +49,8 @@ Successful sends stay on Send, keep recipients and clear only the sent text or
 file attachment. **Discard draft** clears recipients, text and file. Server/identity or approval changes clear affected recipient selections
 without discarding content. Drafts do not survive app restarts.
 
+Use the refresh icon beside **Inbox** or **Devices** for an immediate update.
+
 Inbox shows sender, filename/type, size and local upload time. **Details** exposes
 the full transfer ID and its copy action. Content is fully verified before display
 or a destination write. Every parcel offers **View**, **Save file** and **Delete**.
@@ -77,8 +79,8 @@ Failed removal leaves the result and retry action available. The
 [CLI removes successful receives by default](../../docs/usage.md#receiving-and-retention).
 
 The read-only text preview is selectable and scrollable, with a 65,536 Unicode
-character limit and visible truncation notice. **Copy complete message** uses the
-full verified message, not the preview, up to 16 MiB inclusive. Clipboard text must
+character limit and visible truncation notice. The **Copy complete text** icon
+above the preview uses the full verified message, not the preview, up to 16 MiB inclusive. Clipboard text must
 be UTF-8 without NUL bytes. Transfers and direct Inbox saves have no preview or
 clipboard size cap. Saving always uses the complete original bytes, even when the
 preview is truncated or unsupported.

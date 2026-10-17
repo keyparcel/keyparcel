@@ -51,9 +51,13 @@ For files, **Send → File → Choose file** opens the system document picker. T
 original display name is preserved; binary, empty and unknown-size documents are
 supported without broad storage permission.
 
+Pull down Inbox or Devices, or use the refresh icon beside either heading, to
+refresh. Active refreshes show a native spinner and a Cancel action in the content
+area; other operations show their progress below the header.
+
 Every Inbox parcel offers **View**, **Save file** and **Delete**. View accepts up to
 16 MiB of verified plaintext, inclusive. Larger parcels have a disabled View action
-and a tappable explanation; direct Inbox Save has no preview size cap. Verification
+and an explanation below the upload date; direct Inbox Save has no preview size cap. Verification
 finishes before displaying content or writing a destination.
 
 The viewer displays valid UTF-8 without NUL bytes, including text files. Unsupported

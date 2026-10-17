@@ -135,12 +135,14 @@ def start():
                 return node
     app = wait("GTK client accessibility tree", application)
     control(app, "keyparcel", Atspi.Role.FRAME)
+    connection = control(app,"Connection status")
+    assert not connection.get_state_set().contains(Atspi.StateType.SELECTABLE_TEXT), "Connection symbol is text-selectable"
     # Wait until the startup worker has restored the navigation controls.
     wait("initial settings load", lambda: control(app, "Settings").get_state_set().contains(Atspi.StateType.SENSITIVE))
 
 
 def click(name, root=None):
-    previous = next((title for title in ("Inbox","Send","Devices and approvals","Settings — shared with the CLI","Parcel — remote copy retained","File saved — remote copy retained")
+    previous = next((title for title in ("Inbox","Send","Devices and approvals","Settings — shared with the CLI","Parcel","File saved — remote copy retained")
         if find(app,"Page: " + title)),None) if root is None and name == "Back" else None
     activate(wait(f"visible button {name!r}", lambda: find(root or app, name, Atspi.Role.PUSH_BUTTON) or find(root or app, name, Atspi.Role.TOGGLE_BUTTON)))
     if root is None and name in ("Inbox", "Send", "Devices", "Settings"):
@@ -221,7 +223,9 @@ def refresh():
 def received(id):
     refresh()
     click("View transfer " + id)
-    control(app,"Parcel — remote copy retained",Atspi.Role.LABEL)
+    control(app,"Parcel",Atspi.Role.LABEL)
+    assert not find(app,"Back",Atspi.Role.PUSH_BUTTON), "Viewer retained the top Back button"
+    control(app,"Back to inbox",Atspi.Role.PUSH_BUTTON)
 
 
 def picker_path(dialog, path, save=False):
@@ -250,8 +254,12 @@ def verify_received_text(id, message):
     received(id)
     node = control(app, "Received text")
     assert text_contents(node) == message, "Preview altered whitespace or Unicode"
-    click("Copy complete message")
-    status("Copied")
+    control(app,"Copy complete text",Atspi.Role.PUSH_BUTTON)
+    preview_scroll = node.get_parent()
+    assert preview_scroll.get_role() == Atspi.Role.SCROLL_PANE, "Preview lost its text scroller"
+    assert not find(preview_scroll,"Copy complete text"), "Whole-text copy is inside the scrolling preview"
+    click("Copy complete text")
+    status("Complete text copied")
     wait("Clipboard differs from verified text",lambda: clipboard() == message.encode())
     assert id in ids("desktop"), "Viewing deleted remote copy"
     screenshot("received-text.png")
@@ -343,6 +351,7 @@ try:
     assert fixture.exec("pgrep", "-f", "sshd.*parcel@internal-sftp").decode().splitlines() == connection_ids, "Polling or tab changes opened another SSH session"
     click("Refresh devices")
     idle()
+    screenshot("devices.png")
     # Reuse the enrolled peer with a comment the CLI refuses to suggest.
     fixture.exec("sed", "-i", "s/ peer$/ invalid comment/", "/home/parcel/.ssh/authorized_keys")
     try:
@@ -539,9 +548,12 @@ try:
     fixture.cli("desktop", "untrust", "bob")
     control(app, "Refresh inbox", Atspi.Role.PUSH_BUTTON)
     assert not find(app, "Received text"), "Approval removal left received text visible"
-    assert not find(app, "Copy complete message"), "Approval removal left stale result actions visible"
+    assert not find(app, "Copy complete text"), "Approval removal left stale result actions visible"
     fixture.cli("desktop", "trust", fixture.fingerprint("peer"), "--name", "bob")
     assert id in ids("desktop"), "Approval removal deleted the remote transfer"
+    received(id)
+    click("Back to inbox")
+    control(app,"Refresh inbox",Atspi.Role.PUSH_BUTTON)
     received(id)
     keys("Alt_L", "Left")
     control(app, "Refresh inbox", Atspi.Role.PUSH_BUTTON)
@@ -708,12 +720,12 @@ try:
         received(incoming)
         if text:
             assert text_contents(control(app, "Received text")) == payload.decode()[:65536], "Text file preview changed bytes"
-            click("Copy complete message"); status("Copied")
+            click("Copy complete text"); status("Complete text copied")
             wait("Text file Copy used only the truncated preview",lambda: clipboard() == payload)
         else:
             control(app, "Can’t preview this parcel as text. Save it to open with another application.")
             assert not find(app, "Received text"), "Unsupported bytes were displayed"
-            assert not find(app, "Copy complete message"), "Unsupported bytes offered whole-text copy"
+            assert not find(app, "Copy complete text"), "Unsupported bytes offered whole-text copy"
         click("Save file")
         dialog = file_dialog("Save received file")
         assert text_contents(filename_field(dialog)) == filename, "Viewer save lost original filename"
@@ -755,7 +767,7 @@ try:
             preview = control(app, "Received text")
             assert text_contents(preview) == large[:65536], "Large preview was not bounded/exact"
             status("Preview truncated; the complete remote transfer is retained.")
-            click("Copy complete message"); status("Copied")
+            click("Copy complete text"); status("Complete text copied")
             wait("Inclusive clipboard boundary copied only preview",lambda: clipboard() == large.encode())
             target = session / "boundary-view.txt"
             click("Save file")

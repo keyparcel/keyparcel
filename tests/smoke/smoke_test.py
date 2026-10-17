@@ -7,6 +7,32 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
+from parcels import samples, seed
+
+
+class SmokeParcelTest(unittest.TestCase):
+    def test_representative_content_reverse_order_and_reopen(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            entries = samples(directory)
+            self.assertEqual([kind for kind, _ in entries], ["text", "file", "file", "text", "text", "file"])
+            contents = [path.read_bytes() for _, path in entries]
+            self.assertIn("世界", contents[1].decode())
+            self.assertIn(b"\0", contents[2])
+            self.assertGreater(len(contents[3].decode()), 65536)
+            self.assertLess(len(contents[3]), 16 * 1024 * 1024)
+            self.assertTrue(all(len(data) > 16 * 1024 * 1024 for data in contents[4:]))
+            sent = []
+            with patch("parcels.time.sleep") as delay:
+                seed(directory, lambda kind, path: sent.append((kind, path.name)))
+                seed(directory, lambda *_: self.fail("Reopen resent smoke parcels"))
+            self.assertEqual(sent, [(kind, path.name) for kind, path in reversed(entries)])
+            self.assertEqual(delay.call_count, 6)
+            (directory / "seeded").unlink()
+            with self.assertRaisesRegex(RuntimeError, "send failed"):
+                seed(directory, lambda *_: (_ for _ in ()).throw(RuntimeError("send failed")))
+            self.assertFalse((directory / "seeded").exists(), "Failed seeding was marked complete")
 
 
 class SmokeModeTest(unittest.TestCase):

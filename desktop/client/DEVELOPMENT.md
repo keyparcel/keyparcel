@@ -105,3 +105,9 @@ The container image uses Ubuntu 24.04, GTK 4.14.5 and Go 1.27.2, with X11/softwa
 rendering. Candidate installs are validated on Ubuntu 24.04, Debian 13 and Fedora 44;
 see the [release guide](../../release/README.md). Native Wayland and other
 distributions remain unverified. Background transfers and notifications are deferred.
+
+The preconfigured smoke Inbox is seeded once with six representative parcels:
+small text, a UTF-8 text file, small binary, bounded-preview text, oversized text
+and oversized binary, newest first. Approve the smoke peer to view them; reopening
+retains the fixture and does not resend the samples. Fresh setup retains its
+manual server/device approval steps.

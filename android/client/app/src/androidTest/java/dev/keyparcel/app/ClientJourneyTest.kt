@@ -19,6 +19,18 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -85,6 +97,23 @@ class ClientJourneyTest {
             screenshot("failure")
             val model = ViewModelProvider(compose.activity)[AppModel::class.java]
             throw AssertionError("Waiting for $tag: page=${model.page}, busy=${model.busy}, error=${model.error}, pendingSave=${model.pendingSave?.item?.id}", timeout)
+        }
+    }
+
+    private fun assertRefreshCancelBeside(refreshTag: String) {
+        compose.onAllNodesWithTag("cancel-refresh").assertCountEquals(1)
+        val refresh = compose.onNodeWithTag(refreshTag).assertIsDisplayed().fetchSemanticsNode().boundsInWindow
+        val cancel = compose.onNodeWithTag("cancel-refresh").assertIsDisplayed().assertIsEnabled()
+            .assertContentDescriptionEquals("Cancel refresh").fetchSemanticsNode().boundsInWindow
+        // Allow the 8 dp row gap plus the icon's 4 dp minimum-touch-target inset.
+        val maxGap = with(compose.density) { 12.dp.toPx() } + 1f
+        if (!(cancel.left >= refresh.right && cancel.left - refresh.right <= maxGap &&
+            cancel.top <= refresh.center.y && cancel.bottom >= refresh.center.y)) {
+            val failure = AssertionError("Cancel refresh is not immediately beside $refreshTag: refresh=$refresh cancel=$cancel")
+            runCatching { screenshot("failure") }.onFailure(failure::addSuppressed)
+            runCatching { File(compose.activity.filesDir,"failure.log").writeText(compose.onRoot().printToString()) }
+                .onFailure(failure::addSuppressed)
+            throw failure
         }
     }
 
@@ -214,6 +243,10 @@ class ClientJourneyTest {
         click("receive-$id")
         waitFor("received-text")
         check(value("received-text") == expected) { "Received text changed its Unicode or whitespace" }
+        val preview = compose.onNodeWithTag("received-text").fetchSemanticsNode().boundsInWindow
+        val save = compose.onNodeWithTag("save-view").assertIsDisplayed().assertIsEnabled().fetchSemanticsNode().boundsInWindow
+        val remove = compose.onNodeWithTag("remove-close").assertIsDisplayed().assertIsEnabled().fetchSemanticsNode().boundsInWindow
+        check(save.top >= preview.bottom && remove.top >= save.bottom) { "Parcel actions are not below the preview" }
     }
 
     private fun withClipboard(check: (ClipboardManager) -> Unit) {
@@ -433,7 +466,13 @@ class ClientJourneyTest {
         compose.onNodeWithTag("host-key").assertDoesNotExist()
         click("back")
         compose.onNodeWithTag("devices-screen").assertIsSelected()
+        compose.onNodeWithTag("refresh-devices").assertContentDescriptionEquals("Refresh devices")
         click("refresh-devices"); finished()
+        val devicesRevision = liveModel.refreshRevision
+        compose.onNodeWithTag("device-list").performTouchInput { swipeDown() }
+        compose.waitUntil(150_000) { liveModel.refreshRevision > devicesRevision }
+        check(liveModel.error == null) { "Devices pull-to-refresh failed: ${liveModel.error}" }
+        screenshot("devices")
         val fingerprint = arg("peer_fingerprint")
         withClipboard { clipboard ->
             compose.onNodeWithTag("device-list").performScrollToNode(hasTestTag("copy-device-$fingerprint"))
@@ -479,22 +518,23 @@ class ClientJourneyTest {
         refresh()
         compose.onNodeWithTag("settings").assertIsDisplayed()
         compose.onNodeWithTag("refresh-inbox").assertIsDisplayed()
+        compose.onNodeWithTag("refresh-inbox").assertContentDescriptionEquals("Refresh inbox")
+        val brandBounds = compose.onNodeWithText("keyparcel").fetchSemanticsNode().boundsInWindow
+        val connectionBounds = compose.onNodeWithTag("connection-status").fetchSemanticsNode().boundsInWindow
+        check(connectionBounds.left >= brandBounds.right && connectionBounds.top <= brandBounds.center.y &&
+            connectionBounds.bottom >= brandBounds.center.y) { "Connection indicator is not beside the brand" }
+        val refreshRevision = approvalModel.refreshRevision
+        compose.onNodeWithTag("inbox-list").performTouchInput { swipeDown() }
+        compose.waitUntil(150_000) { approvalModel.refreshRevision > refreshRevision }
+        check(approvalModel.error == null) { "Pull-to-refresh failed: ${approvalModel.error}" }
         screenshot("inbox")
         val textID = arg("text_id")
         compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("item-$textID"))
         compose.onNodeWithTag("transfer-id-$textID").assertDoesNotExist()
         try {
             compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("details-$textID"))
-            compose.runOnIdle { approvalModel.confirm("Copied") }
-            val detailsBounds = compose.onNodeWithTag("details-$textID").assertIsDisplayed().assertIsEnabled()
-                .fetchSemanticsNode().boundsInWindow
-            val noticeBounds = compose.onNodeWithTag("notice").assertTextEquals("Copied")
-                .fetchSemanticsNode().boundsInWindow
-            val overlap = detailsBounds.intersect(noticeBounds)
-            check(!overlap.isEmpty) { "Fixture must exercise a confirmation overlapping the Details button" }
-            compose.onNodeWithTag("details-$textID").performTouchInput { click(overlap.center - detailsBounds.topLeft) }
+            compose.onNodeWithTag("details-$textID").assertIsDisplayed().assertIsEnabled().performTouchInput { click() }
             compose.onNodeWithTag("details-$textID").assertTextEquals("Hide details")
-            compose.onNodeWithTag("notice").assertTextEquals("Copied")
             compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("transfer-id-$textID"))
             compose.onNodeWithTag("transfer-id-$textID").assertIsDisplayed().assertTextEquals(textID)
         } catch (failure: AssertionError) {
@@ -531,6 +571,13 @@ class ClientJourneyTest {
         compose.onNodeWithTag("save-$fileID").assertIsEnabled()
         compose.onNodeWithTag("receive-$fileID").assertIsNotEnabled().assertTextEquals("View")
             .assertContentDescriptionEquals("View. $TOO_LARGE_TO_VIEW")
+        compose.onNodeWithTag("view-limit-$fileID").assertTextEquals(TOO_LARGE_TO_VIEW).assert(hasClickAction().not())
+        val rowText = compose.onNodeWithTag("item-$fileID").onChildren().fetchSemanticsNodes()
+            .flatMap { it.config.getOrElse(SemanticsProperties.Text) { emptyList() } }.map { it.text }
+        val uploadedIndex = rowText.indexOfFirst { it.startsWith("Uploaded ") }
+        check(uploadedIndex >= 0 && rowText.indexOf(TOO_LARGE_TO_VIEW) == uploadedIndex + 1) {
+            "Preview limit is not immediately below the upload date"
+        }
         receive(arg("text_id"))
         screenshot("received")
         click("back")
@@ -595,6 +642,30 @@ class ClientJourneyTest {
         screenshot("sent")
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("send-feedback").fetchSemanticsNodes().isEmpty() }
         check(model.sendReport == sent) { "Dismissal discarded the actual delivery outcomes" }
+    }
+
+    @Test fun confirmationTouchThrough() {
+        val clicked = mutableStateOf(false)
+        compose.runOnUiThread {
+            compose.activity.setContent {
+                MaterialTheme {
+                    Box(Modifier.fillMaxSize()) {
+                        Button(onClick = { clicked.value = true },
+                            modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp).testTag("under-notice")) {
+                            Text(if (clicked.value) "Opened" else "Open details")
+                        }
+                        ConfirmationNotice("Copied", Modifier.align(Alignment.BottomCenter))
+                    }
+                }
+            }
+        }
+        val button = compose.onNodeWithTag("under-notice").assertIsDisplayed().assertIsEnabled()
+        val bounds = button.fetchSemanticsNode().boundsInWindow
+        val overlap = bounds.intersect(compose.onNodeWithTag("notice").fetchSemanticsNode().boundsInWindow)
+        check(!overlap.isEmpty) { "Confirmation regression must overlap the underlying button" }
+        button.performTouchInput { click(overlap.center - bounds.topLeft) }
+        button.assertTextEquals("Opened")
+        compose.onNodeWithTag("notice").assertTextEquals("Copied")
     }
 
     @Test fun removalFailure() {
@@ -699,11 +770,29 @@ class ClientJourneyTest {
         compose.onNodeWithTag("refresh-inbox").assertIsEnabled()
         compose.onNodeWithTag("send-screen").assertIsEnabled()
         compose.waitUntil(150_000) { model.connectionState == "Disconnected" }
-        compose.onNodeWithTag("refresh-inbox").performClick()
+        compose.onNodeWithTag("inbox-list").performTouchInput { swipeDown() }
+        compose.waitUntil(30_000) { model.refreshing }
+        compose.onNodeWithTag("operation-progress").assertDoesNotExist()
+        compose.onNodeWithTag("app-header").assert(hasAnyDescendant(hasTestTag("working")).not())
+        compose.onNodeWithText("Refreshing…").assertDoesNotExist()
+        assertRefreshCancelBeside("refresh-inbox")
+        screenshot("refreshing-inbox")
         compose.onNodeWithText("Cancel").assertIsDisplayed().assertIsEnabled().performTouchInput { click() }
         compose.waitUntil(30_000) { !model.refreshing }
         compose.onNodeWithTag("error").assertTextEquals("Refresh cancelled; last successful data retained")
         check(model.inbox == beforeInbox && model.devices == beforeDevices) { "Cancel discarded the cached snapshot" }
+        click("devices-screen")
+        compose.onNodeWithTag("device-list").performTouchInput { swipeDown() }
+        compose.waitUntil(30_000) { model.refreshing }
+        compose.onNodeWithTag("operation-progress").assertDoesNotExist()
+        compose.onNodeWithTag("app-header").assert(hasAnyDescendant(hasTestTag("cancel-refresh")).not())
+        assertRefreshCancelBeside("refresh-devices")
+        screenshot("refreshing-devices")
+        compose.onNodeWithTag("cancel-refresh").assertIsDisplayed().assertIsEnabled().performTouchInput { click() }
+        compose.waitUntil(30_000) { !model.refreshing }
+        compose.onNodeWithTag("error").assertTextEquals("Refresh cancelled; last successful data retained")
+        check(model.inbox == beforeInbox && model.devices == beforeDevices) { "Devices refresh cancel discarded the cached snapshot" }
+        click("inbox-screen")
         val superseded = model.refreshRevision
         compose.onNodeWithTag("refresh-inbox").performClick()
         compose.runOnIdle { model.clipboardError("Clipboard copying is unavailable.") }
@@ -1022,8 +1111,10 @@ class ClientJourneyTest {
         val above = arg("above_id")
         compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("receive-$above"))
         compose.onNodeWithTag("receive-$above").assertIsNotEnabled()
-        compose.onNodeWithTag("view-limit-$above").performClick()
-        compose.onNodeWithTag("error").assertTextEquals(TOO_LARGE_TO_VIEW)
+        compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("view-limit-$above"))
+        compose.onNodeWithTag("view-limit-$above").assertIsDisplayed().assertTextEquals(TOO_LARGE_TO_VIEW)
+            .assert(hasClickAction().not())
+        compose.onNodeWithTag("error").assertDoesNotExist()
         check(model.viewed == null) { "Oversized inbox entry loaded viewer bytes" }
         saveFile(above,"above-limit.txt","$above.txt");waitFor("saved-file")
         val aboveSaved = File(directory,"above-limit.txt")

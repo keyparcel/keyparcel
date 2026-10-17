@@ -136,8 +136,10 @@ screen already makes an outcome clear.
   green connected/authenticated, yellow connecting, red failed/lost awaiting a
   retry, neutral unconfigured or intentionally suspended. Its accessible state
   and symbol accompany color. It is not inbox freshness or a reachability probe.
-- Adjacent progress is present only during active work, with a short label and
-  Cancel where supported. Idle has no status text.
+- Progress appears only during active work: beside the GTK connection indicator
+  or in Android content, with a short label and Cancel where supported. Android
+  manual refresh uses the native pull-to-refresh spinner and content Cancel,
+  without a duplicate progress label. Idle has no status text.
 - Action errors stay in the current screen until dismissed, retried or its
   context changes. Background polling never replaces them. Send feedback,
   preview limitations and save results remain in their dedicated controls.

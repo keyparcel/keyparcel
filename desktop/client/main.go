@@ -121,19 +121,20 @@ func (m *model) page(name string) {
 func (m *model) clear(name string) {
 	cstrings([]string{name}, func(v []*C.char) { C.ui_clear(m.ui, v[0]) })
 }
-func (m *model) copy(text string) {
+func (m *model) copy(text string) bool {
 	m.confirm("")
 	if err := clipboardText(text); err != nil {
 		m.message(err.Error())
-		return
+		return false
 	}
 	accepted := false
 	cstrings([]string{text}, func(v []*C.char) { accepted = C.ui_copy(m.ui, v[0]) != 0 })
 	if !accepted {
 		m.message("Clipboard could not accept this text")
-		return
+		return false
 	}
 	m.confirm("Copied")
+	return true
 }
 func visible(text string) string {
 	text = strings.ToValidUTF8(strings.ReplaceAll(text, "\x00", "␀"), "�")
@@ -572,7 +573,9 @@ func (m *model) event(action, arg, value string) {
 		}
 	case "copy-message":
 		if m.view != nil && m.view.Text {
-			m.copy(string(m.view.Data))
+			if m.copy(string(m.view.Data)) {
+				m.confirm("Complete text copied")
+			}
 		}
 	case "copy-selection":
 		if m.view == nil {
