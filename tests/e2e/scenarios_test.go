@@ -255,8 +255,7 @@ func TestHostKeyAndSelectedIdentityEnforcement(t *testing.T) {
 		hostKey := strings.Fields(string(w.admin("cat", "/etc/ssh/ssh_host_ed25519_key.pub")))
 		os.WriteFile(known, []byte(fmt.Sprintf("inbox %s %s\n", hostKey[0], hostKey[1])), 0600)
 		w.admin("sh", "-c", "cp /etc/ssh/ssh_host_ed25519_key /tmp/old-host-key && rm /etc/ssh/ssh_host_ed25519_key && ssh-keygen -q -t ed25519 -N '' -f /etc/ssh/ssh_host_ed25519_key")
-		w.admin("kill", "-HUP", "1")
-		time.Sleep(100 * time.Millisecond)
+		w.reloadSSHD()
 		w.fails(w.alice, nil, changed, "devices")
 		if mode == "openssh" {
 			before, _ := os.ReadFile(known)
@@ -934,7 +933,7 @@ func TestJumpHostUsesSeparateLocalKey(t *testing.T) {
 	targetWorld.approve()
 	gatewayWorld := newWorld(t, "openssh")
 	gatewayWorld.admin("sed", "-i", "s/DisableForwarding yes/DisableForwarding no/", "/etc/ssh/sshd_config")
-	gatewayWorld.admin("kill", "-HUP", "1")
+	gatewayWorld.reloadSSHD()
 	_, diag, err := container(targetWorld.ctx, nil, "network", "connect", "--alias", "gateway", targetWorld.network, gatewayWorld.id)
 	if err != nil {
 		t.Fatalf("connect gateway network: %v %s", err, diag)
@@ -1014,7 +1013,7 @@ func TestServerUmaskControlsNewRemotePermissions(t *testing.T) {
 		w := newWorld(t, mode)
 		w.approve()
 		w.admin("sed", "-i", "s/LOCAL0/LOCAL0 -u 0077/", "/etc/ssh/sshd_config")
-		w.admin("kill", "-HUP", "1")
+		w.reloadSSHD()
 		w.ok(w.alice, nil, "send", "--to", "bob", "--text", "hello")
 		item := w.items(w.bob)[0]
 		remote := w.remote(w.bob, item.ID)
