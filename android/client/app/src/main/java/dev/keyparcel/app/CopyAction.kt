@@ -3,10 +3,8 @@ package dev.keyparcel.app
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.os.Build
 import android.os.Parcel
 import android.os.PersistableBundle
-import android.widget.Toast
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
@@ -23,7 +21,7 @@ fun CopyButton(label: String, tag: String, enabled: Boolean = true, copy: () -> 
     }
 }
 
-fun copyText(context: Context, content: ClipboardText, label: String, sensitive: Boolean, reportError: (String?) -> Unit) {
+fun copyText(context: Context, content: ClipboardText, label: String, sensitive: Boolean, reportError: (String?) -> Unit, copied: () -> Unit = {}) {
     reportError(null)
     val text = content.text
     if (text == null) { reportError(requireNotNull(content.problem)); return }
@@ -43,7 +41,7 @@ fun copyText(context: Context, content: ClipboardText, label: String, sensitive:
         val clipboard = context.getSystemService(ClipboardManager::class.java)
             ?: error("Clipboard service is unavailable")
         clipboard.setPrimaryClip(clip)
-        if (Build.VERSION.SDK_INT < 33) Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+        copied()
     } catch (_: Exception) {
         reportError("Clipboard copying is unavailable." + if (sensitive) " The remote transfer is kept." else "")
     }

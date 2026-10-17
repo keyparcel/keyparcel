@@ -140,7 +140,14 @@ def start():
 
 
 def click(name, root=None):
+    previous = next((title for title in ("Inbox","Send","Devices and approvals","Settings — shared with the CLI","Parcel — remote copy retained","File saved — remote copy retained")
+        if find(app,"Page: " + title)),None) if root is None and name == "Back" else None
     activate(wait(f"visible button {name!r}", lambda: find(root or app, name, Atspi.Role.PUSH_BUTTON) or find(root or app, name, Atspi.Role.TOGGLE_BUTTON)))
+    if root is None and name in ("Inbox", "Send", "Devices", "Settings"):
+        title = {"Inbox":"Inbox", "Send":"Send", "Devices":"Devices and approvals", "Settings":"Settings — shared with the CLI"}[name]
+        control(app,"Page: " + title)
+    if previous:
+        wait("Back changes page",lambda: not find(app,"Page: " + previous))
 
 
 def fill(name, value, root=None):
@@ -153,6 +160,7 @@ def select_recipient(name):
     others = [node.get_name() for node in walk(app) if node.get_role() == Atspi.Role.PUSH_BUTTON and node.get_name().startswith("Remove recipient ") and node.get_name() != f"Remove recipient {name}"]
     for other in others:
         click(other)
+        wait("recipient token removed",lambda: not find(app,other,Atspi.Role.PUSH_BUTTON))
     if find(app, f"Remove recipient {name}", Atspi.Role.PUSH_BUTTON):
         return
     click("+ Add another" if find(app, "+ Add another", Atspi.Role.PUSH_BUTTON) else "Choose recipient…")
@@ -163,7 +171,16 @@ def select_recipient(name):
 
 
 def status(text):
-    return control(app, text, Atspi.Role.LABEL)
+    def matching_text():
+        for node in walk(app):
+            if node.get_state_set().contains(Atspi.StateType.SHOWING) and (node.get_name() == text or
+                    (node.get_role() == Atspi.Role.LABEL and text_contents(node) == text)):
+                return node
+    return wait(f"visible feedback {text!r}", matching_text)
+
+
+def idle():
+    wait("operation finishes", lambda: not find(app,"Operation progress"))
 
 
 def stop():
@@ -198,13 +215,13 @@ def peer_send(text=None, file=None):
 def refresh():
     click("Inbox")
     click("Refresh inbox")
-    status("Inbox refreshed")
+    idle()
 
 
 def received(id):
     refresh()
     click("View transfer " + id)
-    status("Verified parcel; remote copy retained")
+    control(app,"Parcel — remote copy retained",Atspi.Role.LABEL)
 
 
 def picker_path(dialog, path, save=False):
@@ -235,14 +252,14 @@ def verify_received_text(id, message):
     assert text_contents(node) == message, "Preview altered whitespace or Unicode"
     click("Copy complete message")
     status("Copied")
-    assert clipboard() == message.encode(), "Clipboard differs from verified text"
+    wait("Clipboard differs from verified text",lambda: clipboard() == message.encode())
     assert id in ids("desktop"), "Viewing deleted remote copy"
     screenshot("received-text.png")
 
 
 def send_text_to_peer(message):
     click("Send")
-    status("Ready.")
+    idle()
     select_recipient("bob")
     fill("Message", message)
     before_peer = ids("peer")
@@ -252,7 +269,7 @@ def send_text_to_peer(message):
         if n.get_role() == Atspi.Role.PUSH_BUTTON and n.get_name().startswith("Sent to bob · ")), None))
     assert not disclosure.get_state_set().contains(Atspi.StateType.EXPANDED), "Disclosure announces expanded while collapsed"
     assert not find(app, "Copy sent transfer ID for bob"), "Collapsed feedback exposed detail controls"
-    status("Ready.")  # Success appears in feedback, not duplicated in the top status
+    idle()  # Success appears in feedback, not duplicated in the top status
     activate(disclosure)
     outgoing = wait("GUI delivery to approved peer", lambda: ids("peer") - before_peer)
     assert len(outgoing) == 1, "GUI peer send created unexpected transfers"
@@ -264,7 +281,7 @@ def send_text_to_peer(message):
     assert control(app, title).get_state_set().contains(Atspi.StateType.EXPANDED), "Open disclosure lacks expanded accessibility state"
     click("Copy sent transfer ID for bob")
     status("Copied")
-    assert clipboard() == transfer.encode(), "Send feedback copied a different transfer ID"
+    wait("Send feedback copied a different transfer ID",lambda: clipboard() == transfer.encode())
     screenshot("send-feedback-details.png")
     open_until = time.monotonic() + 5.25
     def still_open():
@@ -283,17 +300,23 @@ started = time.monotonic()
 try:
     fixture.start(fresh=True)
     start()
-    status("Choose an existing SSH identity and configure a target in Settings.")
+    control(app,"SSH target",Atspi.Role.TEXT)
     fill("SSH target", "inbox")
     fill("Identity file", str(fixture.directory / "desktop/id_ed25519"))
     click("Save settings")
-    status("Settings saved; also available to the CLI")
+    status("Settings saved")
     click("Copy enrollment key")
     status("Copied")
     assert clipboard().decode().split()[:2] == fixture.public("desktop").split()[:2], "Enrollment key differs from selected CLI identity"
+    screenshot("status-confirmation.png")
+    wait("brief confirmation expires",lambda: not find(app,"Copied"),seconds=6)
+    assert not find(app,"Operation progress"), "Idle work left progress visible"
+
     click("Connect")
     approval = control(Atspi.get_desktop(0), "SSH server approval")
     assert any("SHA256:" in n.get_name() for n in walk(approval)), "OpenSSH fingerprint absent from approval"
+    wait("actual connection setup is yellow",lambda: control(app,"Connection status").get_description() == "Connecting")
+    control(app,"Operation progress")
     screenshot("host-approval.png")
     previous_approval = approval.get_process_id()
     click("Reject", approval)
@@ -304,11 +327,13 @@ try:
     approval = control(Atspi.get_desktop(0), "SSH server approval")
     assert approval.get_process_id() != previous_approval, "Discovered stale approval dialog"
     click("Approve server key", approval)
-    status("Connected. Inbox and Devices update automatically.")
+    wait("authenticated connection", lambda: control(app,"Connection status").get_description() == "Connected")
+    screenshot("status-connected.png")
     assert (fixture.directory / "desktop/known_hosts").read_text(), "OpenSSH did not remember approved server key"
     fixture.cli("desktop", "inbox") # Independent CLI immediately reuses graphical approval.
 
-    wait("initial automatic refresh", lambda: text_contents(control(app,"Connection status")) == "Current")
+    click("Devices")
+    status("Unapproved\n" + fixture.fingerprint("peer") + "\npeer")
     connection_ids = wait("exactly one persistent GUI session after CLI exit", lambda: (ids if len(ids := fixture.exec("pgrep", "-f", "sshd.*parcel@internal-sftp").decode().splitlines()) == 1 else None))
     fixture.exec("sed", "-i", "s/ peer$/ peer-auto/", "/home/parcel/.ssh/authorized_keys")
     click("Send"); click("Settings"); click("Back"); click("Devices")
@@ -317,7 +342,7 @@ try:
     status("Unapproved\n" + fixture.fingerprint("peer") + "\npeer")
     assert fixture.exec("pgrep", "-f", "sshd.*parcel@internal-sftp").decode().splitlines() == connection_ids, "Polling or tab changes opened another SSH session"
     click("Refresh devices")
-    status("Devices refreshed; verify fingerprints before approving")
+    idle()
     # Reuse the enrolled peer with a comment the CLI refuses to suggest.
     fixture.exec("sed", "-i", "s/ peer$/ invalid comment/", "/home/parcel/.ssh/authorized_keys")
     try:
@@ -339,7 +364,7 @@ try:
     fill("Peer name", "bob", dialog)
     click("Approve", dialog)
     wait("GUI approval persisted", lambda: "bob" in json.loads((fixture.directory / "desktop/config.json").read_text())["peers"])
-    status("Devices refreshed; verify fingerprints before approving")
+    idle()
     state = json.loads((fixture.directory / "desktop/config.json").read_text())
     assert state["peers"]["bob"].split()[:2] == fixture.public("peer").split()[:2], "GUI peer approval differs from CLI config"
     message = "hello 世界 — café\n\tline two\n"
@@ -347,24 +372,24 @@ try:
         id = peer_send(message)
         verify_received_text(id, message)
         click("Remove & close")
-        status("Removed transfer")
-        assert id not in ids("desktop"), "Successful removal retained transfer"
+        status("Parcel deleted")
+        wait("Successful removal retained transfer",lambda: id not in ids("desktop"))
         send_text_to_peer(message)
         print("Installed GTK transfer journey passed (/usr/bin/keyparcel-gtk and /usr/bin/keyparcel)")
         raise SystemExit(0)
     click("Send")
-    status("Ready.")
+    idle()
     select_recipient("bob")
     fill("Message", message)
     draft_file = session / "draft-世界.bin"
     draft_file.write_bytes(b"draft bytes")
     click("Choose file")
     picker_path(file_dialog("Choose a file"), draft_file)
-    status("File selected")
+    control(app,"draft-世界.bin · 11 B",Atspi.Role.LABEL)
     click("Inbox")
     click("Devices")
     click("Settings")
-    status("Ready.")
+    idle()
     assert not find(app, "Remote storage", Atspi.Role.TEXT), "Advanced paths are prominent in essential Settings"
     screenshot("settings.png")
     activate(control(app, "Advanced"))
@@ -375,7 +400,7 @@ try:
     click("Back")
     control(app, "Devices and approvals", Atspi.Role.LABEL)
     click("Send")
-    status("Ready.")
+    idle()
     assert text_contents(control(app, "Message")) == message, "Navigation discarded the text draft"
     control(app, "Remove recipient bob", Atspi.Role.PUSH_BUTTON)
     control(app, "draft-世界.bin · 11 B", Atspi.Role.LABEL)
@@ -405,7 +430,7 @@ try:
     control(app, "Remove recipient bob", Atspi.Role.PUSH_BUTTON)
     control(app, "draft-世界.bin · 11 B", Atspi.Role.LABEL)
     click("Settings")
-    status("Ready.")
+    idle()
     click("Back")
     control(app, "Message")
     assert text_contents(control(app, "Message")) == message, "Settings Back discarded the draft or returned to Inbox"
@@ -417,32 +442,32 @@ try:
     control(app, "draft-世界.bin · 11 B", Atspi.Role.LABEL)
     fixture.cli("desktop", "trust", fixture.fingerprint("peer"), "--name", "bob")
     click("Settings")
-    status("Ready.")
+    idle()
     click("Back")
-    status("Ready.")
+    idle()
     select_recipient("bob")
     config_path = fixture.directory / "desktop/config.json"
     state = json.loads(config_path.read_text())
     state["hosts"]["other"] = state["hosts"]["inbox"].copy()
     config_path.write_text(json.dumps(state))
     click("Settings")
-    status("Ready.")
+    idle()
     fill("SSH target", "other")
     click("Use saved host")
-    status("Ready.")
+    idle()
     click("Back")
-    status("Ready.")
+    idle()
     control(app, "Choose recipient…", Atspi.Role.PUSH_BUTTON)
     assert text_contents(control(app, "Message")) == message, "Host change discarded draft contents"
     control(app, "draft-世界.bin · 11 B", Atspi.Role.LABEL)
     assert not control(app, "Send file", Atspi.Role.PUSH_BUTTON).get_state_set().contains(Atspi.StateType.SENSITIVE), "Host change left sending enabled without a recipient"
     click("Settings")
-    status("Ready.")
+    idle()
     fill("SSH target", "inbox")
     click("Use saved host")
-    status("Ready.")
+    idle()
     click("Back")
-    status("Ready.")
+    idle()
     click("Discard draft")
     status("Draft discarded")
     assert text_contents(control(app, "Message")) == "", "Explicit discard retained text"
@@ -485,8 +510,8 @@ try:
         fixture.exec("chmod", "700", fixture.inbox_path("desktop"))
         click("Delete transfer " + unwanted)
         click("Delete", control(app, "Delete inbox copy?", Atspi.Role.DIALOG))
-        status("Deleted remote inbox copy; saved local files kept")
-        assert unwanted not in ids("desktop"), "Inbox delete did not remove the remote parcel"
+        status("Parcel deleted")
+        wait("Inbox delete did not remove the remote parcel",lambda: unwanted not in ids("desktop"))
         assert unrelated in ids("desktop"), "Inbox delete removed an unrelated parcel"
         assert unwanted_file.read_bytes() == b"local file remains unchanged", "Inbox delete modified a local file"
     fixture.cli("desktop", "delete", unrelated)
@@ -505,7 +530,7 @@ try:
     control(dialog, id, Atspi.Role.LABEL)
     click("Copy transfer ID", dialog)
     status("Copied")
-    assert clipboard() == id.encode(), "Transfer details copied a different ID"
+    wait("Transfer details copied a different ID",lambda: clipboard() == id.encode())
     screenshot("transfer-details.png")
     keys("Escape")
     wait("Back closes transfer details", lambda: not find(app, "Transfer details", Atspi.Role.DIALOG))
@@ -530,11 +555,11 @@ try:
     assert id in ids("desktop"), "Failed removal lost transfer"
     fixture.exec("chmod", "700", fixture.inbox_path("desktop"))
     click("Remove & close")
-    status("Removed transfer")
-    assert id not in ids("desktop"), "Successful removal retained transfer"
+    status("Parcel deleted")
+    wait("Successful removal retained transfer",lambda: id not in ids("desktop"))
 
     click("Send")
-    status("Ready.")
+    idle()
     select_recipient("This device")
     fill("Message", message)
     click("Send text")
@@ -551,7 +576,7 @@ try:
     # Multi-recipient text and files use the existing peer/self fixture.
     for multi_file in (False, True):
         click("Send")
-        status("Ready.")
+        idle()
         click("Discard draft")
         control(app, "Choose recipient…", Atspi.Role.PUSH_BUTTON)
         assert not find(app, "Choose recipient", Atspi.Role.DIALOG), "Entering Send opened the chooser automatically"
@@ -590,7 +615,7 @@ try:
             control(app, marker, role)
             click("Send")
             wait(f"returned from {destination} to Send", lambda: not find(app, marker, role))
-            status("Ready.")
+            idle()
             control(app, "Remove recipient This device", Atspi.Role.PUSH_BUTTON)
             control(app, "Remove recipient bob", Atspi.Role.PUSH_BUTTON)
         click("Remove recipient bob")
@@ -605,7 +630,7 @@ try:
         source_multi.write_bytes(content)
         click("Choose file")
         picker_path(file_dialog("Choose a file"), source_multi)
-        status("File selected")
+        control(app,"multi.bin · " + str(len(content)) + " B",Atspi.Role.LABEL)
         if not multi_file:
             fill("Message", content.decode())
         before = {name: ids(name) for name in ("desktop", "peer")}
@@ -657,7 +682,7 @@ try:
             else:
                 assert fixture.cli(name, "receive", transfer, "--stdout") == content, "Multi-recipient text bytes differ"
 
-    click("Send"); status("Ready.")
+    click("Send"); idle()
     select_recipient("This device")
     click("+ Add another")
     click("bob", control(app, "Choose recipient", Atspi.Role.DIALOG))
@@ -684,7 +709,7 @@ try:
         if text:
             assert text_contents(control(app, "Received text")) == payload.decode()[:65536], "Text file preview changed bytes"
             click("Copy complete message"); status("Copied")
-            assert clipboard() == payload, "Text file Copy used only the truncated preview"
+            wait("Text file Copy used only the truncated preview",lambda: clipboard() == payload)
         else:
             control(app, "Can’t preview this parcel as text. Save it to open with another application.")
             assert not find(app, "Received text"), "Unsupported bytes were displayed"
@@ -709,7 +734,7 @@ try:
                 blocked.chmod(0o700)
             target = session / (filename + "-view-saved")
             click("Save file"); picker_path(file_dialog("Save received file"), target, True)
-            status("File saved; remote copy retained")
+            control(app,"File saved — remote copy retained",Atspi.Role.LABEL)
             assert target.read_bytes() == payload, "Viewer Save altered original verified bytes"
             click("Back to parcel")
             control(app, "Save file", Atspi.Role.PUSH_BUTTON)
@@ -719,8 +744,8 @@ try:
         finally:
             fixture.exec("mv", remote + ".held", remote)
         assert incoming in ids("desktop"), "Viewer Save or Cancel removed remote copy"
-        click("Remove & close"); status("Removed transfer")
-        assert incoming not in ids("desktop"), "Viewer explicit removal retained remote copy"
+        click("Remove & close"); status("Parcel deleted")
+        wait("Viewer explicit removal retained remote copy",lambda: incoming not in ids("desktop"))
 
     for size in (16 * 1024 * 1024, 16 * 1024 * 1024 + 1):
         large = "x" * size
@@ -731,26 +756,26 @@ try:
             assert text_contents(preview) == large[:65536], "Large preview was not bounded/exact"
             status("Preview truncated; the complete remote transfer is retained.")
             click("Copy complete message"); status("Copied")
-            assert clipboard() == large.encode(), "Inclusive clipboard boundary copied only preview"
+            wait("Inclusive clipboard boundary copied only preview",lambda: clipboard() == large.encode())
             target = session / "boundary-view.txt"
             click("Save file")
             dialog = file_dialog("Save received file")
             assert text_contents(filename_field(dialog)) == incoming+".txt", "Text save suggestion lost transfer ID"
-            picker_path(dialog,target,True);status("File saved; remote copy retained")
+            picker_path(dialog,target,True);control(app,"File saved — remote copy retained",Atspi.Role.LABEL)
             assert target.read_bytes() == large.encode(), "Boundary Save truncated content"
-            click("Back to parcel");click("Remove & close");status("Removed transfer")
+            click("Back to parcel");click("Remove & close");status("Parcel deleted")
         else:
             refresh()
             view = control(app,"View transfer "+incoming,Atspi.Role.PUSH_BUTTON)
             assert not view.get_state_set().contains(Atspi.StateType.SENSITIVE), "Oversized parcel offered View"
             control(app,"Too large to preview—save the file instead")
             target = session / "above-boundary.txt"
-            choose_save(incoming,target);status("File saved; remote copy retained")
+            choose_save(incoming,target);control(app,"File saved — remote copy retained",Atspi.Role.LABEL)
             assert target.read_bytes() == large.encode(), "Inbox Save imposed the viewer cap"
             click("Back to Inbox")
             assert incoming in ids("desktop"), "Inbox save removed oversized parcel"
-            click("Delete transfer "+incoming);click("Delete",control(app,"Delete inbox copy?",Atspi.Role.DIALOG));status("Deleted remote inbox copy; saved local files kept")
-        assert incoming not in ids("desktop"), "Large text removal failed"
+            click("Delete transfer "+incoming);click("Delete",control(app,"Delete inbox copy?",Atspi.Role.DIALOG));status("Parcel deleted")
+        wait("Large text removal failed",lambda: incoming not in ids("desktop"))
 
     # File open/save journeys share the same SSH fixture.
     source = session / "binary-世界.bin"
@@ -760,16 +785,16 @@ try:
             source = session / "empty.bin"
             source.write_bytes(b"")
         click("Send")
-        status("Ready.")
+        idle()
         select_recipient("This device")
         click("Choose file")
         dialog = file_dialog("Choose a file")
         click("Cancel", dialog)
-        status("Selection cancelled; remote transfers retained")
+        wait("picker cancelled",lambda: not find(app,"Choose a file",Atspi.Role.DIALOG) and not find(app,"Save received file",Atspi.Role.DIALOG))
         click("Choose file")
         dialog = file_dialog("Choose a file")
         picker_path(dialog, source)
-        status("File selected")
+        wait("selected file becomes sendable",lambda: control(app,"Send file",Atspi.Role.PUSH_BUTTON).get_state_set().contains(Atspi.StateType.SENSITIVE))
         before = ids("desktop")
         click("Send file")
         # Completion remains observable after the brief success feedback expires.
@@ -793,7 +818,7 @@ try:
         field = filename_field(dialog)
         wait(f"incoming save suggestion {source.name!r}", lambda: text_contents(field) == source.name)
         click("Cancel", dialog)
-        status("Selection cancelled; remote transfers retained")
+        wait("picker cancelled",lambda: not find(app,"Choose a file",Atspi.Role.DIALOG) and not find(app,"Save received file",Atspi.Role.DIALOG))
         assert incoming in ids("desktop"), "Save cancellation lost incoming file"
         if not empty:
             failed_dir = session / "unwritable"
@@ -805,7 +830,7 @@ try:
             fixture.control("pause")
             try:
                 picker_path(dialog, failed, True)
-                status("Verifying and saving file…")
+                control(app,"Operation progress")
                 failed_dir.chmod(0o500)
             finally:
                 fixture.control("unpause")
@@ -818,7 +843,7 @@ try:
                 failed_dir.chmod(0o700)
         target = session / ("gtk-" + source.name)
         choose_save(incoming, target)
-        status("File saved; remote copy retained")
+        control(app,"File saved — remote copy retained",Atspi.Role.LABEL)
         assert target.read_bytes() == source.read_bytes(), "GTK destination differs from peer file"
         assert incoming in ids("desktop"), "Successful save deleted remote file"
         screenshot("saved-file.png")
@@ -829,22 +854,22 @@ try:
         dialog = control(app, "Replace", Atspi.Role.PUSH_BUTTON).get_parent().get_parent().get_parent()
         click("Cancel", dialog)
         click("Cancel", file_dialog("Save received file"))
-        status("Selection cancelled; remote transfers retained")
+        wait("picker cancelled",lambda: not find(app,"Choose a file",Atspi.Role.DIALOG) and not find(app,"Save received file",Atspi.Role.DIALOG))
         assert target.read_bytes() == b"protected destination", "Declined replacement overwrote destination"
         choose_save(incoming, target)
         click("Replace")
         dialog = control(app, "Confirm action", Atspi.Role.DIALOG)
         click("Confirm", dialog)
-        status("File saved; remote copy retained")
+        control(app,"File saved — remote copy retained",Atspi.Role.LABEL)
         assert target.read_bytes() == source.read_bytes(), "Confirmed replacement wrote different bytes"
         click("Remove & close")
-        status("Removed transfer")
-        assert incoming not in ids("desktop"), "Saved-file removal failed"
+        status("Parcel deleted")
+        wait("Saved-file removal failed",lambda: incoming not in ids("desktop"))
         extra = peer_send(file=source)
         click("Delete transfer " + extra)
         click("Delete", control(app, "Delete inbox copy?", Atspi.Role.DIALOG))
-        status("Deleted remote inbox copy; saved local files kept")
-        assert extra not in ids("desktop"), "File inbox deletion failed"
+        status("Parcel deleted")
+        wait("File inbox deletion failed",lambda: extra not in ids("desktop"))
         assert target.read_bytes() == source.read_bytes(), "Inbox deletion modified a saved local file"
 
 
@@ -855,7 +880,7 @@ try:
     try:
         click("Inbox")
         fixture.exec("pkill", "-u", "parcel")
-        wait("disconnected transport becomes stale", lambda: text_contents(control(app, "Connection status")) == "Stale")
+        wait("disconnected transport becomes stale", lambda: control(app,"Connection status").get_description() == "Disconnected")
         click("Refresh inbox")
         wait("changed key is rejected", lambda: any("REMOTE HOST IDENTIFICATION HAS CHANGED" in n.get_name() for n in walk(app)))
         assert known.read_bytes() == changed, "GUI silently replaced a changed host key"
@@ -865,25 +890,31 @@ try:
 
     # A disconnected/stalled server restores controls, and cancellation is usable.
     refresh()
+    timeout_text = ""
     fixture.control("pause")
     try:
         click("Refresh inbox")
-        status("Checking inbox and devices…")
+        control(app,"Cancel operation",Atspi.Role.PUSH_BUTTON)
         click("Cancel operation")
         status("Operation cancelled; remote transfers retained.")
         click("Refresh inbox")
         wait("stalled server reports a bounded failure", lambda: any(n.get_role() == Atspi.Role.LABEL and ("timed out" in n.get_name().lower() or "timeout" in n.get_name().lower() or "deadline exceeded" in n.get_name().lower()) for n in walk(app)), seconds=20)
         wait("timeout restores navigation", lambda: control(app, "Settings").get_state_set().contains(Atspi.StateType.SENSITIVE))
         control(app,"View transfer " + next(iter(own)))
+        timeout_text = next(n.get_name() for n in walk(app) if n.get_role()==Atspi.Role.LABEL and any(word in n.get_name().lower() for word in ("timed out","timeout","deadline exceeded")))
+        screenshot("status-error.png")
     finally:
         fixture.control("unpause")
-    wait("automatic reconnection after resume", lambda: text_contents(control(app,"Connection status")) == "Current",seconds=40)
+    wait("automatic reconnection after resume", lambda: control(app,"Connection status").get_description() == "Connected",seconds=40)
+    status(timeout_text)
+    click("Dismiss error")
+    wait("error dismissed",lambda: not find(app,timeout_text))
     control(app,"View transfer " + next(iter(own)))
     stop()
     start()
     click("Devices")
     click("Refresh devices")
-    status("Devices refreshed; verify fingerprints before approving")
+    idle()
     control(app, "Forget device " + fixture.fingerprint("peer"))
     assert not find(Atspi.get_desktop(0), "SSH server approval"), "Restart forgot server trust"
     screenshot("remembered-devices.png")
@@ -896,7 +927,7 @@ try:
     ssh_config.write_text(f"Host inbox\n HostName 127.0.0.1\n Port 22\n User parcel\n IdentityFile {identity}\n IdentityAgent none\n ProxyJump gateway\n HostKeyAlias fixture-target\n UserKnownHostsFile {known}\n GlobalKnownHostsFile /dev/null\nHost gateway\n HostName {fixture.hostname}\n Port {fixture.port}\n User parcel\n IdentityFile {gateway_identity}\n IdentitiesOnly yes\n IdentityAgent none\n HostKeyAlias fixture-gateway\n UserKnownHostsFile {known}\n GlobalKnownHostsFile /dev/null\n")
     try:
         fixture.exec("pkill", "-u", "parcel")
-        wait("jump transport disconnects", lambda: text_contents(control(app, "Connection status")) == "Stale")
+        wait("jump transport disconnects", lambda: control(app,"Connection status").get_description() == "Disconnected")
         click("Settings")
         click("Connect")
         previous = None
@@ -905,7 +936,7 @@ try:
             previous = dialog.get_process_id()
             click("Approve server key", dialog)
             wait(f"approved {endpoint} helper exits", lambda: not Path(f"/proc/{previous}").exists())
-        status("Connected. Inbox and Devices update automatically.")
+        wait("authenticated connection", lambda: control(app,"Connection status").get_description() == "Connected")
         fixture.cli("desktop", "inbox")
     finally:
         ssh_config.write_text(original_ssh)

@@ -100,8 +100,10 @@ make old transfers unreadable; see [identity loss](../../SECURITY.md#identity-lo
 
 While foregrounded, Inbox and Devices update automatically over one reused
 SSH/SFTP connection. Tabs display cached data; **Refresh** requests an immediate
-update or retry. **Current** means the latest refresh succeeded; **Stale** keeps
-last successful data with error details. Reconnects enforce saved server trust.
+update or retry. The top-bar symbol shows connected (green), connecting (yellow),
+failed/lost (red), or unconfigured/suspended (neutral), with an accessible state.
+It reports the known connection, not continuous reachability or inbox freshness.
+Failed refreshes retain the last successful data. Reconnects enforce saved server trust.
 Backgrounding closes the connection; returning reconnects without discarding drafts.
 This is not a background transfer or notification service.
 

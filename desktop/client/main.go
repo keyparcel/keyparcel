@@ -58,7 +58,8 @@ type model struct {
 	pollCancel                        context.CancelFunc
 	retryAt                           time.Time
 	retryDelay                        time.Duration
-	refreshMessage                    string
+	refreshRequested                  bool
+	confirmation                      confirmation
 	rejected                          []core.Rejected
 	target, public, fingerprint, file string
 	items                             []core.Item
@@ -98,9 +99,22 @@ func (m *model) set(name, text string) {
 	cstrings([]string{name, visible(text)}, func(v []*C.char) { C.ui_set(m.ui, v[0], v[1]) })
 }
 func (m *model) message(text string) {
+	if text != "" {
+		m.refreshRequested = false
+	}
 	cstrings([]string{visible(text)}, func(v []*C.char) { C.ui_message(m.ui, v[0]) })
 }
+func (m *model) confirm(text string) {
+	m.confirmation = confirmation{text, time.Now().Add(3 * time.Second)}
+	cstrings([]string{text}, func(v []*C.char) { C.ui_confirmation(m.ui, v[0]) })
+}
+func (m *model) progress(text string) {
+	cstrings([]string{text}, func(v []*C.char) { C.ui_progress(m.ui, v[0]) })
+}
 func (m *model) page(name string) {
+	if m.navigation.current != name {
+		m.refreshRequested = false
+	}
 	m.navigation.open(name)
 	cstrings([]string{name}, func(v []*C.char) { C.ui_page(m.ui, v[0]) })
 }
@@ -108,6 +122,7 @@ func (m *model) clear(name string) {
 	cstrings([]string{name}, func(v []*C.char) { C.ui_clear(m.ui, v[0]) })
 }
 func (m *model) copy(text string) {
+	m.confirm("")
 	if err := clipboardText(text); err != nil {
 		m.message(err.Error())
 		return
@@ -118,7 +133,7 @@ func (m *model) copy(text string) {
 		m.message("Clipboard could not accept this text")
 		return
 	}
-	m.message("Copied")
+	m.confirm("Copied")
 }
 func visible(text string) string {
 	text = strings.ToValidUTF8(strings.ReplaceAll(text, "\x00", "␀"), "�")
@@ -151,6 +166,7 @@ func (m *model) run(notice string, work func(context.Context) (any, error), done
 		m.message("File workers are still finishing; try again shortly.")
 		return false
 	}
+	m.refreshRequested = false
 	if m.pollCancel != nil {
 		m.pollCancel()
 	}
@@ -160,7 +176,9 @@ func (m *model) run(notice string, work func(context.Context) (any, error), done
 	ctx, cancel := context.WithTimeout(m.ctx, m.options.timeout)
 	m.active = cancel
 	C.ui_busy(m.ui, 1)
-	m.message(notice)
+	m.confirm("")
+	m.message("")
+	m.progress(notice)
 	C.ui_ref(m.ui)
 	type result struct {
 		value any
@@ -213,10 +231,8 @@ func (m *model) load(target string) {
 	m.run("Loading settings…", func(context.Context) (any, error) { return m.store.load(target) }, func(value any) {
 		p := value.(profile)
 		m.applyProfile(p)
-		m.message("Ready.")
 		if p.Target == "" {
 			m.page("settings")
-			m.message("Choose an existing SSH identity and configure a target in Settings.")
 		}
 	})
 }
@@ -242,7 +258,7 @@ func (m *model) applyProfile(p profile) {
 		m.clear("device-list")
 		m.hasSnapshot = false
 		m.retryAt = time.Time{}
-		m.syncStatus("Loading", "Refreshing after connection or approval changes")
+		m.connection(m.session.state(p.Target, p.Host))
 	}
 	recipient := retainedRecipient(m.recipient, m.target, m.host, m.peers, p)
 	for _, name := range m.extraRecipients {
@@ -299,7 +315,7 @@ func (m *model) remote(ctx context.Context, target string, expected *core.Host, 
 	}
 	return m.session.request(ctx, p, m.options.sshConfig, m.options.helper, true, action)
 }
-func (m *model) refreshInbox() { m.requestRefresh("Inbox refreshed") }
+func (m *model) refreshInbox() { m.requestRefresh() }
 func (m *model) drawInbox(rejected []core.Rejected) {
 	cstrings([]string{"items"}, func(v []*C.char) { C.ui_rows_begin(m.ui, v[0]) })
 	defer C.ui_rows_end(m.ui)
@@ -321,7 +337,7 @@ func (m *model) drawInbox(rejected []core.Rejected) {
 	}
 }
 func (m *model) refreshDevices() {
-	m.requestRefresh("Devices refreshed; verify fingerprints before approving")
+	m.requestRefresh()
 }
 func (m *model) drawDevices() {
 	cstrings([]string{"device-list"}, func(v []*C.char) { C.ui_rows_begin(m.ui, v[0]) })
@@ -378,7 +394,7 @@ func (m *model) event(action, arg, value string) {
 		} else if m.pollCancel != nil {
 			m.profileVersion++
 			m.pollCancel()
-			m.refreshMessage = ""
+			m.refreshRequested = false
 			C.ui_refreshing(m.ui, 0)
 			m.message("Operation cancelled; remote transfers retained.")
 		}
@@ -388,7 +404,16 @@ func (m *model) event(action, arg, value string) {
 		return
 	}
 	switch action {
+	case "dismiss-error":
+		m.message("")
+	case "picker-cancel":
+		// Cancelling a native picker leaves the existing draft or viewer intact.
 	case "poll":
+		m.connection(m.session.state(m.target, m.host))
+		if m.confirmation.Text != "" && m.confirmation.current(time.Now()) == "" {
+			m.confirmation = confirmation{}
+			cstrings([]string{""}, func(v []*C.char) { C.ui_confirmation(m.ui, v[0]) })
+		}
 		if m.feedback != nil && m.feedback.expire(time.Now()) {
 			m.drawFeedback()
 		}
@@ -418,9 +443,7 @@ func (m *model) event(action, arg, value string) {
 		m.view = nil
 		m.save = nil
 		m.page(arg)
-		if arg == "settings" || arg == "send" {
-			m.message("Ready.")
-		}
+
 	case "use-host":
 		m.load(m.get("target"))
 	case "setup":
@@ -430,7 +453,7 @@ func (m *model) event(action, arg, value string) {
 				return nil, err
 			}
 			return m.store.load(target)
-		}, func(v any) { m.applyProfile(v.(profile)); m.message("Settings saved; also available to the CLI") })
+		}, func(v any) { m.applyProfile(v.(profile)); m.confirm("Settings saved") })
 	case "connect":
 		target := m.target
 		m.run("Connecting through OpenSSH…", func(ctx context.Context) (any, error) {
@@ -438,7 +461,6 @@ func (m *model) event(action, arg, value string) {
 		}, func(v any) {
 			m.applyProfile(v.(profile))
 			m.page("inbox")
-			m.message("Connected. Inbox and Devices update automatically.")
 		})
 	case "inbox":
 		m.refreshInbox()
@@ -468,7 +490,7 @@ func (m *model) event(action, arg, value string) {
 			m.message("Refresh Devices before approval")
 			return
 		}
-		m.run("Saving peer approval…", func(context.Context) (any, error) { return nil, m.store.approve(value, d.PublicKey) }, func(any) { m.refreshDevices() })
+		m.run("Saving peer approval…", func(context.Context) (any, error) { return nil, m.store.approve(value, d.PublicKey) }, func(any) { m.refreshDevices(); m.confirm("Device approved") })
 	case "forget-request":
 		d, ok := m.device(arg)
 		if ok {
@@ -481,7 +503,7 @@ func (m *model) event(action, arg, value string) {
 		}
 		d := *m.forget
 		m.forget = nil
-		m.run("Forgetting peer approval…", func(context.Context) (any, error) { return nil, m.store.forget(d.Name, d.PublicKey) }, func(any) { m.refreshDevices() })
+		m.run("Forgetting peer approval…", func(context.Context) (any, error) { return nil, m.store.forget(d.Name, d.PublicKey) }, func(any) { m.refreshDevices(); m.confirm("Device unapproved") })
 	case "choose-file":
 		cstrings([]string{""}, func(v []*C.char) { C.ui_picker(m.ui, 0, v[0]) })
 	case "send-path":
@@ -498,7 +520,6 @@ func (m *model) event(action, arg, value string) {
 			m.set("selected-file", filepath.Base(arg)+" · "+display.Size(info.Size()))
 			C.ui_send_ready(m.ui, 1)
 			m.drawSend()
-			m.message("File selected")
 		})
 	case "discard-draft":
 		m.recipient = ""
@@ -510,12 +531,11 @@ func (m *model) event(action, arg, value string) {
 		m.set("selected-file", "No file selected")
 		C.ui_send_ready(m.ui, 0)
 		m.drawSend()
-		m.message("Draft discarded")
+		m.confirm("Draft discarded")
 	case "add-recipient-request":
 		m.chooseRecipient()
 	case "recipient-cancel":
 		m.addingRecipient = nil
-		m.message("Recipient selection cancelled")
 	case "add-recipient":
 		m.addRecipient(value)
 	case "remove-recipient":
@@ -614,7 +634,6 @@ func (m *model) receiveText(id string) {
 		m.save = nil
 		cstrings([]string{view.Preview, view.Notice}, func(v []*C.char) { C.ui_view(m.ui, v[0], v[1], boolean(view.Text)) })
 		m.page("text")
-		m.message("Verified parcel; remote copy retained")
 	})
 }
 func (m *model) currentProfile() profile {
@@ -703,7 +722,6 @@ func (m *model) savePath(path string, overwrite bool) {
 		C.ui_saved_origin(m.ui, boolean(pending.View != nil))
 		m.set("saved-path", path)
 		m.page("saved")
-		m.message("File saved; remote copy retained")
 	})
 }
 func (m *model) requestDelete(id string) {
@@ -754,7 +772,7 @@ func (m *model) confirmDelete(id string) {
 		}
 		m.items = kept
 		m.drawInbox(m.rejected)
-		m.message("Deleted remote inbox copy; saved local files kept")
+		m.confirm("Parcel deleted")
 	})
 }
 
@@ -800,7 +818,7 @@ func (m *model) remove() {
 		m.save = nil
 		m.drawInbox(m.rejected)
 		m.page("inbox")
-		m.message("Removed transfer")
+		m.confirm("Parcel deleted")
 	})
 }
 

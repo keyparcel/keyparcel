@@ -322,7 +322,6 @@ func (m *model) performSend(a *sendAttempt, names []string, prepare bool) {
 		m.showSendFeedback(a.Deliveries)
 		if !m.feedback.complete() {
 			m.drawSend()
-			m.message("Ready.")
 			return
 		}
 		C.ui_clear_draft(m.ui, boolean(a.File))
@@ -332,7 +331,6 @@ func (m *model) performSend(a *sendAttempt, names []string, prepare bool) {
 		}
 		m.clearSendAttempt()
 		m.drawSend()
-		m.message("Ready.")
 	}, func(err error) {
 		if m.sending != a {
 			return

@@ -9,7 +9,7 @@ struct UI {
     GtkApplication *app;
     GtkWindow *window;
     GtkStack *pages;
-    GtkWidget *body, *status, *spinner, *cancel, *picker;
+    GtkWidget *body, *status, *spinner, *cancel, *picker, *progress, *confirmation;
     GHashTable *fields, *inbox_rows, *device_rows, **current_rows, *next_rows;
     GtkWidget *row_box, *last_row;
     gboolean closed, destroyed, has_file, send_locked;
@@ -78,14 +78,26 @@ static GtkWidget *field(UI *ui, GtkWidget *box, const char *name, const char *ti
     return entry;
 }
 static GtkWidget *page(UI *ui, const char *name, const char *title) {
+    GtkWidget *frame = g_object_new(GTK_TYPE_BOX,"orientation",GTK_ORIENTATION_VERTICAL,"spacing",14,
+        "accessible-role",GTK_ACCESSIBLE_ROLE_GROUP,NULL);
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
-    gtk_widget_add_css_class(box, "page");
+    gtk_widget_add_css_class(frame, "page");
+    char *page_name=g_strdup_printf("Page: %s",title);accessible(frame,page_name);g_free(page_name);
     GtkWidget *heading = label(title);
     gtk_widget_add_css_class(heading, "page-title");
-    gtk_box_append(GTK_BOX(box), heading);
+    gtk_box_append(GTK_BOX(frame), heading);
+    GtkWidget *error_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *error_text = label("");
+    gtk_widget_add_css_class(error_text,"error"); gtk_widget_set_hexpand(error_text,TRUE);
+    char *key=g_strdup_printf("error-%s",name);remember(ui,key,error_box);g_free(key);
+    g_object_set_data(G_OBJECT(error_box),"message",error_text);
+    gtk_box_append(GTK_BOX(error_box),error_text);
+    gtk_box_append(GTK_BOX(error_box),button(ui,"Dismiss error","dismiss-error",""));
+    gtk_widget_set_visible(error_box,FALSE);gtk_box_append(GTK_BOX(frame),error_box);
     GtkWidget *scroll = gtk_scrolled_window_new();
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box);
-    gtk_stack_add_named(ui->pages, scroll, name);
+    gtk_widget_set_vexpand(scroll,TRUE);gtk_box_append(GTK_BOX(frame),scroll);
+    gtk_stack_add_named(ui->pages, frame, name);
     return box;
 }
 static GtkWidget *text_view(UI *ui, const char *name, gboolean editable) {
@@ -129,7 +141,7 @@ static void response(GtkDialog *dialog, int answer, gpointer data) {
             }
         } else if (strcmp(a->action, "add-recipient") == 0) goEvent(ui->handle,"recipient-cancel","","");
         else if (strcmp(a->action, "delete-confirm") == 0) goEvent(ui->handle, "delete-cancel", "", "");
-        else goEvent(ui->handle, "notice", "Selection cancelled; remote transfers retained", "");
+        else goEvent(ui->handle, "picker-cancel", "", "");
     }
     gtk_window_destroy(GTK_WINDOW(dialog));
     ui_unref(ui);
@@ -261,7 +273,11 @@ UI *ui_new(uintptr_t handle, const char *icon) {
         ".keyparcel .card { background: @theme_base_color; border: 1px solid alpha(@theme_fg_color, 0.14); border-radius: 12px; padding: 16px; }"
         ".keyparcel .message-editor { border: 1px solid alpha(@theme_fg_color, 0.22); border-radius: 8px; }"
         ".keyparcel .key-material { font-family: monospace; font-size: 0.9em; }"
-        ".keyparcel .connection-status { font-size: 0.9em; }"
+        ".keyparcel .confirmation { padding: 10px 16px; border-radius: 8px; }"
+        ".keyparcel .connection-status { font-size: 1.2em; }"
+        ".keyparcel .connection-status.success { color: #287d38; }"
+        ".keyparcel .connection-status.warning { color: #947000; }"
+        ".keyparcel .connection-status.error { color: #c01c28; }"
         ".keyparcel button { padding: 7px 14px; }", -1);
     gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(style), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     g_object_unref(style);
@@ -293,19 +309,21 @@ UI *ui_new(uintptr_t handle, const char *icon) {
     g_object_unref(brand_icon); g_bytes_unref(bytes);
     GtkWidget *brand = label("keyparcel"); gtk_widget_add_css_class(brand, "brand");
     gtk_label_set_selectable(GTK_LABEL(brand), FALSE);
-    gtk_widget_set_hexpand(brand, TRUE); gtk_box_append(GTK_BOX(brand_row), brand);
-    GtkWidget *sync = label("Not connected"); remember(ui, "sync", sync);
+    gtk_widget_set_hexpand(brand, FALSE); gtk_box_append(GTK_BOX(brand_row), brand);
+    GtkWidget *sync = label("○"); remember(ui, "sync", sync);
     gtk_widget_add_css_class(sync, "dim-label"); gtk_widget_add_css_class(sync, "connection-status");
+    gtk_label_set_width_chars(GTK_LABEL(sync),2); gtk_widget_set_focusable(sync,TRUE);
     accessible(sync, "Connection status"); gtk_box_append(GTK_BOX(brand_row), sync);
-    gtk_box_append(GTK_BOX(header), brand_row);
-    GtkWidget *progress = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-    ui->spinner = gtk_spinner_new(); ui->status = label("Loading configuration…");
-    gtk_widget_set_hexpand(ui->status, TRUE);
+    ui->progress = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    ui->spinner = gtk_spinner_new(); ui->status = label("");
+    accessible(ui->status,"Operation progress");
     ui->cancel = button(ui, "Cancel operation", "cancel", "");
     gtk_widget_add_css_class(ui->cancel, "flat");
-    gtk_widget_set_sensitive(ui->cancel, FALSE);
-    gtk_box_append(GTK_BOX(progress), ui->spinner); gtk_box_append(GTK_BOX(progress), ui->status);
-    gtk_box_append(GTK_BOX(progress), ui->cancel); gtk_box_append(GTK_BOX(header), progress);
+    gtk_box_append(GTK_BOX(ui->progress), ui->spinner); gtk_box_append(GTK_BOX(ui->progress), ui->status);
+    gtk_box_append(GTK_BOX(ui->progress), ui->cancel);
+    gtk_widget_set_visible(ui->progress,FALSE);
+    gtk_box_append(GTK_BOX(brand_row),ui->progress);
+    gtk_box_append(GTK_BOX(header), brand_row);
     gtk_box_append(GTK_BOX(outer), header);
     ui->body = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     GtkWidget *nav = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -404,7 +422,19 @@ UI *ui_new(uintptr_t handle, const char *icon) {
     gtk_box_append(GTK_BOX(saved), button(ui, "Remove & close", "remove", ""));
     GtkWidget *saved_back=button(ui,"Back to Inbox","result-back","");remember(ui,"saved-back",saved_back);gtk_box_append(GTK_BOX(saved),saved_back);
 
-    gtk_window_set_child(ui->window, outer);
+    GtkWidget *overlay=gtk_overlay_new();gtk_overlay_set_child(GTK_OVERLAY(overlay),outer);
+    ui->confirmation=g_object_new(GTK_TYPE_BOX,"accessible-role",GTK_ACCESSIBLE_ROLE_STATUS,"orientation",GTK_ORIENTATION_HORIZONTAL,NULL);
+    GtkWidget *confirmation_text=label("");
+    gtk_label_set_selectable(GTK_LABEL(confirmation_text),FALSE);
+    gtk_widget_set_can_target(confirmation_text,FALSE);gtk_widget_set_can_target(ui->confirmation,FALSE);
+    g_object_set_data(G_OBJECT(ui->confirmation),"message",confirmation_text);
+    gtk_box_append(GTK_BOX(ui->confirmation),confirmation_text);
+    gtk_widget_add_css_class(ui->confirmation,"osd");gtk_widget_add_css_class(ui->confirmation,"confirmation");
+    gtk_widget_set_margin_bottom(ui->confirmation,20);
+    gtk_widget_set_halign(ui->confirmation,GTK_ALIGN_CENTER);gtk_widget_set_valign(ui->confirmation,GTK_ALIGN_END);
+    gtk_widget_set_visible(ui->confirmation,FALSE);
+    gtk_overlay_add_overlay(GTK_OVERLAY(overlay),ui->confirmation);
+    gtk_window_set_child(ui->window, overlay);
     back_keys(ui, GTK_WIDGET(ui->window));
     g_signal_connect(ui->window, "close-request", G_CALLBACK(close_window), ui);
     g_signal_connect(ui->app, "activate", G_CALLBACK(present), ui);
@@ -418,16 +448,35 @@ void ui_shutdown(UI *ui) {
     ui->destroyed = TRUE;
 }
 void ui_page(UI *ui, const char *name) {
+    const char *old=gtk_stack_get_visible_child_name(ui->pages);
+    if (g_strcmp0(old,name)!=0) ui_message(ui,"");
     gtk_stack_set_visible_child_name(ui->pages, name);
     const char *section = (strcmp(name, "text") == 0 || strcmp(name, "saved") == 0) ? "inbox" : name;
     char *nav = g_strdup_printf("nav-%s", section);
     gtk_toggle_button_set_active(g_hash_table_lookup(ui->fields, nav), TRUE); g_free(nav);
     gtk_widget_set_sensitive(g_hash_table_lookup(ui->fields, "back"), strcmp(name, "settings") == 0 || strcmp(name, "text") == 0 || strcmp(name, "saved") == 0);
 }
-void ui_message(UI *ui, const char *text) { gtk_label_set_text(GTK_LABEL(ui->status), text); }
+void ui_message(UI *ui, const char *text) {
+    char *key=g_strdup_printf("error-%s",gtk_stack_get_visible_child_name(ui->pages));
+    GtkWidget *box=g_hash_table_lookup(ui->fields,key);g_free(key);
+    if (!box) return;
+    gtk_label_set_text(GTK_LABEL(g_object_get_data(G_OBJECT(box),"message")),text);
+    gtk_widget_set_visible(box,text[0]!=0);
+}
+void ui_confirmation(UI *ui,const char *text) {
+    gtk_label_set_text(GTK_LABEL(g_object_get_data(G_OBJECT(ui->confirmation),"message")),text);
+    accessible(ui->confirmation,text);
+    gtk_widget_set_visible(ui->confirmation,text[0]!=0);
+}
+void ui_progress(UI *ui,const char *text) {
+    gtk_label_set_text(GTK_LABEL(ui->status),text);
+    accessible(ui->status,"Operation progress");
+    gtk_widget_set_visible(ui->progress,text[0]!=0);
+    if (text[0]) gtk_spinner_start(GTK_SPINNER(ui->spinner)); else gtk_spinner_stop(GTK_SPINNER(ui->spinner));
+}
 void ui_busy(UI *ui, int busy) {
     gtk_widget_set_sensitive(ui->body, !busy); gtk_widget_set_sensitive(ui->cancel, busy);
-    if (busy) gtk_spinner_start(GTK_SPINNER(ui->spinner)); else gtk_spinner_stop(GTK_SPINNER(ui->spinner));
+    if (!busy) ui_progress(ui,"");
 }
 const char *ui_get(UI *ui, const char *name) {
     GtkWidget *w = g_hash_table_lookup(ui->fields, name);
@@ -605,14 +654,23 @@ int ui_askpass(const char *prompt) {
     return a.accepted;
 }
 
-void ui_sync(UI *ui, const char *state, const char *detail) {
+void ui_connection(UI *ui, const char *state) {
     GtkWidget *w = g_hash_table_lookup(ui->fields,"sync");
-    gtk_label_set_text(GTK_LABEL(w),state);
+    const char *symbol="○", *color="dim-label";
+    if (strcmp(state,"Connected")==0) { symbol="●";color="success"; }
+    else if (strcmp(state,"Connecting")==0) { symbol="↻";color="warning"; }
+    else if (strcmp(state,"Disconnected")==0) { symbol="⊗";color="error"; }
+    const char *classes[]={"dim-label","success","warning","error"};
+    for (int i=0;i<4;i++) gtk_widget_remove_css_class(w,classes[i]);
+    gtk_widget_add_css_class(w,color);gtk_label_set_text(GTK_LABEL(w),symbol);
     accessible(w,"Connection status");
-    gtk_widget_set_tooltip_text(w,detail);
-    gtk_accessible_update_property(GTK_ACCESSIBLE(w),GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,detail,-1);
+    gtk_widget_set_tooltip_text(w,state);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(w),GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,state,-1);
 }
-void ui_refreshing(UI *ui, int refreshing) { gtk_widget_set_sensitive(ui->cancel,refreshing); }
+void ui_refreshing(UI *ui, int refreshing) {
+    gtk_widget_set_sensitive(ui->cancel,refreshing);
+    ui_progress(ui,refreshing ? "Refreshing…" : "");
+}
 
 static void recipient_chosen(GtkButton *button, gpointer data) {
     Action *a=data;

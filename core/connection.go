@@ -1,6 +1,14 @@
 package core
 
-import "context"
+import (
+	"context"
+	"sync/atomic"
+)
+
+type connectionStatus struct {
+	name      string
+	transport context.Context
+}
 
 // Connection owns one reusable SSH/SFTP session. Do serializes its callers;
 // cancellation retires the transport, so a stalled request cannot poison reuse.
@@ -14,6 +22,23 @@ type Connection struct {
 	transport context.Context
 	retire    context.CancelFunc
 	stopClose func() bool
+	status    atomic.Pointer[connectionStatus]
+}
+
+// State reports the owned transport, without probing the server or taking a
+// request lease. Connected means no loss has been observed, not a health check.
+func (c *Connection) State() string {
+	if c.ctx.Err() != nil {
+		return "Suspended"
+	}
+	s := c.status.Load()
+	if s == nil {
+		return "Not connected"
+	}
+	if s.transport.Err() != nil {
+		return "Disconnected"
+	}
+	return s.name
 }
 
 func NewConnection(parent context.Context, dial func(context.Context) (*Session, error)) *Connection {
@@ -65,8 +90,10 @@ func (c *Connection) Do(ctx context.Context, action func(*Session) error) error 
 	stop := context.AfterFunc(ctx, func() { c.retire(); close(retired) })
 	var err error
 	if c.session == nil {
+		c.status.Store(&connectionStatus{"Connecting", c.transport})
 		c.session, err = c.dial(c.transport)
 		if err == nil {
+			c.status.Store(&connectionStatus{"Connected", c.transport})
 			session := c.session
 			c.stopClose = context.AfterFunc(c.transport, func() { session.Close() })
 			if session.Client != nil {

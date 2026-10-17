@@ -87,7 +87,11 @@ preview is truncated or unsupported.
 
 Inbox and Devices update automatically over one reused SSH/SFTP connection. Tabs
 show cached data; Refresh requests an immediate update/retry. A failed refresh
-keeps the last successful data; the small connection status exposes error details.
+keeps the last successful data. The top-bar connection symbol is green when
+connected, yellow while connecting, red after failure/loss, and neutral before
+configuration. Its accessible state accompanies color; it is not a reachability
+probe or an inbox-freshness label. Action errors stay with their screen, while
+brief confirmations appear at the bottom.
 Reconnections preserve server-key checks and never open approval dialogs in the
 background: use Connect in Settings when approval is needed. Server/trust changes
 invalidate affected cached results. Monitoring stops when the app exits.

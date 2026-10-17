@@ -204,6 +204,17 @@ func clientRequest[T any](c *Client, action func(*core.Session) (T, error)) (T, 
 	return result, requestError(ctx, err)
 }
 
+// ConnectionState observes the persistent transport without starting a request.
+func (c *Client) ConnectionState() string {
+	if c.connection != nil {
+		return c.connection.State()
+	}
+	if c.ctx.Err() != nil {
+		return "Suspended"
+	}
+	return "Connected"
+}
+
 // CheckConnection authenticates the connection without fetching remote data.
 func (c *Client) CheckConnection() error {
 	_, err := clientRequest(c, func(*core.Session) (bool, error) { return true, nil })

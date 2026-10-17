@@ -307,25 +307,26 @@ class ClientJourneyTest {
     }
 
     @Test fun connectRememberedServer() {
+        val model = ViewModelProvider(compose.activity)[AppModel::class.java]
         waitFor("refresh-inbox")
         click("settings")
         compose.onNodeWithTag("connect-host").performScrollTo().performClick()
         finished()
         compose.onNodeWithTag("approve-host").assertDoesNotExist()
-        compose.onNodeWithTag("notice").assertTextEquals("Server connected. Inbox and Devices update automatically.")
+        compose.waitUntil(30_000) { model.connectionState == "Connected" }
     }
 
     @Test fun foregroundRefresh() {
         waitFor("refresh-inbox")
         val model = ViewModelProvider(compose.activity)[AppModel::class.java]
-        compose.waitUntil(150_000) { model.syncStatus == "Current" }
+        compose.waitUntil(150_000) { model.connectionState == "Connected" }
         click("send-screen"); field("message", input)
         val revision = model.refreshRevision
         compose.runOnIdle { model.setForeground(false) }
-        check(model.syncStatus == "Stale") { "Background suspension did not mark cached data stale" }
+        check(model.connectionState == "Suspended") { "Background suspension did not retire the connection" }
         check(model.inboxLoaded && model.devicesLoaded) { "Background suspension discarded cached data" }
         compose.runOnIdle { model.setForeground(true) }
-        compose.waitUntil(150_000) { model.refreshRevision > revision && model.syncStatus == "Current" }
+        compose.waitUntil(150_000) { model.refreshRevision > revision && model.connectionState == "Connected" }
         check(value("message") == input) { "Foreground reconnection discarded the draft" }
         compose.onNodeWithTag("discard-draft").performScrollTo().performClick()
     }
@@ -412,7 +413,7 @@ class ClientJourneyTest {
         waitFor("refresh-inbox")
         val liveModel = ViewModelProvider(compose.activity)[AppModel::class.java]
         compose.waitUntil(150_000) { liveModel.inboxLoaded && liveModel.devicesLoaded }
-        check(liveModel.syncStatus == "Current") { "Initial automatic refresh did not publish current data" }
+        check(liveModel.connectionState == "Connected") { "Initial automatic refresh did not publish current data" }
         compose.onNodeWithTag("received-text").assertDoesNotExist()
         check(compose.onAllNodesWithText("Not verified:", substring = true).fetchSemanticsNodes().isNotEmpty()) {
             "Inbox did not report the unapproved sender"
@@ -482,8 +483,26 @@ class ClientJourneyTest {
         val textID = arg("text_id")
         compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("item-$textID"))
         compose.onNodeWithTag("transfer-id-$textID").assertDoesNotExist()
-        click("details-$textID")
-        compose.onNodeWithTag("transfer-id-$textID").assertTextEquals(textID)
+        try {
+            compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("details-$textID"))
+            compose.runOnIdle { approvalModel.confirm("Copied") }
+            val detailsBounds = compose.onNodeWithTag("details-$textID").assertIsDisplayed().assertIsEnabled()
+                .fetchSemanticsNode().boundsInWindow
+            val noticeBounds = compose.onNodeWithTag("notice").assertTextEquals("Copied")
+                .fetchSemanticsNode().boundsInWindow
+            val overlap = detailsBounds.intersect(noticeBounds)
+            check(!overlap.isEmpty) { "Fixture must exercise a confirmation overlapping the Details button" }
+            compose.onNodeWithTag("details-$textID").performTouchInput { click(overlap.center - detailsBounds.topLeft) }
+            compose.onNodeWithTag("details-$textID").assertTextEquals("Hide details")
+            compose.onNodeWithTag("notice").assertTextEquals("Copied")
+            compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("transfer-id-$textID"))
+            compose.onNodeWithTag("transfer-id-$textID").assertIsDisplayed().assertTextEquals(textID)
+        } catch (failure: AssertionError) {
+            runCatching { screenshot("failure") }.onFailure(failure::addSuppressed)
+            runCatching { File(compose.activity.filesDir,"failure.log").writeText(compose.onRoot().printToString()) }
+                .onFailure(failure::addSuppressed)
+            throw failure
+        }
         val timestamps = compose.onAllNodesWithText("Uploaded ", substring = true).fetchSemanticsNodes()
             .flatMap { it.config[SemanticsProperties.Text] }.map { it.text }
         check(timestamps.isNotEmpty() && timestamps.all {
@@ -494,6 +513,15 @@ class ClientJourneyTest {
             compose.onNodeWithTag("copy-transfer-$textID").assertIsDisplayed().assertIsEnabled().performTouchInput { click() }
             assertClipboard(clipboard, textID)
         }
+        compose.onNodeWithTag("notice").assertTextEquals("Copied")
+        screenshot("status-confirmation")
+        val copyBounds = compose.onNodeWithTag("connection-status").fetchSemanticsNode().boundsInWindow
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("notice").fetchSemanticsNodes().isEmpty() }
+        check(compose.onNodeWithTag("connection-status").fetchSemanticsNode().boundsInWindow == copyBounds) {
+            "Confirmation expiry moved the top bar"
+        }
+        compose.onNodeWithTag("operation-progress").assertDoesNotExist()
+        screenshot("status-connected")
         screenshot("inbox-details")
         compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("details-$textID"))
         click("details-$textID")
@@ -577,6 +605,7 @@ class ClientJourneyTest {
             click("delete-$id"); click("confirm-inbox-delete"); finished()
             compose.onNodeWithTag("error").assertExists()
             check(model.inbox.any { it.id == id }) { "Failed inbox delete lost the parcel" }
+            compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("delete-$id"))
             compose.onNodeWithTag("delete-$id").assertIsEnabled()
         }
 
@@ -626,7 +655,7 @@ class ClientJourneyTest {
             compose.waitUntil(30_000) { model.pendingDelete == null }
             check(model.inbox.any { it.id == id }) { "Back removed the parcel" }
             click("delete-$id"); click("confirm-inbox-delete"); finished()
-            compose.onNodeWithTag("notice").assertTextEquals("Deleted remote inbox copy; saved local files kept")
+            compose.onNodeWithTag("notice").assertTextEquals("Parcel deleted")
             check(model.inbox.none { it.id == id }) { "Successful delete retained the parcel" }
             check(model.inbox.any { it.id == unrelated }) { "Delete removed an unrelated parcel" }
         }
@@ -644,7 +673,7 @@ class ClientJourneyTest {
         compose.onNodeWithText("laptop · approved").assertExists()
         click("back"); refresh()
         receive(arg("text_id")); click("remove-close"); finished()
-        compose.onNodeWithTag("notice").assertTextEquals("Transfer removed")
+        compose.onNodeWithTag("notice").assertTextEquals("Parcel deleted")
         compose.onNodeWithTag("item-${arg("text_id")}").assertDoesNotExist()
         receive(arg("new_text_id")); click("remove-close"); finished()
         screenshot("removed")
@@ -653,7 +682,7 @@ class ClientJourneyTest {
     @Test fun stalledRequest() {
         waitFor("refresh-inbox")
         val model = ViewModelProvider(compose.activity)[AppModel::class.java]
-        compose.waitUntil(150_000) { model.syncStatus == "Current" && model.inbox.any { it.id == arg("file_id") } }
+        compose.waitUntil(150_000) { model.connectionState == "Connected" && model.inbox.any { it.id == arg("file_id") } }
         val beforeRevision = model.refreshRevision
         compose.runOnIdle {
             // Reconnect with the short deadline before the fixture stalls SSH.
@@ -661,7 +690,7 @@ class ClientJourneyTest {
             model.requestTimeoutMillis = 10_000L
             model.setForeground(true)
         }
-        compose.waitUntil(150_000) { model.syncStatus == "Current" && model.refreshRevision > beforeRevision }
+        compose.waitUntil(150_000) { model.connectionState == "Connected" && model.refreshRevision > beforeRevision }
         val beforeInbox = model.inbox
         val beforeRejected = model.rejected
         val beforeDevices = model.devices
@@ -669,7 +698,17 @@ class ClientJourneyTest {
         compose.waitUntil(150_000) { File(compose.activity.cacheDir, "stalled-go").exists() }
         compose.onNodeWithTag("refresh-inbox").assertIsEnabled()
         compose.onNodeWithTag("send-screen").assertIsEnabled()
-        compose.waitUntil(150_000) { model.syncStatus == "Stale" }
+        compose.waitUntil(150_000) { model.connectionState == "Disconnected" }
+        compose.onNodeWithTag("refresh-inbox").performClick()
+        compose.onNodeWithText("Cancel").assertIsDisplayed().assertIsEnabled().performTouchInput { click() }
+        compose.waitUntil(30_000) { !model.refreshing }
+        compose.onNodeWithTag("error").assertTextEquals("Refresh cancelled; last successful data retained")
+        check(model.inbox == beforeInbox && model.devices == beforeDevices) { "Cancel discarded the cached snapshot" }
+        val superseded = model.refreshRevision
+        compose.onNodeWithTag("refresh-inbox").performClick()
+        compose.runOnIdle { model.clipboardError("Clipboard copying is unavailable.") }
+        compose.waitUntil(150_000) { model.refreshRevision > superseded }
+        compose.onNodeWithTag("error").assertTextEquals("Clipboard copying is unavailable.")
         val revision = model.refreshRevision
         compose.onNodeWithTag("refresh-inbox").performClick()
         compose.onNodeWithTag("refresh-inbox").assertIsEnabled()
@@ -677,15 +716,20 @@ class ClientJourneyTest {
         compose.waitUntil(150_000) { model.refreshRevision > revision }
         finished()
         compose.onNodeWithTag("error").assertTextEquals("Request timed out. Try again.")
-        check(model.syncStatus == "Stale") { "Failed refresh did not mark cached data stale" }
+        check(model.connectionState == "Disconnected") { "Failed transport did not update connection indicator" }
+        val failedRevision = model.refreshRevision
+        compose.waitUntil(150_000) { model.refreshRevision > failedRevision }
+        compose.onNodeWithTag("error").assertTextEquals("Request timed out. Try again.")
+        screenshot("status-error")
         check(model.inbox == beforeInbox && model.rejected == beforeRejected) { "Failed refresh replaced the last good inbox" }
         check(model.devices == beforeDevices) { "Failed refresh replaced the last good discovery snapshot" }
         compose.onNodeWithTag("refresh-inbox").assertIsEnabled()
         compose.onNodeWithTag("send-screen").assertIsEnabled()
         compose.onNodeWithTag("settings").assertIsEnabled()
+        screenshot("timeout")
         click("settings")
         compose.onNodeWithTag("host-address").performScrollTo().assertIsEnabled()
-        screenshot("timeout")
+        compose.onNodeWithTag("error").assertDoesNotExist()
     }
 
     @Test fun retryAfterStall() {
@@ -897,7 +941,7 @@ class ClientJourneyTest {
                 override fun getSystemService(name: String): Any? = if (name == Context.CLIPBOARD_SERVICE) null else super.getSystemService(name)
             }
             var problem: String? = null
-            compose.runOnIdle { copyText(unavailable, clipboardText("replacement"), "Received text", true) { problem = it } }
+            compose.runOnIdle { copyText(unavailable, clipboardText("replacement"), "Received text", true, reportError = { problem = it }) }
             check(problem?.contains("unavailable") == true) { "Missing clipboard service did not report an error" }
             assertClipboard(clipboard, complete)
             screenshot("received-copy")

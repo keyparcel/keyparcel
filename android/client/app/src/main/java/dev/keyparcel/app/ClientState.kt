@@ -82,3 +82,8 @@ data class RefreshRetry(val delayMillis: Long = 1_000, val nextAttemptMillis: Lo
 data class InboxDeleteRequest(val id: String, val settings: Settings) {
     fun matches(current: Settings, items: List<InboxItem>) = settings == current && items.any { it.id == id }
 }
+
+// One replaceable, non-blocking confirmation. Expiry is testable without a clock.
+data class Confirmation(val message: String, val dismissAt: Long) {
+    fun expire(now: Long): Confirmation? = if (now >= dismissAt) null else this
+}

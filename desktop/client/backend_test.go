@@ -166,8 +166,21 @@ func TestGTKLifecycleAndImmediateCancellation(t *testing.T) {
 			t.Fatal("immediate cancellation left picker pending")
 		}
 	}
+	m.refreshRequested = true
+	m.message("Clipboard copying failed")
+	if m.refreshRequested {
+		t.Fatal("a pending refresh still owns the newer action error")
+	}
 	release := make(chan struct{})
+	m.refreshRequested = true
+	m.confirm("Copied")
 	m.run("Stalled", func(context.Context) (any, error) { <-release; return nil, nil }, func(any) { t.Error("timed-out callback applied") })
+	if m.confirmation.Text != "" {
+		t.Fatal("new operation retained an old confirmation")
+	}
+	if m.refreshRequested {
+		t.Fatal("new operation retained ownership of a preempted refresh")
+	}
 	deadline := time.Now().Add(time.Second)
 	for m.active != nil && time.Now().Before(deadline) {
 		iterate()

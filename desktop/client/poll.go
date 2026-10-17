@@ -23,14 +23,18 @@ type liveSnapshot struct {
 
 func (m *model) watch() { C.ui_watch(m.ui) }
 
-func (m *model) syncStatus(state, detail string) {
-	cstrings([]string{state, visible(detail)}, func(v []*C.char) { C.ui_sync(m.ui, v[0], v[1]) })
+func (m *model) connection(state string) {
+	cstrings([]string{state}, func(v []*C.char) { C.ui_connection(m.ui, v[0]) })
 }
 
-func (m *model) requestRefresh(message string) {
-	m.refreshMessage = message
+func (m *model) requestRefresh() {
+	if m.target == "" {
+		m.message("Configure a server in Settings first")
+		return
+	}
+	m.refreshRequested = true
 	m.retryAt = time.Time{}
-	m.message("Checking inbox and devices…")
+	m.message("")
 	C.ui_refreshing(m.ui, 1)
 	m.poll()
 }
@@ -43,9 +47,6 @@ func (m *model) poll() {
 	version, target := m.profileVersion, m.target
 	ctx, cancel := context.WithTimeout(m.ctx, m.options.timeout)
 	m.pollCancel = cancel
-	if !m.hasSnapshot {
-		m.syncStatus("Loading", "Refreshing inbox and devices")
-	}
 	C.ui_ref(m.ui)
 	go func() {
 		p, err := m.store.load(target)
@@ -76,8 +77,8 @@ func (m *model) poll() {
 			if p := snapshot.Profile; p.Config != nil && (m.target != p.Target || m.host != p.Host || !reflect.DeepEqual(m.peers, p.Config.Peers)) {
 				m.applyProfile(snapshot.Profile)
 			}
-			message := m.refreshMessage
-			m.refreshMessage = ""
+			manual := m.refreshRequested
+			m.refreshRequested = false
 			C.ui_refreshing(m.ui, 0)
 
 			if snapshot.InboxOK && (!reflect.DeepEqual(m.items, snapshot.Items) || !reflect.DeepEqual(m.rejected, snapshot.Rejected) || !m.hasSnapshot) {
@@ -92,13 +93,12 @@ func (m *model) poll() {
 				m.hasSnapshot = true
 			}
 			if err != nil {
-				m.syncStatus("Stale", err.Error())
 				if m.retryDelay == 0 {
 					m.retryDelay = time.Second
 				}
 				m.retryAt = time.Now().Add(m.retryDelay)
 				m.retryDelay = min(m.retryDelay*2, 30*time.Second)
-				if message != "" {
+				if manual {
 					m.message("Refresh failed; last successful data retained: " + err.Error())
 				}
 				return
@@ -106,10 +106,6 @@ func (m *model) poll() {
 			m.hasSnapshot = true
 			m.retryDelay = time.Second
 			m.retryAt = time.Time{}
-			m.syncStatus("Current", "Inbox and Devices refresh automatically")
-			if message != "" {
-				m.message(message)
-			}
 		})
 		C.ui_post(m.ui, C.uintptr_t(handle))
 	}()
