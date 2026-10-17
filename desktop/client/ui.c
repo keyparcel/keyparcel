@@ -112,6 +112,11 @@ static GtkWidget *page(UI *ui, const char *name, const char *title) {
     g_object_set_data(G_OBJECT(box),"frame",frame);
     return box;
 }
+static void draft_changed(GtkTextBuffer *buffer, gpointer data) {
+    (void)buffer;
+    UI *ui = data;
+    if (!ui->closed) ui_send_ready(ui, ui->has_file);
+}
 static GtkWidget *text_view(UI *ui, const char *name, gboolean editable) {
     GtkWidget *view = gtk_text_view_new();
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(view), GTK_WRAP_WORD_CHAR);
@@ -425,6 +430,8 @@ UI *ui_new(uintptr_t handle, const char *icon) {
     GtkWidget *choose = button(ui, "Choose file", "choose-file", ""); remember(ui,"choose-file",choose); gtk_box_append(GTK_BOX(file_actions),choose);
     GtkWidget *send_file = button(ui, "Send file", "send-file", ""); remember(ui, "send-file", send_file);
     gtk_widget_set_sensitive(send_file, FALSE); gtk_box_append(GTK_BOX(file_actions), send_file);
+    g_signal_connect(gtk_text_view_get_buffer(GTK_TEXT_VIEW(g_hash_table_lookup(ui->fields, "draft"))),
+        "changed", G_CALLBACK(draft_changed), ui);
     gtk_box_append(GTK_BOX(send), file_actions);
     gtk_box_append(GTK_BOX(send), button(ui, "Discard draft", "discard-draft", ""));
 
@@ -551,7 +558,8 @@ void ui_host(UI *ui, const char *name) { gtk_combo_box_text_append_text(GTK_COMB
 void ui_send_ready(UI *ui, int has_file) {
     ui->has_file = has_file;
     gboolean selected = ui->send_count > 0;
-    gtk_widget_set_sensitive(g_hash_table_lookup(ui->fields, "send-text"), selected && !ui->send_locked);
+    GtkTextBuffer *draft = gtk_text_view_get_buffer(GTK_TEXT_VIEW(g_hash_table_lookup(ui->fields, "draft")));
+    gtk_widget_set_sensitive(g_hash_table_lookup(ui->fields, "send-text"), selected && !ui->send_locked && gtk_text_buffer_get_char_count(draft) > 0);
     gtk_widget_set_sensitive(g_hash_table_lookup(ui->fields, "send-file"), selected && has_file && !ui->send_locked);
 }
 void ui_clear_draft(UI *ui, int file) {
