@@ -186,3 +186,11 @@ jobs:
             android/client/app/build/reports/tests/
           retention-days: 7
           if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: success() && matrix.suite == 'client'
+        with:
+          name: android-client-screenshots
+          path: android/client/build/*.png
+          retention-days: 7
+          if-no-files-found: error

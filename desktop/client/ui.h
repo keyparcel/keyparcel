@@ -49,3 +49,6 @@ void ui_confirm_delete(UI *ui, const char *id, const char *message);
 void ui_add_recipient(UI *ui, const char **names, int count);
 void ui_recipient_token(UI *ui, const char *name, const char *title);
 void ui_send_state(UI *ui, int count, int locked, int retry, int has_file, int can_add);
+
+void ui_feedback(UI *ui, const char *headline, int visible, int expanded);
+void ui_feedback_delivery(UI *ui, const char *name, const char *outcome, const char *id);

@@ -218,6 +218,11 @@ void ui_details(UI *ui, const char *id) {
     dialog_attach(ui, d, action_new(ui, "", ""));
 }
 
+static void feedback_expanded(GObject *object, GParamSpec *spec, gpointer data) {
+    (void)spec;
+    UI *ui=data;
+    if (!ui->closed) goEvent(ui->handle,"feedback-expanded",gtk_expander_get_expanded(GTK_EXPANDER(object)) ? "true" : "false","");
+}
 static gboolean poll_tick(gpointer data) {
     UI *ui = data;
     if (ui->closed) return G_SOURCE_REMOVE;
@@ -366,9 +371,15 @@ UI *ui_new(uintptr_t handle, const char *icon) {
     GtkWidget *tokens = gtk_flow_box_new(); gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(tokens),GTK_SELECTION_NONE);
     remember(ui,"recipient-tokens",tokens); gtk_box_append(GTK_BOX(send),tokens);
     GtkWidget *add = button(ui,"Choose recipient…","add-recipient-request",""); remember(ui,"add-recipient",add); gtk_flow_box_append(GTK_FLOW_BOX(tokens),add);
-    GtkWidget *report=label(""); remember(ui,"send-report",report); gtk_box_append(GTK_BOX(send),report);
-    GtkWidget *retry=button(ui,"Retry failed recipients","retry-send",""); remember(ui,"retry-send",retry); gtk_widget_set_visible(retry,FALSE); gtk_box_append(GTK_BOX(send),retry);
-    GtkWidget *edit=button(ui,"Edit draft","edit-send",""); remember(ui,"edit-send",edit); gtk_widget_set_visible(edit,FALSE); gtk_box_append(GTK_BOX(send),edit);
+    GtkWidget *feedback=gtk_box_new(GTK_ORIENTATION_VERTICAL,8); remember(ui,"send-feedback",feedback);
+    GtkWidget *disclosure=gtk_expander_new(""); remember(ui,"feedback-disclosure",disclosure);
+    GtkWidget *details=gtk_box_new(GTK_ORIENTATION_VERTICAL,8); remember(ui,"feedback-details",details);
+    gtk_expander_set_child(GTK_EXPANDER(disclosure),details);
+    g_signal_connect(disclosure,"notify::expanded",G_CALLBACK(feedback_expanded),ui);
+    gtk_box_append(GTK_BOX(feedback),disclosure);
+    GtkWidget *retry=button(ui,"Retry failed recipients","retry-send",""); remember(ui,"retry-send",retry); gtk_widget_set_visible(retry,FALSE); gtk_box_append(GTK_BOX(feedback),retry);
+    GtkWidget *edit=button(ui,"Edit draft","edit-send",""); remember(ui,"edit-send",edit); gtk_widget_set_visible(edit,FALSE); gtk_box_append(GTK_BOX(feedback),edit);
+    gtk_widget_set_visible(feedback,FALSE); gtk_box_append(GTK_BOX(send),feedback);
     gtk_box_append(GTK_BOX(send), text_view(ui, "draft", TRUE));
     GtkWidget *send_text = button(ui, "Send text", "send-text", ""); remember(ui, "send-text", send_text);
     gtk_widget_set_sensitive(send_text, FALSE); gtk_box_append(GTK_BOX(send), send_text);
@@ -637,4 +648,23 @@ void ui_send_state(UI *ui, int count, int locked, int retry, int has_file, int c
     char *fn=count>1 ? g_strdup_printf("Send file to %d devices",count) : g_strdup("Send file");
     accessible(text,tn);accessible(file,fn);g_free(tn);g_free(fn);
     ui_send_ready(ui,has_file);
+}
+
+void ui_feedback(UI *ui, const char *headline, int visible, int expanded) {
+    GtkExpander *e=GTK_EXPANDER(g_hash_table_lookup(ui->fields,"feedback-disclosure"));
+    gtk_expander_set_label(e,headline);
+    accessible(GTK_WIDGET(e),headline);
+    gtk_expander_set_expanded(e,expanded);
+    gtk_widget_set_visible(g_hash_table_lookup(ui->fields,"send-feedback"),visible);
+}
+void ui_feedback_delivery(UI *ui, const char *name, const char *outcome, const char *id) {
+    GtkWidget *box=g_hash_table_lookup(ui->fields,"feedback-details");
+    char *text=g_strdup_printf("%s: %s",name,outcome);
+    gtk_box_append(GTK_BOX(box),label(text));g_free(text);
+    if (id[0]) {
+        gtk_box_append(GTK_BOX(box),label(id));
+        GtkWidget *copy=button(ui,"Copy ID","copy-id",id);
+        text=g_strdup_printf("Copy sent transfer ID for %s",name);accessible(copy,text);g_free(text);
+        gtk_box_append(GTK_BOX(box),copy);
+    }
 }

@@ -27,6 +27,11 @@ canceling leaves saved settings unchanged.
 
 ## Send, receive and save
 
+Send feedback shows a short transfer ID when copies share one ID. Open its
+chevron for recipient outcomes, full IDs and Copy ID actions. Successful feedback
+closes after five seconds; opening details pauses dismissal. Incomplete or
+unconfirmed deliveries stay visible, with failed-only retry and editing controls.
+
 Use Inbox, Send and Devices in the bottom navigation. Settings and Back preserve
 in-progress drafts. Text, selected recipient and file survive navigation and picker
 cancellation within the running app. Successful sends stay on Send, keep recipients

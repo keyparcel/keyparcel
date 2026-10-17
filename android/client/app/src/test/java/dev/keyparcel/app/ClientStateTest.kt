@@ -102,6 +102,36 @@ class ClientStateTest {
         assertTrue(retried.deliveries.last().unconfirmed)
         assertTrue(retried.failed.isEmpty())
         assertFalse(retried.complete)
-        assertTrue(retried.summary().contains("This device: delivered"))
+        assertTrue(retried.deliveries.first().outcome() == "delivered")
     }
+    @Test fun feedbackPausesWhileOpenAndRetainsOutcomesAfterExpiry() {
+        val report = SendReport(listOf(SendDelivery("self", "0123456789abcdef")))
+        var feedback = SendFeedback(report).expand(false, 100)
+        assertEquals("Sent to This device · 01234567", report.headline())
+        assertTrue(feedback.expire(5_099).visible)
+        feedback = feedback.expand(true, 101)
+        assertTrue(feedback.expire(100_000).visible)
+        feedback = feedback.expand(false, 100_000)
+        assertFalse(feedback.expire(105_000).visible)
+        assertEquals(report, feedback.expire(105_000).report)
+    }
+
+    @Test fun problemsPersistAndRetriesNeverConflateIds() {
+        val report = SendReport(listOf(SendDelivery("self", "original"),
+            SendDelivery("bob", "", "permission denied")))
+        val feedback = SendFeedback(report)
+        assertTrue(feedback.expanded)
+        assertEquals("Send incomplete", report.headline())
+        assertTrue(feedback.expand(false, 100).expire(100_000).visible)
+        val retried = report.merge(SendReport(listOf(SendDelivery("bob", "retry"))))
+        assertEquals("Sent to 2 devices", retried.headline())
+        assertEquals(listOf("original", "retry"), retried.deliveries.map { it.id })
+        val uncertain = SendFeedback(SendReport(listOf(SendDelivery("bob", "", "lost", true))))
+        assertTrue(uncertain.expire(100_000).visible)
+        assertTrue(uncertain.expanded)
+        assertEquals("unconfirmed — check the inbox before sending again", uncertain.report.deliveries.single().outcome())
+        assertEquals("Sent to 2 devices · shared-i", SendReport(listOf(
+            SendDelivery("self", "shared-id"), SendDelivery("bob", "shared-id"))).headline())
+    }
+
 }

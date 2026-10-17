@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -395,6 +396,7 @@ private fun SendScreen(model: AppModel, chooseFile: () -> Unit) {
                     Text(if (model.draft.recipients.isEmpty()) "Choose recipient…" else "+ Add another")
                 }
             }
+            SendFeedbackArea(model)
             if (fileMode) {
                 OutlinedButton(onClick = chooseFile, enabled = editable,
                     modifier = Modifier.testTag("choose-file")) { Text("Choose file") }
@@ -405,15 +407,6 @@ private fun SendScreen(model: AppModel, chooseFile: () -> Unit) {
             } else {
                 OutlinedTextField(value = text, onValueChange = { model.draft = model.draft.copy(text = it) }, enabled = editable,
                     label = { Text("Message") }, minLines = 4, modifier = Modifier.fillMaxWidth().testTag("message"))
-            }
-            model.sendReport?.let { report ->
-                Text(report.summary(), modifier = Modifier.testTag("send-report"))
-            }
-            if (model.sendLocked) {
-                Button(onClick = model::retrySend, enabled = !model.busy && model.canRetrySend,
-                    modifier = Modifier.testTag("retry-send")) { Text("Retry failed recipients") }
-                TextButton(onClick = model::editSend, enabled = !model.busy,
-                    modifier = Modifier.testTag("edit-send")) { Text("Edit draft") }
             }
             TextButton(onClick = model::discardDraft, enabled = !model.busy,
                 modifier = Modifier.testTag("discard-draft")) { Text("Discard draft") }
@@ -431,6 +424,36 @@ private fun SendScreen(model: AppModel, chooseFile: () -> Unit) {
             TextButton(onClick = { model.draft = model.draft.add(name); adding = false }, enabled = editable,
                 modifier = Modifier.testTag("add-recipient-$name")) { Text(recipientLabel(name)) }
         } } }, confirmButton = {}, dismissButton = { TextButton(onClick = { adding = false }) { Text("Cancel") } })
+}
+
+@Composable
+private fun SendFeedbackArea(model: AppModel) {
+    val feedback = model.sendFeedback?.takeIf { it.visible } ?: return
+    val context = LocalContext.current
+    Column(Modifier.fillMaxWidth().testTag("send-feedback"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        TextButton(onClick = model::toggleSendFeedback,
+            modifier = Modifier.testTag("send-feedback-toggle").semantics {
+                stateDescription = if (feedback.expanded) "Expanded" else "Collapsed"
+            }) { Text("${if (feedback.expanded) "▾" else "▸"} ${feedback.report.headline()}") }
+        if (feedback.expanded) feedback.report.deliveries.forEach { delivery ->
+            Text("${recipientLabel(delivery.recipient)}: ${delivery.outcome()}",
+                modifier = Modifier.testTag("send-outcome-${delivery.recipient}"))
+            if (delivery.id.isNotEmpty()) {
+                Text(delivery.id, modifier = Modifier.testTag("sent-id-${delivery.recipient}"))
+                TextButton(onClick = {
+                    copyText(context, clipboardText(delivery.id), "Transfer ID", false, model::clipboardError)
+                }, modifier = Modifier.testTag("copy-sent-id-${delivery.recipient}").semantics {
+                    contentDescription = "Copy sent transfer ID for ${recipientLabel(delivery.recipient)}"
+                }) { Text("Copy ID") }
+            }
+        }
+        if (model.sendLocked) {
+            Button(onClick = model::retrySend, enabled = !model.busy && model.canRetrySend,
+                modifier = Modifier.testTag("retry-send")) { Text("Retry failed recipients") }
+            TextButton(onClick = model::editSend, enabled = !model.busy,
+                modifier = Modifier.testTag("edit-send")) { Text("Edit draft") }
+        }
+    }
 }
 
 @Composable

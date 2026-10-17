@@ -244,10 +244,34 @@ def send_text_to_peer(message):
     fill("Message", message)
     before_peer = ids("peer")
     click("Send text")
+    # Open brief feedback before independent SSH/byte checks can outlast its timer.
+    disclosure = wait("peer success feedback", lambda: next((n for n in walk(app)
+        if n.get_role() == Atspi.Role.PUSH_BUTTON and n.get_name().startswith("Sent to bob · ")), None))
+    assert not disclosure.get_state_set().contains(Atspi.StateType.EXPANDED), "Disclosure announces expanded while collapsed"
+    assert not find(app, "Copy sent transfer ID for bob"), "Collapsed feedback exposed detail controls"
+    status("Ready.")  # Success appears in feedback, not duplicated in the top status
+    activate(disclosure)
     outgoing = wait("GUI delivery to approved peer", lambda: ids("peer") - before_peer)
     assert len(outgoing) == 1, "GUI peer send created unexpected transfers"
     assert fixture.cli("peer", "receive", next(iter(outgoing)), "--stdout", "--keep") == message.encode(), "Independent peer received different GUI text"
-    wait("peer send completion", lambda: any(n.get_name().startswith("Sent ") for n in walk(app)))
+    transfer = next(iter(outgoing))
+    title = "Sent to bob · " + transfer[:8]
+    control(app, title)
+    control(app, transfer, Atspi.Role.LABEL)
+    assert control(app, title).get_state_set().contains(Atspi.StateType.EXPANDED), "Open disclosure lacks expanded accessibility state"
+    click("Copy sent transfer ID for bob")
+    status("Copied")
+    assert clipboard() == transfer.encode(), "Send feedback copied a different transfer ID"
+    screenshot("send-feedback-details.png")
+    open_until = time.monotonic() + 5.25
+    def still_open():
+        assert find(app, transfer, Atspi.Role.LABEL), "Open details disappeared during the success timeout"
+        return time.monotonic() >= open_until
+    wait("success stays while details are open", still_open, seconds=10)
+    activate(control(app, title))
+    wait("send details collapse", lambda: not find(app, transfer, Atspi.Role.LABEL))
+    screenshot("send-feedback.png")
+    wait("collapsed success dismisses", lambda: not find(app, title), seconds=10)
     assert text_contents(control(app, "Message")) == "", "Successful text send retained its draft"
     control(app, "Remove recipient bob", Atspi.Role.PUSH_BUTTON)
 
@@ -511,7 +535,7 @@ try:
     select_recipient("This device")
     fill("Message", message)
     click("Send text")
-    wait("send completion", lambda: any(n.get_name().startswith("Sent ") for n in walk(app)))
+    wait("self-send clears sent text", lambda: text_contents(control(app, "Message")) == "")
     assert text_contents(control(app, "Message")) == "", "Self-send did not clear sent text on Send"
     control(app, "Remove recipient This device", Atspi.Role.PUSH_BUTTON)
     refresh()
@@ -586,10 +610,17 @@ try:
         fixture.exec("chmod", "500", fixture.inbox_path("peer"))
         try:
             click("Send file to 2 devices" if multi_file else "Send text to 2 devices")
-            status("Send incomplete; the draft is retained")
+            disclosure = control(app, "Send incomplete")
             own_new = ids("desktop") - before["desktop"]
             assert len(own_new) == 1, "Partial multi-send did not deliver exactly one self copy"
             assert ids("peer") == before["peer"], "Refused multi-send changed peer inbox"
+            own_id = next(iter(own_new))
+            control(app, own_id, Atspi.Role.LABEL)
+            activate(disclosure)
+            wait("problem details collapse", lambda: not find(app, own_id, Atspi.Role.LABEL))
+            control(app, "Retry failed recipients", Atspi.Role.PUSH_BUTTON)
+            activate(control(app, "Send incomplete"))
+            control(app, own_id, Atspi.Role.LABEL)
             if multi_file:
                 source_multi.write_bytes(b"changed after partial delivery")
             else:
@@ -610,6 +641,10 @@ try:
         assert ids("desktop") == before["desktop"] | own_new, "Retry resent the successful self copy"
         peer_new = ids("peer") - before["peer"]
         assert len(peer_new) == 1, "Retry did not deliver exactly one failed peer copy"
+        control(app, "Sent to 2 devices")
+        control(app, own_id, Atspi.Role.LABEL)
+        control(app, next(iter(peer_new)), Atspi.Role.LABEL)
+        assert own_id != next(iter(peer_new)), "Retry unexpectedly reused the first attempt ID"
         for name, new_ids in (("desktop", own_new), ("peer", peer_new)):
             transfer = next(iter(new_ids))
             if multi_file:
@@ -671,7 +706,8 @@ try:
         status("File selected")
         before = ids("desktop")
         click("Send file")
-        wait("file send completion", lambda: any(n.get_name().startswith("Sent ") for n in walk(app)))
+        # Completion remains observable after the brief success feedback expires.
+        control(app, "No file selected", Atspi.Role.LABEL)
         after = ids("desktop")
         new = after - before
         assert len(new) == 1, "GUI file send did not create one transfer"
