@@ -275,13 +275,17 @@ UI *ui_new(uintptr_t handle, const char *icon) {
     gtk_window_set_default_icon_name("dev.keyparcel");
     GtkCssProvider *style = gtk_css_provider_new();
     gtk_css_provider_load_from_data(style,
-        ".keyparcel .brand { font-size: 1.6em; font-weight: 700; }"
-        ".keyparcel .page-title { font-size: 1.8em; font-weight: 700; margin-bottom: 2px; }"
+        ".keyparcel .brand { font-size: 1.5em; font-weight: 700; }"
+        ".keyparcel .page-title { font-size: 1.7em; font-weight: 700; margin-bottom: 2px; }"
         ".keyparcel .page { padding: 24px; }"
         ".keyparcel .header { padding: 20px 24px 16px; }"
         ".keyparcel .navigation { padding: 0 24px 16px; border-bottom: 1px solid alpha(@theme_fg_color, 0.12); }"
         ".keyparcel .navigation button { border-radius: 18px; padding: 7px 18px; }"
-        ".keyparcel .navigation button:checked { background: @theme_selected_bg_color; color: @theme_selected_fg_color; }"
+        ".keyparcel .navigation button:checked:not(:disabled), .keyparcel button.suggested-action:not(:disabled) { background-image: none; background-color: #103F4D; color: #F7F5F0; border-color: alpha(@theme_fg_color, 0.35); box-shadow: none; }"
+        ".keyparcel .navigation button:checked:not(:disabled) { border-color: #DDA348; font-weight: 600; }"
+        ".keyparcel button.suggested-action:hover:not(:disabled) { background-color: shade(#103F4D, 1.12); }"
+        ".keyparcel button.suggested-action:active:not(:disabled) { background-color: shade(#103F4D, 0.9); }"
+        ".keyparcel button:focus-visible { outline-color: #A5782A; outline-style: solid; outline-width: 2px; outline-offset: 2px; }"
         ".keyparcel .card { background: @theme_base_color; border: 1px solid alpha(@theme_fg_color, 0.14); border-radius: 12px; padding: 16px; }"
         ".keyparcel .message-editor { border: 1px solid alpha(@theme_fg_color, 0.22); border-radius: 8px; }"
         ".keyparcel .key-material { font-family: monospace; font-size: 0.9em; }"
@@ -290,7 +294,7 @@ UI *ui_new(uintptr_t handle, const char *icon) {
         ".keyparcel .connection-status.success { color: #287d38; }"
         ".keyparcel .connection-status.warning { color: #947000; }"
         ".keyparcel .connection-status.error { color: #c01c28; }"
-        ".keyparcel button { padding: 7px 14px; }", -1);
+        ".keyparcel button { padding: 7px 14px; border-radius: 10px; }", -1);
     gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(style), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     g_object_unref(style);
     UI *ui = g_new0(UI, 1);
