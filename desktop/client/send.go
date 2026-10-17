@@ -193,8 +193,16 @@ func (m *model) send(file bool) {
 		m.message("Choose a recipient before sending")
 		return
 	}
-	m.clearSendFeedback()
 	a := &sendAttempt{Profile: m.sendProfile(), Names: names, Keys: map[string]string{}, File: file, Source: m.file, Filename: filepath.Base(m.file)}
+	if !file {
+		text := C.ui_draft(m.ui)
+		a.Text = C.GoString(text)
+		C.g_free(C.gpointer(text))
+		if a.Text == "" {
+			return
+		}
+	}
+	m.clearSendFeedback()
 	for _, name := range names {
 		a.Keys[name] = sendKey(a.Profile, name)
 	}
@@ -205,10 +213,6 @@ func (m *model) send(file bool) {
 			return
 		}
 		a.Stage = f
-	} else {
-		text := C.ui_draft(m.ui)
-		a.Text = C.GoString(text)
-		C.g_free(C.gpointer(text))
 	}
 	m.sending = a
 	m.performSend(a, names, true)

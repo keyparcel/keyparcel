@@ -311,6 +311,7 @@ def send_text_to_peer(message):
     screenshot("send-feedback.png")
     wait("collapsed success dismisses", lambda: not find(app, title), seconds=10)
     assert text_contents(control(app, "Message")) == "", "Successful text send retained its draft"
+    assert not control(app, "Send text", Atspi.Role.PUSH_BUTTON).get_state_set().contains(Atspi.StateType.SENSITIVE), "Cleared text draft left Send enabled"
     control(app, "Remove recipient bob", Atspi.Role.PUSH_BUTTON)
 
 
@@ -399,6 +400,9 @@ try:
     click("Send")
     idle()
     select_recipient("bob")
+    for draft in ("", " ", "\t\n", "\u2003", ""):
+        fill("Message", draft)
+        wait(f"Send eligibility for {draft!r}", lambda: control(app, "Send text", Atspi.Role.PUSH_BUTTON).get_state_set().contains(Atspi.StateType.SENSITIVE) == bool(draft))
     fill("Message", message)
     draft_file = session / "draft-世界.bin"
     draft_file.write_bytes(b"draft bytes")
@@ -604,7 +608,8 @@ try:
     assert len(own) == 1, "Send-to-self did not create exactly one transfer"
     assert fixture.cli("desktop", "receive", next(iter(own)), "--stdout", "--keep") == message.encode(), "Independent CLI received different GUI text"
 
-    send_text_to_peer(message)
+    for text in (" \t\n\u2003", message):
+        send_text_to_peer(text)
 
     # Multi-recipient text and files use the existing peer/self fixture.
     for multi_file in (False, True):
@@ -820,6 +825,8 @@ try:
         click("Send")
         idle()
         select_recipient("This device")
+        if empty:
+            fill("Message", "")
         click("Choose file")
         dialog = file_dialog("Choose a file")
         click("Cancel", dialog)

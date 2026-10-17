@@ -156,6 +156,18 @@ func TestGTKLifecycleAndImmediateCancellation(t *testing.T) {
 		t.Fatal("GTK initialization failed")
 	}
 	defer m.destroy()
+	m.recipient = "self"
+	feedback := &sendFeedback{}
+	m.feedback = feedback
+	m.event("send-text", "", "") // Exercise the handler despite the disabled button.
+	if m.sending != nil || m.active != nil {
+		t.Fatal("empty text action started a send")
+	}
+	if m.feedback != feedback {
+		t.Fatal("empty text action cleared previous feedback")
+	}
+	m.feedback = nil
+	m.recipient = ""
 	for i := 0; i < 10; i++ {
 		m.event("choose-file", "", "")
 		if !m.pickerPending() {
