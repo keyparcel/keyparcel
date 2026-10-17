@@ -33,9 +33,20 @@ import org.json.JSONObject
 
 data class Device(val key: String, val fingerprint: String, val comment: String, val self: Boolean, val supported: Boolean)
 data class InboxItem(val id: String, val from: String, val type: String, val filename: String, val size: Long, val uploaded: String)
-data class ViewedText(val id: String, val preview: TextPreview, val clipboard: ClipboardText, val host: Host)
-data class SavedFile(val id: String, val name: String, val host: Host)
-data class FileSaveRequest(val item: InboxItem, val host: Host)
+data class ViewedText(val item: InboxItem, val content: ParcelContent, val settings: Settings, val identity: String) {
+    val id get() = item.id
+    val preview get() = content.preview
+    fun matches(current: Settings, key: String) = settings == current && identity == key
+}
+data class FileSaveRequest(val item: InboxItem, val settings: Settings, val identity: String, val view: ViewedText? = null) {
+    val host get() = requireNotNull(settings.host)
+    val filename get() = if (item.type == "file") item.filename else "${item.id}.txt"
+    val parent get() = if (view == null) Page.Inbox else Page.Text
+    fun matches(current: Settings, key: String) = settings == current && identity == key
+}
+data class SavedFile(val request: FileSaveRequest, val name: String) {
+    val id get() = request.item.id
+}
 
 class AppModel(application: Application) : AndroidViewModel(application) {
     private val store = SettingsStore(application)
@@ -172,6 +183,10 @@ class AppModel(application: Application) : AndroidViewModel(application) {
             Triple(saved, public, Bridge.fingerprint(public))
         } finally { key.fill(0) }
     }) { (saved, public, fp) ->
+        if (publicKey.isNotEmpty() && publicKey != public) {
+            viewed = null; savedFile = null; pendingSave = null
+            if (page == Page.Text || page == Page.File) navigation = navigation.open(Page.Inbox)
+        }
         applySettings(saved)
         publicKey = public
         fingerprint = fp
@@ -192,6 +207,8 @@ class AppModel(application: Application) : AndroidViewModel(application) {
             retireConnection()
             inbox = emptyList(); rejected = emptyList(); devices = emptyList()
             inboxLoaded = false; devicesLoaded = false
+            viewed = null; savedFile = null; pendingSave = null
+            if (page == Page.Text || page == Page.File) navigation = navigation.open(Page.Inbox)
             syncStatus = if (updated.host?.trusted == true) "Loading" else "Not connected"
             syncError = null; retry = RefreshRetry()
         }
@@ -305,22 +322,41 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         inboxLoaded = true
     }
 
-    fun receive(item: InboxItem) = work({
-        val host = requireNotNull(settings.host) { "Configure a server first" }
-        var received: ViewedText? = null
-        withClient { client ->
-            client.receive(item.id, Delivery { manifest, path ->
-                require(JSONObject(manifest).getString("type") == "text") { "Expected a text transfer" }
-                val file = File(path)
-                received = ViewedText(item.id, readTextPreview(file), readClipboardText(file), host)
-            }, true)
-        }
-        requireNotNull(received)
-    }) { viewed = it; showPage(Page.Text) }
-
-    fun beginFileSave(item: InboxItem) {
+    fun receive(item: InboxItem) {
         if (busy) return
-        pendingSave = FileSaveRequest(item, requireNotNull(settings.host))
+        val selected = inbox.firstOrNull { it.id == item.id }
+            ?: run { error = "Refresh Inbox before viewing this transfer"; return }
+        if (selected.size > MAX_VIEW_BYTES) { error = TOO_LARGE_TO_VIEW; return }
+        val captured = settings
+        val identity = publicKey
+        work({
+            var received: ViewedText? = null
+            withClient { client ->
+                require(settings == captured && publicKey == identity) { "The server or approvals changed; view the parcel again" }
+                client.receive(selected.id, Delivery { manifest, path ->
+                    val metadata = JSONObject(manifest)
+                    val verified = selected.copy(type = metadata.getString("type"),
+                        filename = if (metadata.isNull("filename")) "" else metadata.getString("filename"), size = metadata.getLong("size"))
+                    received = ViewedText(verified, ParcelContent.readVerified(File(path), verified.size), captured, identity)
+                }, true)
+            }
+            requireNotNull(received)
+        }) {
+            if (it.matches(settings, publicKey)) { viewed = it; showPage(Page.Text) }
+            else error = "The server or approvals changed; view the parcel again"
+        }
+    }
+
+    fun explainViewLimit() { error = TOO_LARGE_TO_VIEW }
+
+    fun beginFileSave(item: InboxItem, view: ViewedText? = null) {
+        if (busy) return
+        if (view != null && (!view.matches(settings, publicKey) || viewed !== view)) {
+            error = "The server or approvals changed; view the parcel again"; return
+        }
+        val selected = view?.item ?: inbox.firstOrNull { it.id == item.id }
+            ?: run { error = "Refresh Inbox before saving this transfer"; return }
+        pendingSave = FileSaveRequest(selected, settings, publicKey, view)
     }
 
     fun saveFile(uri: Uri?) {
@@ -328,39 +364,47 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         pendingSave = null
         if (uri == null) return
         work({
-            require(settings.host == request.host) { "The server changed; receive the file again" }
+            require(request.matches(settings, publicKey)) { "The server or approvals changed; save the parcel again" }
             val operation = currentCoroutineContext()
             val resolver = getApplication<Application>().contentResolver
-            var name = request.item.filename
-            reportProgress("Downloading and verifying $name…")
-            withClient { client ->
-                client.receive(request.item.id, Delivery { manifest, path ->
-                    val metadata = JSONObject(manifest)
-                    require(metadata.getString("type") == "file") { "Expected a file transfer" }
-                    name = metadata.getString("filename")
-                    reportProgress("Saving $name…")
-                    try {
-                        runBlocking(operation) {
-                            withDocumentAccess(documentTimeoutMillis) { access ->
-                                access.open(resolver, uri, "wt").use { destination ->
-                                    require(destination.declaredLength < 0 || destination.declaredLength >= File(path).length()) {
-                                        "The destination cannot hold the file"
-                                    }
-                                    File(path).inputStream().use { input ->
-                                        destination.createOutputStream().use { output ->
-                                            copyDocumentContent(input, Channels.newOutputStream(access.own(output.channel)), checkActive = access::checkActive)
-                                        }
-                                    }
+            var name = request.filename
+            fun write(input: java.io.InputStream, size: Long) {
+                reportProgress("Saving $name…")
+                try {
+                    runBlocking(operation) {
+                        withDocumentAccess(documentTimeoutMillis) { access ->
+                            access.open(resolver, uri, "wt").use { destination ->
+                                require(destination.declaredLength < 0 || destination.declaredLength >= size) {
+                                    "The destination cannot hold the file"
+                                }
+                                destination.createOutputStream().use { output ->
+                                    copyDocumentContent(input, Channels.newOutputStream(access.own(output.channel)), checkActive = access::checkActive)
                                 }
                             }
                         }
-                    } catch (failure: Exception) {
-                        throw java.io.IOException("Save failed; the destination may be incomplete: ${failure.message}", failure)
                     }
-                }, true)
+                } catch (failure: Exception) {
+                    throw java.io.IOException("Save failed; the destination may be incomplete: ${failure.message}", failure)
+                }
             }
-            SavedFile(request.item.id, name, request.host)
-        }) { savedFile = it; showPage(Page.File) }
+            if (request.view != null) {
+                request.view.content.openStream().use { write(it, request.view.content.size.toLong()) }
+            } else {
+                reportProgress("Downloading and verifying $name…")
+                withClient { client ->
+                    require(request.matches(settings, publicKey)) { "The server or approvals changed; save the parcel again" }
+                    client.receive(request.item.id, Delivery { manifest, path ->
+                        val metadata = JSONObject(manifest)
+                        name = if (metadata.getString("type") == "file") metadata.getString("filename") else "${request.item.id}.txt"
+                        File(path).inputStream().use { write(it, File(path).length()) }
+                    }, true)
+                }
+            }
+            SavedFile(request, name)
+        }) {
+            if (it.request.matches(settings, publicKey)) { savedFile = it; showPage(Page.File) }
+            else error = "The server or approvals changed; return to Inbox"
+        }
     }
 
     fun selectFile(uri: Uri?) {
@@ -495,11 +539,15 @@ class AppModel(application: Application) : AndroidViewModel(application) {
 
     fun removeReceived() {
         val id = viewed?.id ?: savedFile?.id ?: return
-        val host = viewed?.host ?: savedFile?.host ?: return
+        val request = savedFile?.request ?: viewed?.let { FileSaveRequest(it.item, it.settings, it.identity, it) } ?: return
         work({
-            require(settings.host == host) { "The server changed; return to Inbox and receive again" }
-            withClient { it.delete(id) }
+            require(request.matches(settings, publicKey)) { "The server or approvals changed; return to Inbox" }
+            withClient(request.host) {
+                require(request.matches(settings, publicKey)) { "The server or approvals changed; return to Inbox" }
+                it.delete(id)
+            }
         }) {
+            if (!request.matches(settings, publicKey)) return@work
             inbox = inbox.filterNot { it.id == id }
             viewed = null; savedFile = null
             showPage(Page.Inbox)
@@ -509,14 +557,23 @@ class AppModel(application: Application) : AndroidViewModel(application) {
 
     private fun showPage(target: Page) {
         pendingHost = null; pendingSave = null; pendingDelete = null
-        if (target != Page.Text) viewed = null
+        if (target != Page.Text && !(target == Page.File && savedFile?.request?.view === viewed)) viewed = null
         if (target != Page.File) savedFile = null
         navigation = navigation.open(target)
     }
 
     fun navigate(target: Page) { if (!busy) showPage(target) }
 
-    fun back() { if (!busy) showPage(navigation.back().page) }
+    val backLabel get() = when (page) {
+        Page.Text -> "Back to Inbox"
+        Page.File -> if (savedFile?.request?.parent == Page.Text) "Back to parcel" else "Back to Inbox"
+        else -> "Back"
+    }
+    fun back() {
+        if (busy) return
+        if (page == Page.File && savedFile?.request?.parent == Page.Text && viewed != null) showPage(Page.Text)
+        else showPage(navigation.back().page)
+    }
 
     fun discardDraft() { clearPendingSend(); feedback(null); draft = SendDraft(); selectedFile = null }
 
@@ -572,6 +629,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
+        viewed = null; savedFile = null; pendingSave = null
         clearPendingSend()
         foreground = false
         retireConnection()

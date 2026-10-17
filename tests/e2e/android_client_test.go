@@ -267,8 +267,31 @@ func TestAndroidTextClient(t *testing.T) {
 	largeID := send(large, "--stdin")
 	nulID := send([]byte("before\x00after"), "--stdin")
 	platformID := send([]byte(strings.Repeat("x", 1024*1024)), "--stdin")
-	phase("receivedClipboardCases", "large_id", largeID, "nul_id", nulID, "platform_id", platformID)
-	for _, id := range []string{largeID, nulID, platformID} {
+	previewFile := filepath.Join(w.alice.dir, "preview.txt")
+	if err := os.WriteFile(previewFile, []byte("text file 世界\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	textFileID := send(nil, "--file", previewFile)
+	binaryFile := filepath.Join(w.alice.dir, "opaque.bin")
+	binaryBytes := []byte{0, 1, 2, 3}
+	if err := os.WriteFile(binaryFile, binaryBytes, 0600); err != nil {
+		t.Fatal(err)
+	}
+	binaryID := send(nil, "--file", binaryFile)
+	invalidFile := filepath.Join(w.alice.dir, "invalid.bin")
+	if err := os.WriteFile(invalidFile, []byte{255, 254, 1}, 0600); err != nil {
+		t.Fatal(err)
+	}
+	invalidID := send(nil, "--file", invalidFile)
+	boundaryID := send(bytes.Repeat([]byte("x"), 16*1024*1024), "--stdin")
+	aboveID := send(bytes.Repeat([]byte("x"), 16*1024*1024+1), "--stdin")
+	phase("receivedClipboardCases", "large_id", largeID, "nul_id", nulID, "platform_id", platformID,
+		"textfile_id", textFileID, "binary_id", binaryID, "invalid_id", invalidID, "boundary_id", boundaryID, "above_id", aboveID)
+	equalBytes(t, large, adb("exec-out", "run-as", app, "cat", "files/document-fixtures/truncated-view.txt"))
+	equalBytes(t, []byte("before\x00after"), adb("exec-out", "run-as", app, "cat", "files/document-fixtures/nul-view.txt"))
+	equalBytes(t, binaryBytes, adb("exec-out", "run-as", app, "cat", "files/document-fixtures/opaque-"+binaryID+".bin"))
+	equalBytes(t, []byte{255, 254, 1}, adb("exec-out", "run-as", app, "cat", "files/document-fixtures/opaque-"+invalidID+".bin"))
+	for _, id := range []string{largeID, nulID, platformID, textFileID, fileID, binaryID, invalidID, boundaryID, aboveID} {
 		w.assertExists(remote(id), true)
 	}
 	fileReport := phase("fileTransfers", "file_id", fileID)
@@ -372,7 +395,7 @@ func TestAndroidTextClient(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"setup", "server-approval", "host-key-changed", "inbox", "inbox-details", "settings-simple", "peer-approval", "send-draft", "received", "sent", "removal-error", "removed", "timeout", "received-copy", "clipboard-unavailable", "send-file", "saved-file", "send-multiple-text", "send-multiple-file", "send-feedback-details"} {
+	for _, name := range []string{"setup", "server-approval", "host-key-changed", "inbox", "inbox-details", "settings-simple", "peer-approval", "send-draft", "received", "sent", "removal-error", "removed", "timeout", "received-copy", "clipboard-unavailable", "send-file", "saved-file", "send-multiple-text", "send-multiple-file", "send-feedback-details", "parcel-unsupported", "parcel-text-file"} {
 		out := adb("exec-out", "run-as", app, "cat", "files/"+name+".png")
 		if len(out) < 8 || string(out[:8]) != "\x89PNG\r\n\x1a\n" {
 			t.Fatalf("Invalid %s screenshot", name)

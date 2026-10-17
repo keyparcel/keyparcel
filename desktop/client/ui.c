@@ -391,17 +391,18 @@ UI *ui_new(uintptr_t handle, const char *icon) {
     gtk_box_append(GTK_BOX(send), file_actions);
     gtk_box_append(GTK_BOX(send), button(ui, "Discard draft", "discard-draft", ""));
 
-    GtkWidget *view = page(ui, "text", "Received text — remote copy retained");
+    GtkWidget *view = page(ui, "text", "Parcel — remote copy retained");
     gtk_box_append(GTK_BOX(view), text_view(ui, "received", FALSE));
     g_signal_connect(g_hash_table_lookup(ui->fields, "received"), "copy-clipboard", G_CALLBACK(selected_copy), ui);
     GtkWidget *notice = label(""); remember(ui, "view-notice", notice); gtk_box_append(GTK_BOX(view), notice);
-    gtk_box_append(GTK_BOX(view), button(ui, "Copy complete message", "copy-message", ""));
+    GtkWidget *copy_message=button(ui,"Copy complete message","copy-message","");remember(ui,"copy-message",copy_message);gtk_box_append(GTK_BOX(view),copy_message);
+    gtk_box_append(GTK_BOX(view),button(ui,"Save file","save-view",""));
     gtk_box_append(GTK_BOX(view), button(ui, "Remove & close", "remove", ""));
-    gtk_box_append(GTK_BOX(view), button(ui, "Back — keep transfer", "page", "inbox"));
+    gtk_box_append(GTK_BOX(view), button(ui, "Back to Inbox", "result-back", ""));
     GtkWidget *saved = page(ui, "saved", "File saved — remote copy retained");
     GtkWidget *dest = label(""); remember(ui, "saved-path", dest); gtk_box_append(GTK_BOX(saved), dest);
     gtk_box_append(GTK_BOX(saved), button(ui, "Remove & close", "remove", ""));
-    gtk_box_append(GTK_BOX(saved), button(ui, "Back — keep transfer", "page", "inbox"));
+    GtkWidget *saved_back=button(ui,"Back to Inbox","result-back","");remember(ui,"saved-back",saved_back);gtk_box_append(GTK_BOX(saved),saved_back);
 
     gtk_window_set_child(ui->window, outer);
     back_keys(ui, GTK_WIDGET(ui->window));
@@ -506,9 +507,9 @@ void ui_rows_end(UI *ui) {
         if (!g_hash_table_contains(ui->next_rows,key)) gtk_box_remove(GTK_BOX(ui->row_box),value);
     g_hash_table_unref(*ui->current_rows); *ui->current_rows = ui->next_rows; ui->next_rows = NULL;
 }
-void ui_item(UI *ui, const char *id, const char *title, const char *detail, int file) {
+void ui_item(UI *ui, const char *id, const char *title, const char *detail, int can_view) {
     char *key = id[0] ? g_strdup(id) : g_strdup_printf("notice:%s:%s",title,detail);
-    char *content = g_strdup_printf("%s\n%s\n%d",title,detail,file);
+    char *content = g_strdup_printf("%s\n%s\n%d",title,detail,can_view);
     if (existing_row(ui,key,content)) { g_free(key); g_free(content); return; }
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     gtk_widget_add_css_class(box, "card");
@@ -518,10 +519,21 @@ void ui_item(UI *ui, const char *id, const char *title, const char *detail, int 
     gtk_box_append(GTK_BOX(box), primary);
     GtkWidget *secondary = label(detail); gtk_widget_add_css_class(secondary, "dim-label"); gtk_box_append(GTK_BOX(box), secondary);
     if (id[0]) {
-        GtkWidget *b = button(ui, file ? "Save file" : "Receive", file ? "receive-file" : "receive-text", id);
-        char *name = g_strdup_printf("%s transfer %s", file ? "Save" : "Receive", id); accessible(b, name); g_free(name);
+        GtkWidget *b=button(ui,"View","receive-text",id);
+        char *name=g_strdup_printf("View transfer %s",id);accessible(b,name);g_free(name);
+        GtkWidget *view_box=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
+        gtk_box_append(GTK_BOX(view_box),b);gtk_widget_set_sensitive(b,can_view);
+        if (!can_view) {
+            const char *why="Too large to preview—save the file instead";
+            gtk_widget_set_tooltip_text(view_box,why);gtk_widget_set_focusable(view_box,TRUE);
+            GtkWidget *explanation=label(why);gtk_widget_add_css_class(explanation,"dim-label");gtk_box_append(GTK_BOX(box),explanation);
+            gtk_accessible_update_property(GTK_ACCESSIBLE(view_box),GTK_ACCESSIBLE_PROPERTY_LABEL,why,GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,why,-1);
+        }
         GtkWidget *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-        gtk_box_append(GTK_BOX(actions), b);
+        gtk_box_append(GTK_BOX(actions),view_box);
+        GtkWidget *save=button(ui,"Save file","receive-file",id);
+        name=g_strdup_printf("Save transfer %s",id);accessible(save,name);g_free(name);
+        gtk_box_append(GTK_BOX(actions),save);
         GtkWidget *details = button(ui, "Details", "details", id);
         name = g_strdup_printf("Details transfer %s", id); accessible(details, name); g_free(name);
         gtk_box_append(GTK_BOX(actions), details);
@@ -548,7 +560,9 @@ void ui_device(UI *ui, const char *fp, const char *detail, int supported, int tr
     gtk_box_append(GTK_BOX(box), actions);
     add_row(ui,fp,content,box); g_free(content);
 }
-void ui_view(UI *ui, const char *text, const char *notice) {
+void ui_view(UI *ui, const char *text, const char *notice, int eligible) {
+    gtk_widget_set_visible(gtk_widget_get_parent(g_hash_table_lookup(ui->fields,"received")),eligible);
+    gtk_widget_set_visible(g_hash_table_lookup(ui->fields,"copy-message"),eligible);
     GtkTextBuffer *b = gtk_text_view_get_buffer(GTK_TEXT_VIEW(g_hash_table_lookup(ui->fields, "received")));
     gtk_text_buffer_set_text(b, text, -1); ui_set(ui, "view-notice", notice); ui_page(ui, "text");
 }
@@ -667,4 +681,9 @@ void ui_feedback_delivery(UI *ui, const char *name, const char *outcome, const c
         text=g_strdup_printf("Copy sent transfer ID for %s",name);accessible(copy,text);g_free(text);
         gtk_box_append(GTK_BOX(box),copy);
     }
+}
+
+void ui_saved_origin(UI *ui,int parcel) {
+    GtkWidget *b=g_hash_table_lookup(ui->fields,"saved-back");
+    gtk_button_set_label(GTK_BUTTON(b),parcel ? "Back to parcel" : "Back to Inbox");
 }
