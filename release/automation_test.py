@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import urllib.parse
 from unittest.mock import patch
 
 import automation
@@ -12,10 +13,11 @@ SHA = 'a' * 40
 
 
 class API:
-    def __init__(self, release=None, assets=None):
+    def __init__(self, release=None, assets=None, upload_changes=None):
         self.release = release
         self.assets = assets or []
         self.calls = []
+        self.upload_changes = upload_changes or {}
 
     def request(self, method, path, **kwargs):
         self.calls.append((method, path, kwargs))
@@ -31,13 +33,26 @@ class API:
             self.release = dict(kwargs['body'], id=1, html_url='https://github.com/example/release',
                                 upload_url='https://uploads.github.com/repos/example/repo/releases/1/assets{?name}')
             return self.release
-        return dict(digest='sha256:' + hashlib.sha256(kwargs['data']).hexdigest())
+        name = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)['name'][0]
+        # GitHub normalizes the tilde in package filenames to a period.
+        return dict(dict(name=name.replace('~', '.'), size=len(kwargs['data']), state='uploaded',
+                         digest='sha256:' + hashlib.sha256(kwargs['data']).hexdigest()), **self.upload_changes)
 
 
 def draft(**changes):
     return dict(dict(draft=True, tag_name='v1.2.3-rc.1', target_commitish=SHA, prerelease=True, id=1,
                      upload_url='https://uploads.github.com/repos/example/repo/releases/1/assets{?name}',
                      html_url='https://github.com/example/release'), **changes)
+
+
+def release_assets(root, version='1.2.3-rc.1'):
+    names = [f'keyparcel_{version}-1_amd64.deb', f'keyparcel-{version}-1.x86_64.rpm',
+             f'keyparcel-{version}-ubuntu24.04-amd64.tar.gz', f'keyparcel-{version}-fedora44-x86_64.tar.gz',
+             f'keyparcel-{version}-arm64.apk', 'android-signing-certificate.txt',
+             'build-info-android-arm64.json', 'build-info-ubuntu24.04-amd64.json', 'build-info-fedora44-x86_64.json']
+    for name in names:
+        (root / name).write_bytes(name.encode())
+    (root / 'SHA256SUMS').write_text(''.join(f'{automation.digest(root / name)}  {name}\n' for name in sorted(names)))
 
 
 class Automation(unittest.TestCase):
@@ -89,10 +104,18 @@ class Automation(unittest.TestCase):
             self.assertEqual(len(list(output.iterdir())), 10)
             lines = (output / 'SHA256SUMS').read_text().splitlines()
             self.assertEqual(len(lines), 9)
+            for original, final, target in [
+                ('keyparcel_1.2.3~rc.1-1_amd64.deb', 'keyparcel_1.2.3-rc.1-1_amd64.deb', 'ubuntu24.04-amd64'),
+                ('keyparcel-1.2.3~rc.1-1.x86_64.rpm', 'keyparcel-1.2.3-rc.1-1.x86_64.rpm', 'fedora44-x86_64'),
+            ]:
+                self.assertEqual((output / final).read_bytes(), (root / target / original).read_bytes())
+                self.assertFalse((output / original).exists(), 'Unsafe package filename staged for GitHub')
+            self.assertTrue(all('~' not in path.name for path in output.iterdir()))
             for line in lines:
                 digest, name = line.split('  ')
                 self.assertEqual(digest, automation.digest(output / name))
                 self.assertNotIn(name, ('diagnostic.log', 'unsigned.apk'))
+            automation.publish(API(), 'v1.2.3-rc.1', SHA, output)
             with self.assertRaises(ValueError):
                 automation.assemble(root, root / 'wrong-sha', '1.2.3-rc.1', 'b'*40, 42)
             with self.assertRaises(ValueError):
@@ -101,32 +124,72 @@ class Automation(unittest.TestCase):
     def test_draft_only_prerelease_and_safe_reruns(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            asset = root / 'SHA256SUMS'
-            asset.write_bytes(b'checksums')
+            release_assets(root)
             api = API()
             automation.publish(api, 'v1.2.3-rc.1', SHA, root)
             self.assertTrue(api.release['draft'])
             self.assertTrue(api.release['prerelease'])
             self.assertEqual(api.release['make_latest'], 'false')
             stable = API()
-            automation.publish(stable, 'v1.2.3', SHA, root)
+            with tempfile.TemporaryDirectory() as temporary_stable:
+                stable_assets = Path(temporary_stable)
+                release_assets(stable_assets, '1.2.3')
+                automation.publish(stable, 'v1.2.3', SHA, stable_assets)
             self.assertFalse(stable.release['prerelease'])
             self.assertEqual(stable.release['make_latest'], 'false')
-            uploaded = dict(name=asset.name, size=asset.stat().st_size, state='uploaded',
-                            digest='sha256:' + automation.digest(asset))
-            same = API(draft(), [uploaded])
+            uploaded = [dict(name=asset.name, size=asset.stat().st_size, state='uploaded',
+                             digest='sha256:' + automation.digest(asset)) for asset in root.iterdir()]
+            same = API(draft(), uploaded)
             automation.publish(same, 'v1.2.3-rc.1', SHA, root)
             self.assertTrue(all(method == 'GET' for method, _, _ in same.calls), 'Rerun replaced an identical asset')
             for release, existing in [
                 (draft(draft=False), []), (draft(target_commitish='b'*40), []), (draft(prerelease=False), []),
-                (draft(), [dict(uploaded, digest='sha256:wrong')]),
-                (draft(), [dict(uploaded, state='starter')]),
-                (draft(), [dict(uploaded, name='unrecognized.log')]),
+                (draft(), [dict(uploaded[0], digest='sha256:wrong')]),
+                (draft(), [dict(uploaded[0], state='starter')]),
+                (draft(), [dict(uploaded[0], name='unrecognized.log')]),
             ]:
                 api = API(release, existing)
                 with self.assertRaises(ValueError):
                     automation.publish(api, 'v1.2.3-rc.1', SHA, root)
                 self.assertTrue(all(method == 'GET' for method, _, _ in api.calls), 'Unsafe rerun mutated release')
+
+    def test_upload_metadata_must_match_staged_assets(self):
+        for change in [dict(name='renamed-by-server.txt'), dict(size=0),
+                       dict(digest='sha256:wrong'), dict(state='starter')]:
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                release_assets(root)
+                with self.assertRaises(ValueError):
+                    automation.publish(API(upload_changes=change), 'v1.2.3-rc.1', SHA, root)
+
+    def test_invalid_checksum_set_rejected_before_any_api_calls(self):
+        for defect in ('missing', 'extra', 'duplicate', 'wrong-digest', 'missing-asset', 'extra-asset', 'unsafe-name'):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                release_assets(root)
+                manifest = root / 'SHA256SUMS'
+                lines = manifest.read_text().splitlines(keepends=True)
+                if defect == 'missing':
+                    lines.pop()
+                elif defect == 'extra':
+                    lines.append('0'*64 + '  unexpected.log\n')
+                elif defect == 'duplicate':
+                    lines.append(lines[0])
+                elif defect == 'wrong-digest':
+                    lines[0] = '0'*64 + lines[0][64:]
+                elif defect == 'missing-asset':
+                    (root / 'android-signing-certificate.txt').unlink()
+                elif defect == 'extra-asset':
+                    (root / 'diagnostic.log').write_text('must not upload')
+                elif defect == 'unsafe-name':
+                    original = root / 'keyparcel_1.2.3-rc.1-1_amd64.deb'
+                    original.rename(root / original.name.replace('-rc', '~rc'))
+                    lines = [line.replace('1.2.3-rc.1-1_amd64.deb', '1.2.3~rc.1-1_amd64.deb') for line in lines]
+                manifest.write_text(''.join(lines))
+                api = API()
+                with self.assertRaises(ValueError):
+                    automation.publish(api, 'v1.2.3-rc.1', SHA, root)
+                self.assertEqual(api.calls, [], 'Invalid checksum/assets set reached GitHub')
 
 
 if __name__ == '__main__':

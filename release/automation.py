@@ -41,18 +41,37 @@ def digest(path):
         return hashlib.file_digest(file, 'sha256').hexdigest()
 
 
-def assemble(source, output, version, revision, code):
-    """Only known final assets, never work directories, logs or unsigned APKs."""
+def target_files(version):
     pkg = package_version(version)
-    if output.exists():
-        raise ValueError('Asset destination must not already exist')
-    output.mkdir(parents=True)
-    targets = {
+    return {
         'ubuntu24.04-amd64': [f'keyparcel_{pkg}-1_amd64.deb', f'keyparcel-{version}-ubuntu24.04-amd64.tar.gz'],
         'fedora44-x86_64': [f'keyparcel-{pkg}-1.x86_64.rpm', f'keyparcel-{version}-fedora44-x86_64.tar.gz'],
         'android-arm64': [f'keyparcel-{version}-arm64.apk', 'android-signing-certificate.txt'],
     }
-    for target, names in targets.items():
+
+
+def validate_assets(assets, version):
+    targets = target_files(version)
+    expected = {f'build-info-{target}.json' for target in targets}
+    expected.update(name.replace('~', '-') for names in targets.values() for name in names)
+    if {path.name for path in assets.iterdir()} != expected | {'SHA256SUMS'}:
+        raise ValueError('Release assets do not match the intended final filenames')
+    checked = set()
+    for line in (assets / 'SHA256SUMS').read_text().splitlines():
+        checksum, name = line.split('  ', 1)
+        if name not in expected or name in checked or checksum != digest(assets / name):
+            raise ValueError('Invalid or duplicate release checksum: ' + name)
+        checked.add(name)
+    if checked != expected:
+        raise ValueError('Checksums must cover every intended release asset exactly once')
+
+
+def assemble(source, output, version, revision, code):
+    """Only known final assets, never work directories, logs or unsigned APKs."""
+    if output.exists():
+        raise ValueError('Asset destination must not already exist')
+    output.mkdir(parents=True)
+    for target, names in target_files(version).items():
         directory = source / target
         info = json.loads((directory / 'build-info.json').read_text())
         if any(info.get(key) != value for key, value in dict(version=version, revision=revision, target=target).items()):
@@ -61,9 +80,11 @@ def assemble(source, output, version, revision, code):
             raise ValueError('Wrong Android versionCode/application ID')
         shutil.copyfile(directory / 'build-info.json', output / f'build-info-{target}.json')
         for name in names:
-            shutil.copyfile(directory / name, output / name)
+            # GitHub normalizes '~' to '.'; use the product's hyphen externally.
+            shutil.copyfile(directory / name, output / name.replace('~', '-'))
     lines = [f'{digest(path)}  {path.name}\n' for path in sorted(output.iterdir())]
     (output / 'SHA256SUMS').write_text(''.join(lines))
+    validate_assets(output, version)
 
 
 class GitHub:
@@ -107,6 +128,7 @@ def require_tag(api, tag, revision):
 
 def publish(api, tag, revision, assets):
     version = tag_version(tag)
+    validate_assets(assets, version)
     prerelease = '-' in version
     require_tag(api, tag, revision)
     # List includes drafts; the by-tag endpoint does not reliably find unpublished drafts.
@@ -158,8 +180,9 @@ Source: `{revision}`. Draft only: inspect artifacts and test a physical ARM devi
             raise ValueError('Unexpected upload host')
         result = api.request('POST', url + '?' + urllib.parse.urlencode({'name': path.name}),
                              data=path.read_bytes(), content_type='application/octet-stream')
-        if result.get('digest') != 'sha256:' + digest(path):
-            raise ValueError('Uploaded asset checksum mismatch')
+        if (result.get('name') != path.name or result.get('size') != path.stat().st_size or
+                result.get('state') != 'uploaded' or result.get('digest') != 'sha256:' + digest(path)):
+            raise ValueError('Uploaded asset name, size, state or checksum mismatch: ' + path.name)
     require_draft(api.request('GET', f'/releases/{release_id}'), tag, revision, prerelease)
     require_tag(api, tag, revision)
     print('Unpublished draft ready:', release['html_url'])
