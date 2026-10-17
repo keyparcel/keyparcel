@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: ignore
 
   android:
-    name: Android ${{ matrix.suite }}
+    name: Android ${{ matrix.name }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -125,7 +125,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [verification, client]
+        include:
+          - {suite: verification, name: verification}
+          - {suite: client, shard: network, name: client network}
+          - {suite: client, shard: files, name: client files}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -189,12 +192,13 @@ jobs:
       - run: bash tests/ci/run.sh android "$SUITE"
         env:
           SUITE: ${{ matrix.suite }}
+          KEYPARCEL_ANDROID_CLIENT_SHARD: ${{ matrix.shard }}
           KEYPARCEL_ANDROID_ACCEL: 'on'
           KEYPARCEL_DOCKER_CACHE: ${{ runner.temp }}/keyparcel-docker-cache
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: failure() || cancelled()
         with:
-          name: android-${{ matrix.suite }}-failure
+          name: android-${{ matrix.name }}-failure
           path: |
             test-artifacts/
             !test-artifacts/**/*.test
@@ -212,7 +216,18 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: success() && matrix.suite == 'client'
         with:
-          name: android-client-screenshots
+          name: android-client-${{ matrix.shard }}-screenshots
           path: android/client/build/*.png
           retention-days: 7
           if-no-files-found: error
+
+  android-client:
+    name: Android client
+    if: always()
+    needs: android
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require both client shards and verification
+        env:
+          RESULT: ${{ needs.android.result }}
+        run: test "$RESULT" = success
