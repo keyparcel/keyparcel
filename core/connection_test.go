@@ -117,3 +117,51 @@ func TestConnectionSerializesLiveActions(t *testing.T) {
 		}
 	}
 }
+
+func TestConnectionStateTracksTransportNotRequestResults(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	var transport context.Context
+	c := NewConnection(context.Background(), func(ctx context.Context) (*Session, error) {
+		transport = ctx
+		close(entered)
+		<-release
+		return &Session{ctx: ctx, closeTransport: func() error { return nil }}, nil
+	})
+	if c.State() != "Not connected" {
+		t.Fatal(c.State())
+	}
+	done := make(chan error, 1)
+	go func() { done <- c.Do(context.Background(), func(*Session) error { return nil }) }()
+	<-entered
+	if c.State() != "Connecting" {
+		t.Fatal("dial is in progress:", c.State())
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if c.State() != "Connected" {
+		t.Fatal("authenticated session:", c.State())
+	}
+	// No polling request is needed to observe a retired transport.
+	c.retire()
+	<-transport.Done()
+	if c.State() != "Disconnected" {
+		t.Fatal("lost transport:", c.State())
+	}
+	c.Close()
+	if c.State() != "Suspended" {
+		t.Fatal("intentional close:", c.State())
+	}
+}
+
+func TestConnectionStateReportsFailedAuthentication(t *testing.T) {
+	c := NewConnection(context.Background(), func(context.Context) (*Session, error) { return nil, errors.New("authentication failed") })
+	defer c.Close()
+	if err := c.Do(context.Background(), func(*Session) error { t.Fatal("failed dial ran action"); return nil }); err == nil {
+		t.Fatal("missing error")
+	}
+	if c.State() != "Disconnected" {
+		t.Fatal("failed dial:", c.State())
+	}
+}

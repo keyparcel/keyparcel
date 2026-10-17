@@ -114,6 +114,19 @@ func TestAndroidTextClient(t *testing.T) {
 			monitorErr = <-monitored
 		}
 		if !strings.Contains(out, "OK (1 test)") {
+			for _, name := range []string{"failure.png", "failure.log", "inbox.png"} {
+				captureCtx, captureCancel := context.WithTimeout(w.ctx, 10*time.Second)
+				data, _, captureErr := command(captureCtx, nil, filepath.Join(sdk, "platform-tools", "adb"), "-s", serial,
+					"exec-out", "run-as", app, "cat", "files/"+name)
+				captureCancel()
+				if captureErr == nil {
+					if err := os.WriteFile(filepath.Join(evidence, name), data, 0600); err != nil {
+						t.Logf("Save failure evidence %s: %v", name, err)
+					}
+				} else {
+					t.Logf("Collect failure evidence %s: %v", name, captureErr)
+				}
+			}
 			t.Fatalf("Android UI %s failed:\n%s", name, out)
 		}
 		if monitorErr != nil {
@@ -395,7 +408,7 @@ func TestAndroidTextClient(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"setup", "server-approval", "host-key-changed", "inbox", "inbox-details", "settings-simple", "peer-approval", "send-draft", "received", "sent", "removal-error", "removed", "timeout", "received-copy", "clipboard-unavailable", "send-file", "saved-file", "send-multiple-text", "send-multiple-file", "send-feedback-details", "parcel-unsupported", "parcel-text-file"} {
+	for _, name := range []string{"setup", "server-approval", "host-key-changed", "inbox", "inbox-details", "settings-simple", "peer-approval", "send-draft", "received", "sent", "removal-error", "removed", "timeout", "received-copy", "clipboard-unavailable", "send-file", "saved-file", "send-multiple-text", "send-multiple-file", "send-feedback-details", "parcel-unsupported", "parcel-text-file", "status-confirmation", "status-connected", "status-error"} {
 		out := adb("exec-out", "run-as", app, "cat", "files/"+name+".png")
 		if len(out) < 8 || string(out[:8]) != "\x89PNG\r\n\x1a\n" {
 			t.Fatalf("Invalid %s screenshot", name)

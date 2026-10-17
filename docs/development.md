@@ -126,3 +126,22 @@ file before returning; failure retains the remote transfer. See the
 [package format](../PROTOCOL.md) and [security model](../SECURITY.md).
 
 Candidate builds and clean-install package tests: [release guide](../release/README.md).
+
+## GUI feedback channels
+
+GTK and Android share four small channels. Prefer no message when the resulting
+screen already makes an outcome clear.
+
+- The fixed top-bar connection symbol observes the existing SSH/SFTP owner:
+  green connected/authenticated, yellow connecting, red failed/lost awaiting a
+  retry, neutral unconfigured or intentionally suspended. Its accessible state
+  and symbol accompany color. It is not inbox freshness or a reachability probe.
+- Adjacent progress is present only during active work, with a short label and
+  Cancel where supported. Idle has no status text.
+- Action errors stay in the current screen until dismissed, retried or its
+  context changes. Background polling never replaces them. Send feedback,
+  preview limitations and save results remain in their dedicated controls.
+- A single bottom confirmation lasts about three seconds without moving layout
+  or focus. A new confirmation replaces the old one; do not stack them. Use it
+  for subtle outcomes such as copying or deleting, not refresh completion or a
+  filename already visible in the form.

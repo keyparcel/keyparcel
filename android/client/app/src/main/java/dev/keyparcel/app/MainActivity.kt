@@ -9,6 +9,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -19,6 +20,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
@@ -26,6 +28,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -68,64 +72,95 @@ private fun ClientScreen(model: AppModel) {
             }
         }
     }) { insets ->
-        Column(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets).imePadding()
-            .padding(horizontal = 20.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically) {
-                Icon(painterResource(R.drawable.ic_keyparcel), contentDescription = null,
-                    tint = Color.Unspecified, modifier = Modifier.size(32.dp))
-                Text("keyparcel", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f))
-                if (model.page != Page.Inbox) {
-                    val parent = model.navigation.back().page.name
-                    TextButton(onClick = model::back, enabled = !model.busy,
-                        modifier = Modifier.testTag("back").semantics { contentDescription = if (model.page == Page.Text || model.page == Page.File) model.backLabel else "Back to $parent" }) { Text(model.backLabel) }
-                }
-                if (model.page != Page.Settings && model.page != Page.Text && model.page != Page.File) {
-                    TextButton(onClick = { model.navigate(Page.Settings) }, enabled = !model.busy && model.ready,
-                        modifier = Modifier.testTag("settings")) { Text("Settings") }
-                }
-            }
-            if (model.ready) {
-                TextButton(onClick = { connectionDetails = true }, modifier = Modifier.testTag("connection-status")) {
-                    Text(model.syncStatus, style = MaterialTheme.typography.labelSmall)
-                }
-            }
-            if (model.busy) {
-                LinearProgressIndicator(Modifier.fillMaxWidth().testTag("working"))
-                Text(model.progress ?: "Working…", modifier = Modifier.testTag("operation-progress"))
-            }
-            model.error?.let {
-                Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("error"))
-            }
-            model.notice?.let { Text(it, modifier = Modifier.testTag("notice")) }
-            if (!model.ready) {
-                if (!model.busy) Button(onClick = { model.load() }) { Text("Retry initialization") }
-            } else when (model.page) {
-                Page.Inbox -> InboxScreen(model) { item ->
-                    model.beginFileSave(item)
-                    model.pendingSave?.let { saveFile.launch(it.filename) }
-                }
-                Page.Settings -> SettingsScreen(model)
-                Page.Devices -> DevicesScreen(model)
-                Page.Send -> SendScreen(model) { pickFile.launch(arrayOf("*/*")) }
-                Page.Text -> TextScreen(model) {
-                    model.viewed?.let { view ->
-                        model.beginFileSave(view.item,view)
-                        model.pendingSave?.let { saveFile.launch(it.filename) }
+        Box(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets).imePadding()) {
+            Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Icon(painterResource(R.drawable.ic_keyparcel), contentDescription = null,
+                        tint = Color.Unspecified, modifier = Modifier.size(32.dp))
+                    Text("keyparcel", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f))
+                    if (model.page != Page.Inbox) {
+                        val parent = model.navigation.back().page.name
+                        TextButton(onClick = model::back, enabled = !model.busy,
+                            modifier = Modifier.testTag("back").semantics { contentDescription = if (model.page == Page.Text || model.page == Page.File) model.backLabel else "Back to $parent" }) { Text(model.backLabel) }
+                    }
+                    if (model.page != Page.Settings && model.page != Page.Text && model.page != Page.File) {
+                        TextButton(onClick = { model.navigate(Page.Settings) }, enabled = !model.busy && model.ready,
+                            modifier = Modifier.testTag("settings")) { Text("Settings") }
                     }
                 }
-                Page.File -> FileScreen(model)
+                Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val state = model.connectionState
+                    val color = when(state) {
+                        "Connected" -> Color(0xff287d38)
+                        "Connecting" -> Color(0xff947000)
+                        "Disconnected" -> MaterialTheme.colorScheme.error
+                        else -> MaterialTheme.colorScheme.outline
+                    }
+                    TextButton(onClick = { connectionDetails = true }, contentPadding = PaddingValues(0.dp),
+                        modifier = Modifier.size(48.dp).testTag("connection-status").semantics {
+                            contentDescription = "Connection: $state"; stateDescription = state
+                        }) {
+                        Text(when(state) { "Connected" -> "●"; "Connecting" -> "↻"; "Disconnected" -> "⊗"; else -> "○" },color = color)
+                    }
+                    if (model.busy || model.refreshing) {
+                        CircularProgressIndicator(Modifier.size(16.dp).testTag("working"), strokeWidth = 2.dp)
+                        Text(model.progress ?: "Refreshing…", style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.testTag("operation-progress"))
+                        if (model.refreshing && !model.busy) TextButton(onClick = model::cancelRefresh) { Text("Cancel") }
+                    }
+                }
+                Column(Modifier.weight(1f).fillMaxWidth(),verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    model.error?.let {
+                        Surface(color = MaterialTheme.colorScheme.errorContainer) {
+                            Column(Modifier.padding(12.dp)) {
+                                Text(it, color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.testTag("error"))
+                                TextButton(onClick = model::dismissError) { Text("Dismiss error") }
+                            }
+                        }
+                    }
+                    if (!model.ready) {
+                        if (!model.busy) Button(onClick = { model.load() }) { Text("Retry initialization") }
+                    } else when (model.page) {
+                        Page.Inbox -> InboxScreen(model) { item ->
+                            model.beginFileSave(item)
+                            model.pendingSave?.let { saveFile.launch(it.filename) }
+                        }
+                        Page.Settings -> SettingsScreen(model)
+                        Page.Devices -> DevicesScreen(model)
+                        Page.Send -> SendScreen(model) { pickFile.launch(arrayOf("*/*")) }
+                        Page.Text -> TextScreen(model) {
+                            model.viewed?.let { view ->
+                                model.beginFileSave(view.item,view)
+                                model.pendingSave?.let { saveFile.launch(it.filename) }
+                            }
+                        }
+                        Page.File -> FileScreen(model)
+                    }
+                }
+            }
+            model.notice?.let { message ->
+                Box(modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp)
+                    .shadow(4.dp, MaterialTheme.shapes.small)
+                    .background(MaterialTheme.colorScheme.inverseSurface, MaterialTheme.shapes.small)
+                    .semantics { liveRegion = LiveRegionMode.Polite }) {
+                    Text(message, color = MaterialTheme.colorScheme.inverseOnSurface,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp).testTag("notice"))
+                }
             }
         }
     }
     if (connectionDetails) {
         AlertDialog(onDismissRequest = { connectionDetails = false }, title = { Text("Connection") },
-            text = { Text(model.syncError ?: when(model.syncStatus) {
-                "Current" -> "Inbox and Devices refresh automatically."
-                "Not connected" -> "Connect and approve a server in Settings."
-                else -> "Keeping the last successful data while connecting or refreshing."
+            text = { Text(when(model.connectionState) {
+                "Connected" -> "Connected and authenticated. No connection loss has been observed."
+                "Connecting" -> "Connecting and authenticating to the SSH server."
+                "Disconnected" -> "Connection lost or failed. Reconnection will be attempted automatically."
+                "Suspended" -> "Connection suspended while the app is in the background."
+                else -> "Connect and approve a server in Settings."
             }) },
             confirmButton = { TextButton(onClick = { connectionDetails = false }) { Text("Close") } },
             dismissButton = { TextButton(onClick = { connectionDetails = false; model.refreshInbox() }) { Text("Refresh now") } })
@@ -192,7 +227,7 @@ private fun InboxScreen(model: AppModel, save: (InboxItem) -> Unit) {
                             Text(item.id, style = MaterialTheme.typography.bodySmall,
                                 modifier = Modifier.weight(1f).testTag("transfer-id-${item.id}"))
                             CopyButton("Copy transfer ID", "copy-transfer-${item.id}") {
-                                copyText(context, clipboardText(item.id), "Transfer ID", false, model::clipboardError)
+                                copyText(context, clipboardText(item.id), "Transfer ID", false, model::clipboardError, { model.confirm("Copied") })
                             }
                         }
                     }
@@ -221,14 +256,14 @@ private fun SettingsScreen(model: AppModel) {
         Row {
             Text(model.fingerprint, modifier = Modifier.weight(1f).testTag("identity-fingerprint"))
             CopyButton("Copy this device's fingerprint", "copy-identity-fingerprint") {
-                copyText(context, clipboardText(model.fingerprint), "Device fingerprint", false, model::clipboardError)
+                copyText(context, clipboardText(model.fingerprint), "Device fingerprint", false, model::clipboardError, { model.confirm("Copied") })
             }
         }
         OutlinedTextField(value = model.publicKey, onValueChange = {}, readOnly = true,
             label = { Text("Public key for server enrollment") }, modifier = Modifier.fillMaxWidth().testTag("identity-public"),
             trailingIcon = {
                 CopyButton("Copy this device's public enrollment key", "copy-identity-public") {
-                    copyText(context, clipboardText(model.publicKey), "Public enrollment key", false, model::clipboardError)
+                    copyText(context, clipboardText(model.publicKey), "Public enrollment key", false, model::clipboardError, { model.confirm("Copied") })
                 }
             })
         Text("Add this public key to your server's authorized keys. Losing this app's identity requires re-enrollment and prevents reading transfers addressed to it.")
@@ -242,7 +277,7 @@ private fun SettingsScreen(model: AppModel) {
             Row {
                 Text("Server fingerprint: $fingerprint", modifier = Modifier.weight(1f).testTag("server-fingerprint"))
                 CopyButton("Copy the server fingerprint", "copy-server-fingerprint") {
-                    copyText(context, clipboardText(fingerprint), "Server fingerprint", false, model::clipboardError)
+                    copyText(context, clipboardText(fingerprint), "Server fingerprint", false, model::clipboardError, { model.confirm("Copied") })
                 }
             }
             TextButton(onClick = { forgetApproval = true }, enabled = !model.busy,
@@ -281,7 +316,7 @@ private fun SettingsScreen(model: AppModel) {
                     Row {
                         Text(fingerprint, modifier = Modifier.weight(1f).testTag("candidate-fingerprint"))
                         CopyButton("Copy the server fingerprint", "copy-host-candidate-fingerprint") {
-                            copyText(context, clipboardText(fingerprint), "Server fingerprint", false, model::clipboardError)
+                            copyText(context, clipboardText(fingerprint), "Server fingerprint", false, model::clipboardError, { model.confirm("Copied") })
                         }
                     }
                     Text("Compare this fingerprint with the server through a trusted source before approving.")
@@ -327,7 +362,7 @@ private fun DevicesScreen(model: AppModel) {
                         Row {
                             Text(fp, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
                             CopyButton("Copy $peerName's fingerprint", "copy-approved-$peerName") {
-                                copyText(context, clipboardText(fp), "Device fingerprint", false, model::clipboardError)
+                                copyText(context, clipboardText(fp), "Device fingerprint", false, model::clipboardError, { model.confirm("Copied") })
                             }
                         }
                         TextButton(onClick = { model.forget(peerName) }, enabled = !model.busy) { Text("Remove approval") }
@@ -342,7 +377,7 @@ private fun DevicesScreen(model: AppModel) {
                             Text(device.fingerprint, modifier = Modifier.weight(1f).testTag("device-${device.fingerprint}"))
                             CopyButton("Copy ${if (device.self) "this device's" else "the discovered device's"} fingerprint",
                                 "copy-device-${device.fingerprint}") {
-                                copyText(context, clipboardText(device.fingerprint), "Device fingerprint", false, model::clipboardError)
+                                copyText(context, clipboardText(device.fingerprint), "Device fingerprint", false, model::clipboardError, { model.confirm("Copied") })
                             }
                         }
                         if (!device.supported) Text("Unsupported transfer key")
@@ -362,7 +397,7 @@ private fun DevicesScreen(model: AppModel) {
                     Row {
                         Text(device.fingerprint, modifier = Modifier.weight(1f))
                         CopyButton("Copy the selected device's fingerprint", "copy-candidate-fingerprint") {
-                            copyText(context, clipboardText(device.fingerprint), "Device fingerprint", false, model::clipboardError)
+                            copyText(context, clipboardText(device.fingerprint), "Device fingerprint", false, model::clipboardError, { model.confirm("Copied") })
                         }
                     }
                     Text("Compare this fingerprint through a trusted channel before approving.")
@@ -452,7 +487,7 @@ private fun SendFeedbackArea(model: AppModel) {
             if (delivery.id.isNotEmpty()) {
                 Text(delivery.id, modifier = Modifier.testTag("sent-id-${delivery.recipient}"))
                 TextButton(onClick = {
-                    copyText(context, clipboardText(delivery.id), "Transfer ID", false, model::clipboardError)
+                    copyText(context, clipboardText(delivery.id), "Transfer ID", false, model::clipboardError, { model.confirm("Copied") })
                 }, modifier = Modifier.testTag("copy-sent-id-${delivery.recipient}").semantics {
                     contentDescription = "Copy sent transfer ID for ${recipientLabel(delivery.recipient)}"
                 }) { Text("Copy ID") }
@@ -473,7 +508,7 @@ private fun TextScreen(model: AppModel, save: () -> Unit) {
     val context = LocalContext.current
     val clipboard = LocalClipboard.current
     val selectionClipboard = remember(clipboard, context, model) {
-        ReceivedTextClipboard(clipboard) { copyText(context, it, "Received text", true, model::clipboardError) }
+        ReceivedTextClipboard(clipboard) { copyText(context, it, "Received text", true, model::clipboardError, { model.confirm("Copied") }) }
     }
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Parcel", style = MaterialTheme.typography.titleLarge)
@@ -489,7 +524,7 @@ private fun TextScreen(model: AppModel, save: () -> Unit) {
                     modifier = Modifier.fillMaxWidth().weight(1f).testTag("received-text"),
                     trailingIcon = {
                         CopyButton("Copy the complete received text", "copy-received-text", enabled = !model.busy) {
-                            copyText(context, viewed.content.clipboard(), "Received text", true, model::clipboardError)
+                            copyText(context, viewed.content.clipboard(), "Received text", true, model::clipboardError, { model.confirm("Copied") })
                         }
                     })
             }

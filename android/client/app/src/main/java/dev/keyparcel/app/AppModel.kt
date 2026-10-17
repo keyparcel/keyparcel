@@ -56,7 +56,27 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     var ready by mutableStateOf(false); private set
     var busy by mutableStateOf(false); private set
     var error by mutableStateOf<String?>(null); private set
-    var notice by mutableStateOf<String?>(null); private set
+    var confirmation by mutableStateOf<Confirmation?>(null); private set
+    val notice get() = confirmation?.message
+    private var confirmationJob: Job? = null
+    fun confirm(message: String) {
+        confirmationJob?.cancel()
+        val value = Confirmation(message, SystemClock.elapsedRealtime() + 3_000)
+        confirmation = value
+        confirmationJob = viewModelScope.launch {
+            delay(3_000)
+            if (confirmation === value) confirmation = value.expire(SystemClock.elapsedRealtime())
+        }
+    }
+    fun dismissError() { error = null }
+    var connectionState by mutableStateOf("Not connected"); private set
+    private fun observeConnection() {
+        connectionState = when {
+            !foreground -> "Suspended"
+            settings.host?.trusted != true -> "Not configured"
+            else -> connected?.client?.connectionState() ?: "Not connected"
+        }
+    }
     var navigation by mutableStateOf(NavigationState()); private set
     val page get() = navigation.page
     var draft by mutableStateOf(SendDraft())
@@ -100,10 +120,9 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     private val sessionLock = Mutex()
     private var pollJob: Job? = null
     private var retry = RefreshRetry()
-    private var pendingRefresh = false
+    private var pendingRefresh by mutableStateOf(false)
+    val refreshing get() = pendingRefresh
     internal var refreshRevision by mutableStateOf(0L); private set
-    var syncStatus by mutableStateOf("Not connected"); private set
-    var syncError by mutableStateOf<String?>(null); private set
     internal var requestTimeoutMillis = 120_000L
     internal var documentTimeoutMillis = 120_000L
 
@@ -112,6 +131,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             while (isActive) {
                 delay(500)
+                observeConnection()
                 startRefresh()
             }
         }
@@ -121,9 +141,10 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         foreground = value
         if (!value) {
             pollJob?.cancel()
+            pendingRefresh = false
             retireConnection()
-            if (settings.host?.trusted == true) syncStatus = "Stale"
         } else { retry = RefreshRetry(); startRefresh() }
+        observeConnection()
     }
 
     private fun retireConnection() {
@@ -133,10 +154,20 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun requestRefresh() {
+        if (settings.host?.trusted != true) { error = "Connect and approve a server in Settings first"; return }
         pendingRefresh = true
         error = null
         retry = retry.copy(nextAttemptMillis = 0)
         startRefresh()
+    }
+
+    fun cancelRefresh() {
+        if (!pendingRefresh) return
+        pendingRefresh = false
+        pollJob?.cancel()
+        retireConnection()
+        error = "Refresh cancelled; last successful data retained"
+        observeConnection()
     }
 
     private fun startRefresh() {
@@ -144,7 +175,6 @@ class AppModel(application: Application) : AndroidViewModel(application) {
             SystemClock.elapsedRealtime() < retry.nextAttemptMillis) return
         val snapshot = settings
         val epoch = sessionEpoch
-        if (!inboxLoaded || !devicesLoaded) syncStatus = "Loading"
         pollJob = viewModelScope.launch {
             var items: String? = null
             var discovery: String? = null
@@ -156,23 +186,23 @@ class AppModel(application: Application) : AndroidViewModel(application) {
                 publishInbox(requireNotNull(items))
                 publishDevices(requireNotNull(discovery))
                 retry = RefreshRetry()
-                syncStatus = "Current"; syncError = null
+                observeConnection()
                 refreshRevision++
                 pendingRefresh = false
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
                 if (settings != snapshot || epoch != sessionEpoch || !foreground) return@launch
                 items?.let(::publishInbox)
-                syncStatus = "Stale"; syncError = failure.message ?: failure.toString()
+                observeConnection()
                 retry = retry.failed(SystemClock.elapsedRealtime())
-                if (pendingRefresh) error = syncError
+                if (pendingRefresh && error == null) error = failure.message ?: failure.toString()
                 refreshRevision++
                 pendingRefresh = false
             }
         }
     }
 
-    fun load() = work({
+    fun load() = work("Loading…", {
         val context = getApplication<Application>()
         go.Seq.setContext(context)
         Bridge.initialize(context.cacheDir.absolutePath)
@@ -204,15 +234,16 @@ class AppModel(application: Application) : AndroidViewModel(application) {
             // Old verification results must never survive a trust-context change.
             pendingDelete = null
             pollJob?.cancel()
+            pendingRefresh = false
             retireConnection()
             inbox = emptyList(); rejected = emptyList(); devices = emptyList()
             inboxLoaded = false; devicesLoaded = false
             viewed = null; savedFile = null; pendingSave = null
             if (page == Page.Text || page == Page.File) navigation = navigation.open(Page.Inbox)
-            syncStatus = if (updated.host?.trusted == true) "Loading" else "Not connected"
-            syncError = null; retry = RefreshRetry()
+            retry = RefreshRetry()
         }
         settings = updated
+        observeConnection()
     }
 
     private fun setHost(host: Host) {
@@ -226,7 +257,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         val host = draft.copy(key = approved)
         pendingHost = null
         if (host.trusted) connectApprovedHost(host)
-        else work({
+        else work("Connecting…", {
             host.validateConnection()
             host.copy(key = Bridge.probeServerKey(host.address, host.port.toLong(), minOf(requestTimeoutMillis, 30_000L)))
         }) { pendingHost = it }
@@ -240,7 +271,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         connectApprovedHost(host)
     }
 
-    private fun connectApprovedHost(host: Host) = work({
+    private fun connectApprovedHost(host: Host) = work("Connecting…", {
         require(host.trusted) { "Approve the server before connecting" }
         store.save(settings.copy(host = host))
         // Explicit approval is remembered even if this device still needs enrollment.
@@ -248,16 +279,15 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         withClient(host) { it.checkConnection() }
     }) {
         showPage(Page.Inbox)
-        notice = "Server connected. Inbox and Devices update automatically."
     }
 
-    fun forgetHostApproval() = work({
+    fun forgetHostApproval() = work("Saving…", {
         val host = requireNotNull(settings.host).copy(key = "")
         store.save(settings.copy(host = host))
         host
     }) {
         setHost(it)
-        notice = "Server approval removed. Connect again and verify its fingerprint."
+        confirm("Server approval removed")
     }
 
     fun refreshDevices() = requestRefresh()
@@ -280,7 +310,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         } catch (_: Exception) { "" }
     }
 
-    fun approve(device: Device, name: String) = work({
+    fun approve(device: Device, name: String) = work("Approving…", {
         Bridge.validatePeer(name, device.key)
         require(name !in settings.peers || settings.peers[name] == device.key) {
             "That name belongs to another device; remove its approval before reusing it"
@@ -291,16 +321,16 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         val updated = settings.copy(peers = settings.peers + (name to device.key))
         store.save(updated)
         updated
-    }) { applySettings(it); notice = "Device approved as $name" }
+    }) { applySettings(it); confirm("Device approved as $name") }
 
-    fun forget(name: String) = work({
+    fun forget(name: String) = work("Saving…", {
         val updated = settings.copy(peers = settings.peers - name)
         store.save(updated)
         updated
     }) {
         applySettings(it)
         inbox = emptyList(); rejected = emptyList(); inboxLoaded = false
-        notice = "Approval removed for $name"
+        confirm("Device unapproved: $name")
     }
 
     fun refreshInbox() = requestRefresh()
@@ -329,7 +359,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         if (selected.size > MAX_VIEW_BYTES) { error = TOO_LARGE_TO_VIEW; return }
         val captured = settings
         val identity = publicKey
-        work({
+        work("Verifying…", {
             var received: ViewedText? = null
             withClient { client ->
                 require(settings == captured && publicKey == identity) { "The server or approvals changed; view the parcel again" }
@@ -363,13 +393,13 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         val request = pendingSave ?: return
         pendingSave = null
         if (uri == null) return
-        work({
+        work("Saving…", {
             require(request.matches(settings, publicKey)) { "The server or approvals changed; save the parcel again" }
             val operation = currentCoroutineContext()
             val resolver = getApplication<Application>().contentResolver
             var name = request.filename
             fun write(input: java.io.InputStream, size: Long) {
-                reportProgress("Saving $name…")
+                reportProgress("Saving file…")
                 try {
                     runBlocking(operation) {
                         withDocumentAccess(documentTimeoutMillis) { access ->
@@ -390,7 +420,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
             if (request.view != null) {
                 request.view.content.openStream().use { write(it, request.view.content.size.toLong()) }
             } else {
-                reportProgress("Downloading and verifying $name…")
+                reportProgress("Verifying…")
                 withClient { client ->
                     require(request.matches(settings, publicKey)) { "The server or approvals changed; save the parcel again" }
                     client.receive(request.item.id, Delivery { manifest, path ->
@@ -409,7 +439,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
 
     fun selectFile(uri: Uri?) {
         if (uri == null) return
-        work({ withDocumentAccess(documentTimeoutMillis) { access ->
+        work("Selecting file…", { withDocumentAccess(documentTimeoutMillis) { access ->
             selectedDocument(getApplication<Application>().contentResolver, uri, access)
         } }) { selectedFile = it }
     }
@@ -419,8 +449,8 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         val document = selectedFile ?: return
         val context = sendContext(recipient)
         feedback(null)
-        work({
-            reportProgress("Preparing ${document.name}…")
+        work("Sending…", {
+            reportProgress("Preparing file…")
             val application = getApplication<Application>()
             val staging = File.createTempFile("keyparcel-send-", ".tmp", application.cacheDir)
             var retained = false
@@ -436,7 +466,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                 }
-                reportProgress("Uploading ${document.name}…")
+                reportProgress("Uploading…")
                 val report = sendBatch(context, context.names, "", staging, document.name)
                 retained = withContext(Dispatchers.Main) { finishSend(context, "", staging, document.name, report) }
             } finally { if (!retained) staging.delete() }
@@ -485,7 +515,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         val pending = pendingSend ?: return
         val names = pending.report.failed
         if (names.isEmpty()) return
-        work({
+        work("Sending…", {
             require(pending.context.matches(settings, publicKey)) { "Server or recipient approval changed; choose recipients again" }
             val report = sendBatch(pending.context, names, pending.text, pending.file, pending.filename)
             withContext(Dispatchers.Main) {
@@ -523,7 +553,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
             error = "The inbox or server changed; select the transfer again"
             return
         }
-        work({
+        work("Deleting…", {
             withClient(requireNotNull(request.settings.host)) {
                 require(request.matches(settings, inbox)) { "The inbox or approvals changed; select the transfer again" }
                 it.delete(request.id)
@@ -532,7 +562,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
             // A completed request must not edit a different server's same-ID item.
             if (request.settings == settings) {
                 inbox = inbox.filterNot { it.id == request.id }
-                notice = "Deleted remote inbox copy; saved local files kept"
+                confirm("Parcel deleted")
             }
         }
     }
@@ -540,7 +570,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     fun removeReceived() {
         val id = viewed?.id ?: savedFile?.id ?: return
         val request = savedFile?.request ?: viewed?.let { FileSaveRequest(it.item, it.settings, it.identity, it) } ?: return
-        work({
+        work("Deleting…", {
             require(request.matches(settings, publicKey)) { "The server or approvals changed; return to Inbox" }
             withClient(request.host) {
                 require(request.matches(settings, publicKey)) { "The server or approvals changed; return to Inbox" }
@@ -551,11 +581,12 @@ class AppModel(application: Application) : AndroidViewModel(application) {
             inbox = inbox.filterNot { it.id == id }
             viewed = null; savedFile = null
             showPage(Page.Inbox)
-            notice = "Transfer removed"
+            confirm("Parcel deleted")
         }
     }
 
     private fun showPage(target: Page) {
+        if (page != target) { error = null; pendingRefresh = false }
         pendingHost = null; pendingSave = null; pendingDelete = null
         if (target != Page.Text && !(target == Page.File && savedFile?.request?.view === viewed)) viewed = null
         if (target != Page.File) savedFile = null
@@ -575,19 +606,19 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         else showPage(navigation.back().page)
     }
 
-    fun discardDraft() { clearPendingSend(); feedback(null); draft = SendDraft(); selectedFile = null }
+    fun discardDraft() { clearPendingSend(); feedback(null); draft = SendDraft(); selectedFile = null; confirm("Draft discarded") }
 
     fun send(recipient: String, text: String) {
         if (busy || sendLocked) return
         val context = sendContext(recipient)
         feedback(null)
-        work({
+        work("Sending…", {
             val report = sendBatch(context, context.names, text, null, "")
             withContext(Dispatchers.Main) { finishSend(context, text, null, "", report) }
         }) {}
     }
 
-    fun clipboardError(message: String?) { error = message; notice = null }
+    fun clipboardError(message: String?) { error = message; confirmationJob?.cancel(); confirmation = null }
 
     private suspend fun <T> withClient(host: Host = requireNotNull(settings.host) { "Configure a server in Settings first" }, action: (Client) -> T): T = sessionLock.withLock {
         require(host.trusted) { "Connect in Settings and approve the server first" }
@@ -615,11 +646,13 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         action(client)
     }
 
-    private fun <T> work(task: suspend () -> T, success: (T) -> Unit) {
+    private fun <T> work(label: String, task: suspend () -> T, success: (T) -> Unit) {
         if (busy) return
         // User operations preempt a slow poll and never wait behind a backlog.
+        pendingRefresh = false
         if (pollJob?.isActive == true) { pollJob?.cancel(); retireConnection() }
-        busy = true; error = null; notice = null; progress = null
+        confirmationJob?.cancel(); confirmation = null
+        busy = true; error = null; progress = label
         viewModelScope.launch {
             try { success(withContext(Dispatchers.IO) { task() }) }
             catch (cancelled: CancellationException) { throw cancelled }

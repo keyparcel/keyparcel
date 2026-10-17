@@ -13,6 +13,8 @@ void ui_post(UI *ui, uintptr_t callback);
 void ui_shutdown(UI *ui);
 void ui_page(UI *ui, const char *page);
 void ui_message(UI *ui, const char *text);
+void ui_confirmation(UI *ui, const char *text);
+void ui_progress(UI *ui, const char *text);
 void ui_busy(UI *ui, int busy);
 const char *ui_get(UI *ui, const char *name);
 void ui_set(UI *ui, const char *name, const char *text);
@@ -37,7 +39,7 @@ void ui_details(UI *ui, const char *id);
 void ui_send_ready(UI *ui, int has_file);
 void ui_clear_draft(UI *ui, int file);
 
-void ui_sync(UI *ui, const char *state, const char *detail);
+void ui_connection(UI *ui, const char *state);
 void ui_refreshing(UI *ui, int refreshing);
 
 void ui_rows_begin(UI *ui, const char *name);

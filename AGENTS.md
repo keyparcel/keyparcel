@@ -40,3 +40,8 @@ feat: improve save paths and plain-text clipboard copying
 - Group related transfer behaviors into readable end-to-end scenarios that share one fixture.
 - Create separate environments when state changes, such as permissions or connectivity failures, would interfere with other checks.
 - Give checks specific failure messages so a shared scenario still makes failures easy to diagnose.
+
+## GUI feedback
+
+- Follow the shared [feedback channels](docs/development.md#gui-feedback-channels)
+  when adding progress, errors or confirmations

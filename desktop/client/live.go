@@ -4,7 +4,14 @@ import (
 	"context"
 	"keyparcel/core"
 	"sync"
+	"sync/atomic"
 )
+
+type ownedConnection struct {
+	connection *core.Connection
+	target     string
+	host       core.Host
+}
 
 // Owns the reusable transport; its lease covers both polls and user operations.
 type sessionOwner struct {
@@ -14,6 +21,7 @@ type sessionOwner struct {
 	target      string
 	host        core.Host
 	interactive bool
+	current     atomic.Pointer[ownedConnection]
 }
 
 func (o *sessionOwner) request(ctx context.Context, p profile, sshConfig, helper string, interactive bool, action func(*core.Session, profile) (any, error)) (any, error) {
@@ -32,8 +40,17 @@ func (o *sessionOwner) request(ctx context.Context, p profile, sshConfig, helper
 			return core.ConnectForCompletion(ctx, p.Target, p.Host, sshConfig)
 		})
 	}
+	o.current.Store(&ownedConnection{o.connection, p.Target, p.Host})
 	o.interactive = interactive
 	var value any
 	err := o.connection.Do(ctx, func(s *core.Session) error { var err error; value, err = action(s, p); return err })
 	return value, err
+}
+
+func (o *sessionOwner) state(target string, host core.Host) string {
+	c := o.current.Load()
+	if c == nil || c.target != target || c.host != host {
+		return "Not connected"
+	}
+	return c.connection.State()
 }
