@@ -156,6 +156,10 @@ static void host_selected(GtkComboBox *hosts, gpointer data) {
 static void host_popup_changed(GObject *object,GParamSpec *spec,gpointer data) {
     (void)spec;host_selected(GTK_COMBO_BOX(object),data);
 }
+static void access_method_changed(GtkComboBox *combo,gpointer data) {
+    (void)combo;UI *ui=data;
+    if (!ui->closed) goEvent(ui->handle,"access-method-changed","","");
+}
 static void identity_changed(GtkEditable *entry,gpointer data) {
     (void)entry;UI *ui=data;
     if (!ui->closed && !ui->updating_settings) goEvent(ui->handle,"identity-changed","","");
@@ -517,12 +521,16 @@ UI *ui_new(uintptr_t handle, const char *icon) {
     GtkWidget *advanced_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     field(ui, advanced_box, "root", "Remote storage");
     field(ui, advanced_box, "discovery", "Discovery file");
-    gtk_box_append(GTK_BOX(advanced_box),label("Inbox listing"));
-    GtkWidget *inbox_mode=gtk_combo_box_text_new();
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(inbox_mode),"auto","Automatic");
-    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(inbox_mode),"sftp","SFTP only");
-    gtk_combo_box_set_active_id(GTK_COMBO_BOX(inbox_mode),"auto");
-    accessible(inbox_mode,"Inbox listing");remember(ui,"inbox-mode",inbox_mode);gtk_box_append(GTK_BOX(advanced_box),inbox_mode);
+    gtk_box_append(GTK_BOX(advanced_box),label("Remote access method"));
+    GtkWidget *access_method=gtk_combo_box_text_new();
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(access_method),"auto","Automatic");
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(access_method),"ssh","SSH commands");
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(access_method),"sftp","SFTP only");
+    gtk_combo_box_set_active_id(GTK_COMBO_BOX(access_method),"auto");
+    accessible(access_method,"Remote access method");remember(ui,"access-method",access_method);gtk_box_append(GTK_BOX(advanced_box),access_method);
+    GtkWidget *method_hint=label("Save & connect to apply the remote access method");
+    remember(ui,"access-method-hint",method_hint);gtk_widget_set_visible(method_hint,FALSE);gtk_box_append(GTK_BOX(advanced_box),method_hint);
+    g_signal_connect(access_method,"changed",G_CALLBACK(access_method_changed),ui);
     gtk_box_append(GTK_BOX(advanced_box), label("OpenSSH configuration override (empty uses OpenSSH defaults)"));
     GtkWidget *ssh_config = label(""); remember(ui, "ssh-config", ssh_config); gtk_box_append(GTK_BOX(advanced_box), ssh_config);
     gtk_box_append(GTK_BOX(advanced_box), label("Server keys are managed in OpenSSH known_hosts. Identity and server fingerprints remain visible during trust approval."));
@@ -937,3 +945,7 @@ InfoState ui_info_state(UI *ui,const char *name) {
     result.pressed=(gtk_widget_get_state_flags(gtk_widget_get_first_child(button))&GTK_STATE_FLAG_ACTIVE)!=0;
     return result;
 }
+
+void ui_access_hint(UI *ui,int show) { gtk_widget_set_visible(g_hash_table_lookup(ui->fields,"access-method-hint"),show); }
+
+int ui_access_pending(UI *ui) { return gtk_widget_get_visible(g_hash_table_lookup(ui->fields,"access-method-hint")); }

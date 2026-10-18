@@ -20,7 +20,7 @@ import (
 	"keyparcel/internal/sftptest"
 )
 
-func localInboxCommand(env []string) inboxCommand {
+func localRemoteCommand(env []string) remoteCommand {
 	return func(ctx context.Context, command string, consume func(io.Reader) error) error {
 		child, cancel := context.WithCancel(ctx)
 		defer cancel()
@@ -29,7 +29,7 @@ func localInboxCommand(env []string) inboxCommand {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 		cmd.WaitDelay = time.Second
-		cmd.Stderr = &inboxStderr{cancel: cancel}
+		cmd.Stderr = &commandStderr{cancel: cancel}
 		out, err := cmd.StdoutPipe()
 		if err != nil {
 			return err
@@ -75,9 +75,9 @@ func TestInboxBatchToolsAndLocalVerification(t *testing.T) {
 			defer cancel()
 			s := &Session{ctx: ctx, Identity: recipient, Root: root, closeTransport: func() error { return nil }}
 			var probes atomic.Int32
-			run := localInboxCommand(env)
-			s.inbox = &inboxAcceleration{run: func(ctx context.Context, command string, consume func(io.Reader) error) error {
-				if command == inboxShell(inboxProbe) {
+			run := localRemoteCommand(env)
+			s.access = &remoteAccess{run: func(ctx context.Context, command string, consume func(io.Reader) error) error {
+				if command == remoteShell(accessProbe) {
 					probes.Add(1)
 				}
 				return run(ctx, command, consume)
@@ -115,10 +115,39 @@ func TestInboxBatchToolsAndLocalVerification(t *testing.T) {
 			if !reflect.DeepEqual(items[0].Manifest, manifest) || items[0].From != "sender" || !items[0].UploadedAt.Equal(stamp) {
 				t.Fatalf("verified metadata/timestamp changed: %+v", items[0])
 			}
+			s.DiscoveryPath = filepath.Join(root, "keys'\nlist")
+			if err = os.WriteFile(s.DiscoveryPath, []byte(PublicText(recipient.Public)+" self\n"+PublicText(sender.Public)+" sender\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			discovered, err := s.DiscoverAccelerated(cfg)
+			if err != nil || len(discovered) != 2 || !discovered[0].Self || !discovered[1].Trusted {
+				t.Fatal("command discovery lost current trust:", discovered, err)
+			}
+			var stage string
+			_, err = s.ReceiveAccelerated(cfg, manifest.ID, func(m Manifest, f *os.File) error {
+				stage = f.Name()
+				got, e := io.ReadAll(f)
+				if e == nil && !bytes.Equal(got, bytes.Repeat([]byte{0, 255, 10}, 500000)) {
+					e = errors.New("full command receive bytes changed")
+				}
+				return e
+			}, true)
+			if err != nil {
+				t.Fatal("real full command receive:", err)
+			}
+			if _, err = os.Stat(stage); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("verified command staging retained:", err)
+			}
 			// The capability cache never caches trust decisions.
 			items, rejected, _, err = s.ListAccelerated(&Config{Peers: map[string]string{}})
 			if err != nil || len(items) != 0 || len(rejected) != 5 {
 				t.Fatalf("current approvals not checked: %+v %+v %v", items, rejected, err)
+			}
+			if err = os.WriteFile(s.DiscoveryPath, bytes.Repeat([]byte(" "), 4*1024*1024+1), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if d, e := s.DiscoverAccelerated(cfg); e == nil || d != nil || !strings.Contains(e.Error(), "4 MiB") {
+				t.Fatal("discovery byte bound bypassed:", len(d), e)
 			}
 			if probes.Load() != 1 {
 				t.Fatalf("probe ran %d times on one owner", probes.Load())
@@ -193,7 +222,7 @@ func TestInboxFallbackAndTransportFailures(t *testing.T) {
 			m, ciphertext := receivePackage(t, identity, identity, []byte("retained"))
 			putInboxPackage(t, s, m.ID, ciphertext)
 			calls := 0
-			a := &inboxAcceleration{}
+			a := &remoteAccess{}
 			if kind == "sftp" {
 				a.mode = "sftp"
 			}
@@ -206,9 +235,9 @@ func TestInboxFallbackAndTransportFailures(t *testing.T) {
 					return io.ErrClosedPipe
 				}
 				if kind == "unsupported" {
-					return ErrInboxAccelerationUnsupported
+					return ErrSSHCommandsUnsupported
 				}
-				if command == inboxShell(inboxProbe) {
+				if command == remoteShell(accessProbe) {
 					return consume(bytes.NewReader([]byte("KP-CAP-1\n\x00\xff\n")))
 				}
 				if kind == "budget" {
@@ -216,7 +245,7 @@ func TestInboxFallbackAndTransportFailures(t *testing.T) {
 				}
 				return consume(strings.NewReader("KP-INBOX-1\nX " + m.ID + " nonregular\n"))
 			}
-			s.inbox = a
+			s.access = a
 			items, rejected, ids, err := s.List(cfg)
 			if kind == "malformed" || kind == "lost" || kind == "control EOF" {
 				if err == nil || items != nil || rejected != nil || ids != nil {
@@ -244,8 +273,8 @@ func TestInboxProbeSharedByConcurrentRequestViews(t *testing.T) {
 	var probes, lists atomic.Int32
 	both := make(chan struct{})
 	release := make(chan struct{})
-	a := &inboxAcceleration{run: func(ctx context.Context, command string, consume func(io.Reader) error) error {
-		if command == inboxShell(inboxProbe) {
+	a := &remoteAccess{run: func(ctx context.Context, command string, consume func(io.Reader) error) error {
+		if command == remoteShell(accessProbe) {
 			probes.Add(1)
 			return consume(bytes.NewReader([]byte("KP-CAP-1\n\x00\xff\n")))
 		}
@@ -261,7 +290,7 @@ func TestInboxProbeSharedByConcurrentRequestViews(t *testing.T) {
 	}}
 	identity := testIdentity(t)
 	connection := NewConnection(ctx, func(ctx context.Context) (*Session, error) {
-		return &Session{ctx: ctx, Identity: identity, inbox: a, closeTransport: func() error { return nil }}, nil
+		return &Session{ctx: ctx, Identity: identity, access: a, closeTransport: func() error { return nil }}, nil
 	})
 	defer connection.Close()
 	var wg sync.WaitGroup
@@ -295,7 +324,7 @@ func TestInboxTimestampOutsideSFTPV3FallsBack(t *testing.T) {
 	s := &Session{}
 	for _, stamp := range []string{"-1", "4294967296"} {
 		items, rejected, ids, err := s.decodeInbox(&Config{}, strings.NewReader("KP-INBOX-1\nR "+strings.Repeat("a", 32)+" "+stamp+" 0\n\nEND\n"))
-		if !errors.Is(err, ErrInboxAccelerationUnsupported) || items != nil || rejected != nil || ids != nil {
+		if !errors.Is(err, ErrSSHCommandsUnsupported) || items != nil || rejected != nil || ids != nil {
 			t.Fatal("timestamp changed SFTP semantics:", stamp, err)
 		}
 	}

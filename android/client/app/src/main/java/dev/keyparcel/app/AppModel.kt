@@ -679,7 +679,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
                 connection?.client?.close()
                 val key = IdentityStore(getApplication()).loadOrCreate()
                 val owner = try {
-                    Bridge.newPersistentClientWithInboxMode(key, host.address, host.port.toLong(), host.user, host.key, host.root, host.discovery, timeout, host.inboxMode)
+                    Bridge.newPersistentClientWithAccessMethod(key, host.address, host.port.toLong(), host.user, host.key, host.root, host.discovery, timeout, host.accessMethod)
                 } finally { key.fill(0) }
                 connection = Connected(host, owner, epoch)
                 connected = connection

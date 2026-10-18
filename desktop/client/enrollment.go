@@ -124,11 +124,12 @@ func (m *model) settingsFields(p profile) {
 	m.set("identity", identity)
 	m.set("root", root)
 	m.set("discovery", discovery)
-	mode := p.Host.InboxMode
+	mode := p.Host.AccessMethod
 	if mode == "" {
 		mode = "auto"
 	}
-	m.set("inbox-mode", mode)
+	m.set("access-method", mode)
+	m.updateAccessHint()
 	m.settingsLoaded = true
 }
 
@@ -140,9 +141,9 @@ type profileLoad struct {
 
 func (m *model) saveAndConnect() {
 	target, identity, root, discovery := m.get("target"), m.get("identity"), m.get("root"), m.get("discovery")
-	inboxMode := m.get("inbox-mode")
+	accessMethod := m.get("access-method")
 	m.run("Saving shared settings…", func(_ context.Context) (any, error) {
-		if err := m.store.setup(target, identity, root, discovery, inboxMode); err != nil {
+		if err := m.store.setup(target, identity, root, discovery, accessMethod); err != nil {
 			return nil, err
 		}
 		return m.store.load(target)
@@ -171,3 +172,13 @@ func (m *model) informationState(name string) (s informationState) {
 	})
 	return
 }
+
+func (m *model) updateAccessHint() {
+	active := m.host.AccessMethod
+	if active == "" {
+		active = "auto"
+	}
+	C.ui_access_hint(m.ui, boolean(m.get("access-method") != active))
+}
+
+func (m *model) accessHintVisible() bool { return C.ui_access_pending(m.ui) != 0 }

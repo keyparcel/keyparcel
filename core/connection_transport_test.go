@@ -250,7 +250,7 @@ func TestConnectionConcurrentTransport(t *testing.T) {
 			// on a remote exit, bounded stderr, or malformed read-only response.
 			for _, command := range []string{"test:binary", "test:exit", "test:stderr", "test:malformed"} {
 				err := c.Do(ctx, func(s *Session) error {
-					return s.inbox.run(ctx, command, func(r io.Reader) error {
+					return s.access.run(ctx, command, func(r io.Reader) error {
 						if command == "test:malformed" {
 							_, _, _, err := s.decodeInbox(&Config{}, r)
 							return err
@@ -268,7 +268,7 @@ func TestConnectionConcurrentTransport(t *testing.T) {
 				if command != "test:binary" && err == nil {
 					t.Fatal("exec failure was hidden:", command)
 				}
-				if command == "test:stderr" && !errors.Is(err, errInboxCommandOutput) {
+				if command == "test:stderr" && !errors.Is(err, errCommandOutput) {
 					t.Fatal("stderr bound:", err)
 				}
 				if err := c.Do(ctx, func(s *Session) error { _, err := s.Client.Stat("/parcel"); return err }); err != nil {
@@ -355,7 +355,7 @@ func TestConnectionConcurrentTransport(t *testing.T) {
 					case <-ctx.Done():
 					}
 				}()
-				return s.inbox.run(s.ctx, "test:hold", func(r io.Reader) error { _, err := io.Copy(io.Discard, r); return err })
+				return s.access.run(s.ctx, "test:hold", func(r io.Reader) error { _, err := io.Copy(io.Discard, r); return err })
 			})
 			if !errors.Is(err, context.Canceled) {
 				t.Fatal("admitted cancellation:", err)

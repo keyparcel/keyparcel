@@ -16,9 +16,9 @@ class HostTest {
     @Test fun discoverySettingsNeedNoKey() {
         val host = Host("server", 22, "user")
         host.validateConnection()
-        host.copy(inboxMode = "sftp").validateConnection()
+        host.copy(accessMethod = "sftp").validateConnection()
         for (invalid in listOf(host.copy(address = "bad server"), host.copy(address = ""),
-            host.copy(inboxMode = "ssh"), host.copy(port = 0), host.copy(port = 65536), host.copy(user = ""), host.copy(root = ""))) {
+            host.copy(accessMethod = "exec"), host.copy(port = 0), host.copy(port = 65536), host.copy(user = ""), host.copy(root = ""))) {
             assertThrows(IllegalArgumentException::class.java) { invalid.validateConnection() }
         }
     }

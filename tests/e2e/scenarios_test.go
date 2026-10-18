@@ -498,7 +498,7 @@ func TestMetadataReadsStayBounded(t *testing.T) {
 		// This instrumentation counts SFTP read packets; command-prefix bounds
 		// are checked independently with the actual GNU/BusyBox scripts.
 		var items []core.Item
-		if err := json.Unmarshal(w.ok(w.bob, nil, "inbox", "--json", "--inbox-mode", "sftp"), &items); err != nil {
+		if err := json.Unmarshal(w.ok(w.bob, nil, "inbox", "--json", "--access-method", "sftp"), &items); err != nil {
 			t.Fatal(err)
 		}
 		if len(items) != 1 {
@@ -1174,7 +1174,7 @@ func TestInboxCommandBatchKeepsVerificationAndSFTPFallback(t *testing.T) {
 			t.Fatal(err)
 		}
 		w.ok(w.alice, nil, "send", "--to", "bob", "--file", file)
-		baseline := w.ok(w.bob, nil, "inbox", "--json", "--inbox-mode", "sftp")
+		baseline := w.ok(w.bob, nil, "inbox", "--json", "--access-method", "sftp")
 		beforeAuth := bytes.Count(w.logs(), []byte("Accepted publickey for parcel"))
 		auto := w.ok(w.bob, nil, "inbox", "--json")
 		if got := bytes.Count(w.logs(), []byte("Accepted publickey for parcel")); got != beforeAuth+1 {
@@ -1202,14 +1202,31 @@ func TestInboxCommandBatchKeepsVerificationAndSFTPFallback(t *testing.T) {
 		w.assertExists(w.remote(w.bob, textID), true)
 		w.ok(w.bob, nil, "trust", w.alice.fingerprint, "--name", "alice")
 		equalBytes(t, baseline, w.ok(w.bob, nil, "inbox", "--json"))
-		// An SFTP-only account must work quietly through the capability fallback.
+		equalBytes(t, text, w.ok(w.bob, nil, "receive", textID, "--stdout", "--keep"))
+		equalBytes(t, data, w.ok(w.bob, nil, "receive", fileID, "--stdout", "--keep"))
+		w.ok(w.bob, nil, "send", "--to", "self", "--text", "command cleanup")
+		cleanupID := ""
+		for _, item := range w.items(w.bob) {
+			if item.From == "self" {
+				cleanupID = item.ID
+			}
+		}
+		if cleanupID == "" {
+			t.Fatal("self cleanup parcel missing")
+		}
+		equalBytes(t, []byte("command cleanup"), w.ok(w.bob, nil, "receive", cleanupID, "--stdout"))
+		w.assertExists(w.remote(w.bob, cleanupID), false)
+		w.assertExists(w.remote(w.bob, textID), true)
+		w.assertExists(w.remote(w.bob, fileID), true)
+		// CLI Auto requires commands; explicit SFTP remains available on restricted accounts.
 		w.admin("sh", "-c", "printf '\nForceCommand internal-sftp\n' >> /etc/ssh/sshd_config")
 		w.reloadSSHD()
-		equalBytes(t, baseline, w.ok(w.bob, nil, "inbox", "--json"))
-		equalBytes(t, text, w.ok(w.bob, nil, "receive", textID, "--stdout"))
+		w.fails(w.bob, nil, "--access-method sftp", "inbox", "--json")
+		equalBytes(t, baseline, w.ok(w.bob, nil, "inbox", "--json", "--access-method", "sftp"))
+		equalBytes(t, text, w.ok(w.bob, nil, "receive", textID, "--stdout", "--access-method", "sftp"))
 		w.assertExists(w.remote(w.bob, textID), false)
 		w.assertExists(w.remote(w.bob, fileID), true)
-		equalBytes(t, data, w.ok(w.bob, nil, "receive", fileID, "--stdout", "--keep"))
+		equalBytes(t, data, w.ok(w.bob, nil, "receive", fileID, "--stdout", "--keep", "--access-method", "sftp"))
 		w.ok(w.bob, nil, "delete", fileID)
 		w.assertExists(w.remote(w.bob, fileID), false)
 	})

@@ -11,24 +11,24 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-var errInboxCommandOutput = errors.New("inbox command output limit")
+var errCommandOutput = errors.New("inbox command output limit")
 
 // Discard stderr without retaining server-controlled text. Stop the channel if
 // it floods diagnostics while stdout is being parsed.
-type inboxStderr struct {
+type commandStderr struct {
 	bytes  atomic.Int64
 	cancel func()
 }
 
-func (w *inboxStderr) Write(p []byte) (int, error) {
+func (w *commandStderr) Write(p []byte) (int, error) {
 	if w.bytes.Add(int64(len(p))) > 64*1024 {
 		w.cancel()
-		return 0, errInboxCommandOutput
+		return 0, errCommandOutput
 	}
 	return len(p), nil
 }
 
-func (m *opensshMaster) runInboxCommand(ctx context.Context, command string, consume func(io.Reader) error) error {
+func (m *opensshMaster) runCommand(ctx context.Context, command string, consume func(io.Reader) error) error {
 	child, cancel := context.WithCancel(m.ctx)
 	defer cancel()
 	stop := context.AfterFunc(ctx, cancel)
@@ -36,7 +36,7 @@ func (m *opensshMaster) runInboxCommand(ctx context.Context, command string, con
 	cmd := exec.CommandContext(child, "ssh", append(m.channelArgs(), m.target, command)...)
 	m.quiet(cmd)
 	cmd.WaitDelay = 2 * time.Second
-	stderr := &inboxStderr{cancel: cancel}
+	stderr := &commandStderr{cancel: cancel}
 	cmd.Stderr = stderr
 	out, err := cmd.StdoutPipe()
 	if err != nil {
@@ -65,7 +65,7 @@ func (m *opensshMaster) runInboxCommand(ctx context.Context, command string, con
 		return io.ErrClosedPipe
 	}
 	if stderr.bytes.Load() > 64*1024 {
-		return errInboxCommandOutput
+		return errCommandOutput
 	}
 	if readErr != nil {
 		return readErr
@@ -73,7 +73,7 @@ func (m *opensshMaster) runInboxCommand(ctx context.Context, command string, con
 	return waitErr
 }
 
-func runEmbeddedInbox(ctx context.Context, owner *ssh.Client, ownerDone <-chan struct{}, command string, consume func(io.Reader) error) error {
+func runEmbeddedCommand(ctx context.Context, owner *ssh.Client, ownerDone <-chan struct{}, command string, consume func(io.Reader) error) error {
 	type opened struct {
 		session *ssh.Session
 		err     error
@@ -106,7 +106,7 @@ func runEmbeddedInbox(ctx context.Context, owner *ssh.Client, ownerDone <-chan s
 	defer cancel()
 	stop := context.AfterFunc(child, func() { session.Close() })
 	defer stop()
-	stderr := &inboxStderr{cancel: cancel}
+	stderr := &commandStderr{cancel: cancel}
 	session.Stderr = stderr
 	out, err := session.StdoutPipe()
 	if err != nil {
@@ -143,7 +143,7 @@ func runEmbeddedInbox(ctx context.Context, owner *ssh.Client, ownerDone <-chan s
 		return ctx.Err()
 	}
 	if stderr.bytes.Load() > 64*1024 {
-		return errInboxCommandOutput
+		return errCommandOutput
 	}
 	if readErr != nil {
 		return readErr

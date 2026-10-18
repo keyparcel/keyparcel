@@ -25,10 +25,11 @@ using **Forget server approval** and reconnecting. Forgetting preserves the devi
 identity and peer approvals. Changing the endpoint requires approval again;
 canceling leaves saved settings unchanged.
 
-Advanced settings also offer **Inbox listing: Automatic / SFTP only**. Automatic
-uses a compatible server's read-only SSH command to batch encrypted metadata;
-unsupported servers fall back to SFTP. Transfers and deletion always use SFTP.
-See [inbox listing](../../docs/usage.md#inbox-listing) for details.
+Advanced settings offer **Remote access method**: Automatic, SSH commands or SFTP
+only. Automatic probes once per connection and falls back when commands are
+unsupported; SSH commands requires support. Edits stay in the form until you
+connect. Uploads and deletion always use SFTP; all received content is verified
+locally before delivery. See [remote access methods](../../docs/usage.md#remote-access-method).
 
 ## Send, receive and save
 

@@ -14,13 +14,13 @@ import (
 )
 
 var completionFlags = map[string][]string{
-	"setup":   {"--host", "--identity", "--default", "--root", "--discovery", "--inbox-mode"},
+	"setup":   {"--host", "--identity", "--default", "--root", "--discovery", "--access-method"},
 	"devices": {"--json"}, "trust": {"--name"}, "untrust": {},
 	"send":    {"--to", "--text", "--stdin", "--file"},
-	"inbox":   {"--json", "--watch", "--interval", "--inbox-mode"},
+	"inbox":   {"--json", "--watch", "--interval", "--access-method"},
 	"receive": {"--stdout", "--copy", "--save-to", "--keep", "--overwrite"}, "delete": {"--all"}, "bench": {"--rounds"},
 }
-var valueFlags = map[string]bool{"--host": true, "--config": true, "--ssh-config": true, "--identity": true, "--root": true, "--discovery": true, "--name": true, "--to": true, "--text": true, "--file": true, "--save-to": true, "--interval": true, "--rounds": true, "--inbox-mode": true}
+var valueFlags = map[string]bool{"--host": true, "--config": true, "--ssh-config": true, "--identity": true, "--root": true, "--discovery": true, "--name": true, "--to": true, "--text": true, "--file": true, "--save-to": true, "--interval": true, "--rounds": true, "--access-method": true}
 
 // Completion is read-only and failures intentionally produce no shell diagnostics.
 func complete(ctx context.Context, words []string, out io.Writer) error {
@@ -43,7 +43,7 @@ func completeWithConnector(ctx context.Context, words []string, out io.Writer, c
 	if err != nil {
 		return nil
 	}
-	host, sshConfig, pending := "", "", ""
+	host, sshConfig, pending, accessMethod := "", "", "", ""
 	positionals := []string{}
 	used := map[string]bool{}
 	allSelected := false
@@ -56,6 +56,8 @@ func completeWithConnector(ctx context.Context, words []string, out io.Writer, c
 				host = word
 			case "--ssh-config":
 				sshConfig = word
+			case "--access-method":
+				accessMethod = word
 			}
 			pending = ""
 			continue
@@ -80,6 +82,8 @@ func completeWithConnector(ctx context.Context, words []string, out io.Writer, c
 					host = val
 				case "--ssh-config":
 					sshConfig = val
+				case "--access-method":
+					accessMethod = val
 				}
 			} else {
 				pending = key
@@ -115,15 +119,15 @@ func completeWithConnector(ctx context.Context, words []string, out io.Writer, c
 			return nil
 		}
 		values := []string{}
-		for _, flag := range append(append([]string{}, flags...), "--host", "--config", "--ssh-config") {
+		for _, flag := range append(append([]string{}, flags...), "--host", "--config", "--ssh-config", "--access-method") {
 			if (flag != "--all" || len(positionals) == 0) && (!used[flag] || flag == "--to") {
 				values = append(values, flag)
 			}
 		}
 		return emit(values)
 	}
-	if pending == "--inbox-mode" {
-		return emit([]string{"auto", "sftp"})
+	if pending == "--access-method" {
+		return emit([]string{"auto", "ssh", "sftp"})
 	}
 	cfg, err := core.LoadConfig(configPath)
 	if err != nil {
@@ -158,6 +162,15 @@ func completeWithConnector(ctx context.Context, words []string, out io.Writer, c
 	target, h, err := cfg.Select(host)
 	if err != nil {
 		return nil
+	}
+	if accessMethod != "" {
+		h.AccessMethod = accessMethod
+	}
+	if core.ValidateAccessMethod(h.AccessMethod) != nil {
+		return nil
+	}
+	if h.AccessMethod == "" || h.AccessMethod == "auto" {
+		h.AccessMethod = "ssh"
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

@@ -33,23 +33,24 @@ the runner's CPU/disk, so timings can include that contention; they do not share
 a network cap or SSH connection.
 
 Small uses five measured samples and valid signed/encrypted 512-byte file parcels:
-discovery, verified Inbox at 0/1/10 items through both SFTP and accelerated SSH,
-full-ID receive/delete, and all four
+strict SFTP/command discovery and full-ID receive comparisons, verified Inbox at
+0/1/10 items through both SFTP and SSH, full-ID deletion, and all four
 existing/missing-inbox × fresh/cached-discovery send cases. Preparation and cleanup
 are outside operation timers. Receives include normal full verification and atomic
 local SaveContent; exact saved bytes are checked. Sends include package creation
 and atomic publication, then are received/checked/deleted outside the send timer.
-Each small cell first records one `inbox-command-initial` sample (probe plus empty
-listing). Its accelerated rows require the actual command capability and compare
-verified items exactly with SFTP; unsupported servers fail this measurement instead
-of silently timing a fallback. There are 90 rows across both transports/three RTTs:
-six initial samples and 84 rows of five samples.
+Each small cell first records one `command-initial-discovery` sample (probe plus
+first discovery). Command rows require the capability and never silently fall back;
+verified inbox/discovery results must equal SFTP. There are 102 rows across both
+transports/three RTTs: six initial samples and 96 rows of five samples.
 
 Bulk uses three measured uploads and downloads per transport: 10 MiB at 20 ms
 RTT and 2 MiB at 100 ms RTT, both at 100 Mbit/s. Uploads
-use fresh discovery. Downloads verify and atomically save the actual uploaded
-parcels. This transfer path remains SFTP; inbox acceleration does not change bulk
-transport or settings. Payload bytes are deterministic pseudorandom data, not zero fill.
+use fresh command discovery and SFTP publication. Downloads compare strict SFTP
+and SSH-command streams of the same uploaded parcels, fully verify and atomically
+save them; deletion happens after both paths. Command capability preparation is
+outside bulk timers. There are 16 bulk rows of three samples each. Payload bytes
+are deterministic pseudorandom data, not zero fill.
 
 All samples are retained, including the first; there are no discarded warmups.
 Tables report commit, transport, requested RTT, planned/completed sample counts,

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,43 +17,46 @@ import (
 	"time"
 )
 
-//go:embed inbox_probe.sh
-var inboxProbe string
+//go:embed access_probe.sh
+var accessProbe string
 
 //go:embed inbox_batch.sh
 var inboxBatch string
 
-var ErrInboxAccelerationUnsupported = errors.New("inbox acceleration unavailable")
-var errInboxBudget = errors.New("inbox acceleration aggregate limit")
+var ErrSSHCommandsUnsupported = errors.New("SSH command access unavailable")
+var errInboxBudget = errors.New("inbox command aggregate limit; use --access-method sftp")
+var errInboxPath = errors.New("inbox directory is inaccessible")
 
 const inboxPrefixLimit = 1 << 20
 const inboxTotalLimit = 64 << 20
 const inboxRecordLimit = 4096
 
-type inboxCommand func(context.Context, string, func(io.Reader) error) error
+type remoteCommand func(context.Context, string, func(io.Reader) error) error
 
 // Shared by request views of one authenticated owner. Only negotiation is locked;
 // listing and foreground work never wait on a whole-operation owner mutex.
-type inboxAcceleration struct {
-	run       inboxCommand
-	mode      string
-	once      sync.Once
-	supported bool
-	probeErr  error
-	limited   atomic.Bool
+type remoteAccess struct {
+	run          remoteCommand
+	mode         string
+	once         sync.Once
+	supported    bool
+	probeErr     error
+	inboxLimited atomic.Bool
 }
 
-func validInboxMode(mode string) bool { return mode == "" || mode == "auto" || mode == "sftp" }
+func validAccessMethod(mode string) bool {
+	return mode == "" || mode == "auto" || mode == "ssh" || mode == "sftp"
+}
 
-// ValidateInboxMode accepts only the narrow inbox-listing policy.
-func ValidateInboxMode(mode string) error {
-	if !validInboxMode(mode) {
-		return errors.New("inbox mode must be auto or sftp")
+// ValidateAccessMethod accepts only the remote read policy.
+func ValidateAccessMethod(mode string) error {
+	if !validAccessMethod(mode) {
+		return errors.New("access method must be auto, ssh or sftp")
 	}
 	return nil
 }
 func shellArgument(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
-func inboxShell(script string, args ...string) string {
+func remoteShell(script string, args ...string) string {
 	cmd := "sh -c " + shellArgument(script) + " sh"
 	for _, arg := range args {
 		cmd += " " + shellArgument(arg)
@@ -60,20 +64,20 @@ func inboxShell(script string, args ...string) string {
 	return cmd
 }
 
-func (a *inboxAcceleration) available(ctx context.Context) (bool, error) {
-	if a == nil || a.mode == "sftp" || a.limited.Load() {
+func (a *remoteAccess) available(ctx context.Context) (bool, error) {
+	if a == nil || a.mode == "sftp" {
 		return false, nil
 	}
 	a.once.Do(func() {
 		probe, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
-		err := a.run(probe, inboxShell(inboxProbe), func(r io.Reader) error {
+		err := a.run(probe, remoteShell(accessProbe), func(r io.Reader) error {
 			data, err := io.ReadAll(io.LimitReader(r, 1025))
 			if err != nil {
 				return err
 			}
 			if !bytes.Equal(data, []byte("KP-CAP-1\n\x00\xff\n")) {
-				return ErrInboxAccelerationUnsupported
+				return ErrSSHCommandsUnsupported
 			}
 			return nil
 		})
@@ -87,15 +91,15 @@ func (a *inboxAcceleration) available(ctx context.Context) (bool, error) {
 	return a.supported, a.probeErr
 }
 
-// List uses the optional read-only command capability. Mutations, discovery,
-// completion and full content retrieval always use SFTP.
+// List uses the read-only command capability. Auto may use ordinary SFTP
+// for unsupported servers or aggregate limits; explicit SSH never hides fallback.
 func (s *Session) List(c *Config) ([]Item, []Rejected, []string, error) {
-	if s.inbox != nil {
+	if s.access != nil {
 		items, rejected, ids, err := s.ListAccelerated(c)
 		if err == nil {
 			return items, rejected, ids, nil
 		}
-		if !errors.Is(err, errInboxBudget) && !errors.Is(err, ErrInboxAccelerationUnsupported) {
+		if s.access.mode == "ssh" || (!errors.Is(err, errInboxBudget) && !errors.Is(err, ErrSSHCommandsUnsupported) && !errors.Is(err, errInboxPath)) {
 			return nil, nil, nil, err
 		}
 	}
@@ -108,34 +112,38 @@ func (s *Session) List(c *Config) ([]Item, []Rejected, []string, error) {
 // ListAccelerated requires the real command path; callers comparing performance
 // must not mistake a transparent SFTP fallback for an accelerated measurement.
 func (s *Session) ListAccelerated(c *Config) ([]Item, []Rejected, []string, error) {
-	if s.inbox == nil || s.inbox.mode == "sftp" || s.inbox.limited.Load() {
-		return nil, nil, nil, ErrInboxAccelerationUnsupported
+	if s.access != nil && s.access.inboxLimited.Load() {
+		return nil, nil, nil, errInboxBudget
 	}
-	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
-	stop := context.AfterFunc(ctx, func() { s.Close() })
-	defer func() { stop(); cancel() }()
-	available, err := s.inbox.available(ctx)
+	if s.access == nil || s.access.mode == "sftp" {
+		return nil, nil, nil, commandUnsupported()
+	}
+	ctx, done := s.metadataContext()
+	defer done()
+	_, err := s.commandAvailable(ctx, true)
 	if err != nil {
-		// A timed-out probe/channel cannot safely be reused as an unsupported tool.
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-			s.Close()
-		}
 		return nil, nil, nil, err
-	}
-	if !available {
-		return nil, nil, nil, ErrInboxAccelerationUnsupported
 	}
 	var items []Item
 	var rejected []Rejected
 	var ids []string
-	err = s.inbox.run(ctx, inboxShell(inboxBatch, s.InboxDir()), func(r io.Reader) error {
+	err = s.access.run(ctx, remoteShell(inboxBatch, s.InboxDir()), func(r io.Reader) error {
 		var err error
 		items, rejected, ids, err = s.decodeInbox(c, r)
 		return err
 	})
+	if errors.Is(err, errInboxPath) {
+		_, e := s.Client.Stat(s.InboxDir())
+		if errors.Is(e, os.ErrNotExist) {
+			return []Item{}, []Rejected{}, []string{}, nil
+		}
+		if e != nil {
+			return nil, nil, nil, e
+		}
+	}
 	if err != nil {
 		if errors.Is(err, errInboxBudget) {
-			s.inbox.limited.Store(true)
+			s.access.inboxLimited.Store(true)
 		}
 		return nil, nil, nil, err
 	}
@@ -156,7 +164,7 @@ func (s *Session) decodeInbox(c *Config, r io.Reader) ([]Item, []Rejected, []str
 		return nil, nil, nil, err
 	}
 	if header == "KP-SFTP" {
-		return nil, nil, nil, ErrInboxAccelerationUnsupported
+		return nil, nil, nil, errInboxPath
 	}
 	if header != "KP-INBOX-1" {
 		return nil, nil, nil, errors.New("invalid inbox command version")
@@ -210,7 +218,7 @@ func (s *Session) decodeInbox(c *Config, r io.Reader) ([]Item, []Rejected, []str
 		// Match SFTP v3's unsigned 32-bit timestamp range; unusual filesystem
 		// timestamps use the ordinary listing instead of changing its semantics.
 		if seconds < 0 || seconds > int64(^uint32(0)) {
-			return nil, nil, nil, ErrInboxAccelerationUnsupported
+			return nil, nil, nil, ErrSSHCommandsUnsupported
 		}
 		total += size
 		if total > inboxTotalLimit {

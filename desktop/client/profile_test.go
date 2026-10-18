@@ -38,7 +38,7 @@ func checkGTKProfilePreview(t *testing.T, m *model) {
 		return core.Host{Identity: path, Fingerprint: ssh.FingerprintSHA256(key.Public), Root: "storage", Discovery: "keys"}
 	}
 	first, second := makeHost(), makeHost()
-	second.Root, second.Discovery, second.InboxMode = "other-storage", "other-keys", "sftp"
+	second.Root, second.Discovery, second.AccessMethod = "other-storage", "other-keys", "sftp"
 	cfg := &core.Config{DefaultHost: "first", Hosts: map[string]core.Host{"first": first, "second": second, "same-key": second}, Peers: map[string]string{}}
 	if err := cfg.Save(m.store.path); err != nil {
 		t.Fatal(err)
@@ -46,7 +46,7 @@ func checkGTKProfilePreview(t *testing.T, m *model) {
 	m.settingsLoaded = false
 	active := profile{Target: "first", Host: first, Config: cfg}
 	m.applyProfile(active)
-	if m.get("inbox-mode") != "auto" {
+	if m.get("access-method") != "auto" {
 		t.Fatal("default inbox policy was not automatic")
 	}
 	var dials atomic.Int32
@@ -67,9 +67,17 @@ func checkGTKProfilePreview(t *testing.T, m *model) {
 	m.enrollmentOpen = true
 	m.enrollment = enrollmentDetails{Public: "old", Fingerprint: "old"}
 	m.event("host-selected", "second", "")
-	if m.get("target") != "second" || m.get("identity") != second.Identity || m.get("root") != second.Root || m.get("discovery") != second.Discovery || m.get("inbox-mode") != "sftp" {
+	if m.get("target") != "second" || m.get("identity") != second.Identity || m.get("root") != second.Root || m.get("discovery") != second.Discovery || m.get("access-method") != "sftp" {
 		t.Fatal("saved selection did not populate every form field")
 	}
+	if !m.accessHintVisible() {
+		t.Fatal("previewed method differs from active profile without apply hint")
+	}
+	m.set("access-method", "auto")
+	if m.accessHintVisible() {
+		t.Fatal("reverted method retained apply hint")
+	}
+	m.set("access-method", "sftp")
 	if m.enrollmentOpen || m.enrollment != (enrollmentDetails{}) {
 		t.Fatal("profile preview retained enrollment details")
 	}
@@ -104,15 +112,15 @@ func checkGTKProfilePreview(t *testing.T, m *model) {
 	latest.Root = "latest-storage"
 	cfg.Hosts["second"] = latest
 	m.set("root", "unsaved-storage")
-	m.set("inbox-mode", "auto")
+	m.set("access-method", "auto")
 	if !m.publishSnapshot(liveSnapshot{Profile: active}, m.profileVersion) {
 		t.Fatal("current profile-map update was rejected")
 	}
-	if m.hosts["new-profile"] != first || m.get("target") != "same-key" || m.get("root") != "unsaved-storage" || m.get("inbox-mode") != "auto" {
+	if m.hosts["new-profile"] != first || m.get("target") != "same-key" || m.get("root") != "unsaved-storage" || m.get("access-method") != "auto" {
 		t.Fatal("profile-map update overwrote unsaved fields")
 	}
 	m.event("host-selected", "second", "")
-	if m.get("root") != latest.Root || m.get("inbox-mode") != "sftp" {
+	if m.get("root") != latest.Root || m.get("access-method") != "sftp" {
 		t.Fatal("selection used an obsolete saved-profile map")
 	}
 	// Missing saved identities must still populate the form without validation/dial.
@@ -139,6 +147,9 @@ func checkGTKProfilePreview(t *testing.T, m *model) {
 	saved, err := core.LoadConfig(m.store.path)
 	if err != nil || m.active != nil || m.target != "second" || m.host != latest || saved.DefaultHost != "second" || saved.Hosts["second"] != latest || m.get("target") != "second" {
 		t.Fatal("Save & connect did not save/apply the previewed form:", err)
+	}
+	if m.accessHintVisible() {
+		t.Fatal("applied method retained pending hint")
 	}
 	if connection.State() != "Suspended" {
 		t.Fatal("explicit Save & connect did not retire the previous connection")
