@@ -468,9 +468,9 @@ class ClientJourneyTest {
         compose.onNodeWithTag("access-method-hint").assertTextEquals("Connect to apply the remote access method")
         compose.onNodeWithTag("access-method-sftp").performScrollTo().performClick().assertIsSelected()
         check(liveModel.settings.host?.accessMethod == "auto") { "Editing inbox policy applied unsaved settings" }
-        compose.onNodeWithTag("access-method-hint").assertIsDisplayed()
+        compose.onNodeWithTag("access-method-hint").performScrollTo().assertIsDisplayed()
         screenshot("settings-access-method")
-        compose.onNodeWithTag("access-method-auto").performClick().assertIsSelected()
+        compose.onNodeWithTag("access-method-auto").performScrollTo().performClick().assertIsSelected()
         compose.onNodeWithTag("access-method-hint").assertDoesNotExist()
         compose.onNodeWithTag("advanced-settings").performScrollTo().performClick()
         compose.onNodeWithTag("host-key").assertDoesNotExist()
