@@ -99,7 +99,14 @@ func (m *opensshMaster) close() {
 }
 
 func (m *opensshMaster) openSFTP() (*sftp.Client, func() error, error) {
-	cmd := exec.CommandContext(m.ctx, "ssh", append(m.channelArgs(), "-s", m.target, "sftp")...)
+	ctx, cancel := context.WithCancel(m.ctx)
+	ok := false
+	defer func() {
+		if !ok {
+			cancel()
+		}
+	}()
+	cmd := exec.CommandContext(ctx, "ssh", append(m.channelArgs(), "-s", m.target, "sftp")...)
 	m.quiet(cmd)
 	cmd.WaitDelay = 2 * time.Second
 	var stderr bytes.Buffer
@@ -124,6 +131,8 @@ func (m *opensshMaster) openSFTP() (*sftp.Client, func() error, error) {
 		return nil, nil, fmt.Errorf("SSH/SFTP connection: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	closeTransport := func() error {
+		// Reap only this mux child, even if the server keeps its channel half-open.
+		cancel()
 		closeErr := client.Close()
 		err := cmd.Wait()
 		if closeErr != nil {
@@ -134,5 +143,6 @@ func (m *opensshMaster) openSFTP() (*sftp.Client, func() error, error) {
 		}
 		return nil
 	}
+	ok = true
 	return client, closeTransport, nil
 }

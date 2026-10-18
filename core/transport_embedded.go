@@ -140,7 +140,6 @@ func ConnectEmbedded(ctx context.Context, options EmbeddedOptions) (_ *Session, 
 		stop()
 		// Close SSH first to unblock requests; SFTP's subsequent EOF error is expected.
 		client.Close()
-		s.channel.close()
 		return nil
 	}
 	cwd, err := s.Client.Getwd()

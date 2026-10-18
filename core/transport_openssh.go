@@ -169,7 +169,7 @@ func connect(ctx context.Context, target string, h Host, sshConfig string, compl
 	s.closeTransport = func() error {
 		// Retire the owner first, so a blocked channel cannot hold shutdown hostage.
 		master.close()
-		return s.channel.close()
+		return nil
 	}
 	cwd, err := s.Client.Getwd()
 	if err != nil {
