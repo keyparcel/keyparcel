@@ -25,6 +25,11 @@ using **Forget server approval** and reconnecting. Forgetting preserves the devi
 identity and peer approvals. Changing the endpoint requires approval again;
 canceling leaves saved settings unchanged.
 
+Advanced settings also offer **Inbox listing: Automatic / SFTP only**. Automatic
+uses a compatible server's read-only SSH command to batch encrypted metadata;
+unsupported servers fall back to SFTP. Transfers and deletion always use SFTP.
+See [inbox listing](../../docs/usage.md#inbox-listing) for details.
+
 ## Send, receive and save
 
 Send feedback shows a short transfer ID when copies share one ID. Open its

@@ -32,6 +32,11 @@ In Devices, compare the peer fingerprint, edit the suggested name if needed and
 peer must approve your fingerprint too. **This device** needs no peer approval,
 but its identity must still be enrolled on the server.
 
+Advanced settings also offer **Inbox listing: Automatic / SFTP only**. Automatic
+uses a compatible server's read-only SSH command to batch encrypted metadata;
+unsupported servers fall back to SFTP. Transfers and deletion always use SFTP.
+See [inbox listing](../../docs/usage.md#inbox-listing) for details.
+
 ## Send and receive
 
 Send feedback shows a short transfer ID when copies share one ID. Open its

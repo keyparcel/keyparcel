@@ -149,6 +149,15 @@ func connect(privateKey []byte, address string, port int, user, hostKey, root, d
 // NewPersistentClient defers SSH setup until the first operation. Close can
 // therefore cancel both setup and subsequent requests, including from Android stop.
 func NewPersistentClient(privateKey []byte, address string, port int, user, hostKey, root, discovery string, timeoutMillis int) (*Client, error) {
+	return NewPersistentClientWithInboxMode(privateKey, address, port, user, hostKey, root, discovery, timeoutMillis, "")
+}
+
+// NewPersistentClientWithInboxMode selects only read-only inbox listing policy.
+func NewPersistentClientWithInboxMode(privateKey []byte, address string, port int, user, hostKey, root, discovery string, timeoutMillis int, inboxMode string) (*Client, error) {
+	if err := core.ValidateInboxMode(inboxMode); err != nil {
+		return nil, err
+	}
+
 	id, err := core.ParseIdentity(privateKey)
 	if err != nil {
 		return nil, err
@@ -164,7 +173,7 @@ func NewPersistentClient(privateKey []byte, address string, port int, user, host
 		return nil, err
 	}
 	c.connection = core.NewConnection(ctx, func(ctx context.Context) (*core.Session, error) {
-		return core.ConnectEmbedded(ctx, core.EmbeddedOptions{Address: address, Port: port, User: user, HostKey: key, Identity: id, Root: root, Discovery: discovery, Timeout: 30 * time.Second})
+		return core.ConnectEmbedded(ctx, core.EmbeddedOptions{Address: address, Port: port, User: user, HostKey: key, Identity: id, Root: root, Discovery: discovery, Timeout: 30 * time.Second, InboxMode: inboxMode})
 	})
 	return c, nil
 }

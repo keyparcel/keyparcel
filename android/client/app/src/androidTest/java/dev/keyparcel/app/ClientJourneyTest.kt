@@ -462,6 +462,11 @@ class ClientJourneyTest {
         check(value("host-root") == ".local/share/keyparcel") { "Advanced settings changed the storage path" }
         check(value("host-discovery") == ".ssh/authorized_keys") { "Advanced settings changed the discovery path" }
         compose.onNodeWithTag("host-key").assertExists()
+        compose.onNodeWithTag("inbox-mode-auto").assertIsSelected()
+        compose.onNodeWithTag("inbox-mode-sftp").performScrollTo().performClick().assertIsSelected()
+        check(liveModel.settings.host?.inboxMode == "auto") { "Editing inbox policy applied unsaved settings" }
+        screenshot("settings-inbox-mode")
+        compose.onNodeWithTag("inbox-mode-auto").performClick().assertIsSelected()
         compose.onNodeWithTag("advanced-settings").performScrollTo().performClick()
         compose.onNodeWithTag("host-key").assertDoesNotExist()
         click("back")

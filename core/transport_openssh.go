@@ -59,6 +59,9 @@ func ConnectForCompletion(ctx context.Context, target string, h Host, sshConfig 
 	return connect(ctx, target, h, sshConfig, true, "")
 }
 func connect(ctx context.Context, target string, h Host, sshConfig string, completion bool, askpass string) (*Session, error) {
+	if err := ValidateInboxMode(h.InboxMode); err != nil {
+		return nil, err
+	}
 	if err := ValidateTarget(target); err != nil {
 		return nil, err
 	}
@@ -151,7 +154,7 @@ func connect(ctx context.Context, target string, h Host, sshConfig string, compl
 	if err != nil {
 		return nil, err
 	}
-	s := &Session{Identity: id, ctx: ctx}
+	s := &Session{Identity: id, ctx: ctx, inbox: &inboxAcceleration{run: master.runInboxCommand, mode: h.InboxMode}}
 	s.openSFTP = func() (*sftpChannel, error) {
 		client, closeChannel, err := master.openSFTP()
 		if err != nil {

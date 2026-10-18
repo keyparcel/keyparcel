@@ -129,13 +129,14 @@ func RunWithConnector(ctx context.Context, args []string, in io.Reader, out, dia
 	configPath := f.String("config", configDefault, "local configuration file")
 	host := f.String("host", "", "saved SSH target")
 	sshConfig := f.String("ssh-config", "", "OpenSSH configuration file override")
-	var identity, root, discovery, name, text, file, save *string
+	var identity, root, discovery, name, text, file, save, inboxMode *string
 	var setDefault, stdin, asJSON, watch, stdout, copyClip, keep, overwrite, all *bool
 	var interval *time.Duration
 	var rounds *int
 	var to names
 	switch command {
 	case "setup":
+		inboxMode = f.String("inbox-mode", "auto", "inbox listing: auto or sftp")
 		identity = f.String("identity", "~/.ssh/id_ed25519", "device identity")
 		root = f.String("root", ".local/share/keyparcel", "shared remote root")
 		discovery = f.String("discovery", ".ssh/authorized_keys", "remote discovery file")
@@ -153,6 +154,7 @@ func RunWithConnector(ctx context.Context, args []string, in io.Reader, out, dia
 		stdin = f.Bool("stdin", false, "text from stdin")
 		file = f.String("file", "", "file to send")
 	case "inbox":
+		inboxMode = f.String("inbox-mode", "", "override inbox listing: auto or sftp")
 		asJSON = f.Bool("json", false, "JSON output")
 		watch = f.Bool("watch", false, "poll with a persistent connection")
 		interval = f.Duration("interval", 2*time.Second, "poll interval")
@@ -183,6 +185,11 @@ func RunWithConnector(ctx context.Context, args []string, in io.Reader, out, dia
 	} else if f.NArg() != expected {
 		return fmt.Errorf("%s expects %d positional arguments", command, expected)
 	}
+	if inboxMode != nil {
+		if err = core.ValidateInboxMode(*inboxMode); err != nil {
+			return err
+		}
+	}
 	cfg, err := core.LoadConfig(*configPath)
 	if err != nil {
 		return err
@@ -198,7 +205,7 @@ func RunWithConnector(ctx context.Context, args []string, in io.Reader, out, dia
 		if e != nil {
 			return e
 		}
-		cfg.Hosts[*host] = core.Host{Identity: id.Path, Fingerprint: ssh.FingerprintSHA256(id.Public), Root: *root, Discovery: *discovery}
+		cfg.Hosts[*host] = core.Host{Identity: id.Path, Fingerprint: ssh.FingerprintSHA256(id.Public), Root: *root, Discovery: *discovery, InboxMode: *inboxMode}
 		if *setDefault {
 			cfg.DefaultHost = *host
 		}
@@ -319,6 +326,9 @@ func RunWithConnector(ctx context.Context, args []string, in io.Reader, out, dia
 	target, h, err := cfg.Select(*host)
 	if err != nil {
 		return err
+	}
+	if command == "inbox" && *inboxMode != "" {
+		h.InboxMode = *inboxMode
 	}
 	if command == "inbox" && *watch {
 		return watchInbox(ctx, target, h, *sshConfig, cfg, *interval, out, diag, connect)

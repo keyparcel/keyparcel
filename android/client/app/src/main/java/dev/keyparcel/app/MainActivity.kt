@@ -276,6 +276,7 @@ private fun SettingsScreen(model: AppModel) {
     var user by remember(host) { mutableStateOf(host?.user ?: "") }
     var root by remember(host) { mutableStateOf(host?.root ?: ".local/share/keyparcel") }
     var discovery by remember(host) { mutableStateOf(host?.discovery ?: ".ssh/authorized_keys") }
+    var inboxMode by remember(host) { mutableStateOf(host?.inboxMode ?: "auto") }
     var forgetApproval by remember { mutableStateOf(false) }
     var advanced by rememberSaveable { mutableStateOf(false) }
     var formError by remember { mutableStateOf<String?>(null) }
@@ -315,7 +316,7 @@ private fun SettingsScreen(model: AppModel) {
         formError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Button(onClick = {
             try {
-                val candidate = Host(address.trim(), port.toIntOrNull() ?: 0, user.trim(), root = root.trim(), discovery = discovery.trim())
+                val candidate = Host(address.trim(), port.toIntOrNull() ?: 0, user.trim(), root = root.trim(), discovery = discovery.trim(), inboxMode = inboxMode)
                 candidate.validateConnection()
                 formError = null
                 model.connectHost(candidate)
@@ -328,6 +329,13 @@ private fun SettingsScreen(model: AppModel) {
         if (advanced) {
             Field("Storage path", "host-root", root, model.busy) { root = it }
             Field("Discovery path", "host-discovery", discovery, model.busy) { discovery = it }
+            Text("Inbox listing", style = MaterialTheme.typography.titleSmall)
+            Row {
+                FilterChip(selected = inboxMode == "auto", onClick = { inboxMode = "auto" }, enabled = !model.busy,
+                    label = { Text("Automatic") }, modifier = Modifier.testTag("inbox-mode-auto"))
+                FilterChip(selected = inboxMode == "sftp", onClick = { inboxMode = "sftp" }, enabled = !model.busy,
+                    label = { Text("SFTP only") }, modifier = Modifier.testTag("inbox-mode-sftp"))
+            }
             if (host?.trusted == true) {
                 OutlinedTextField(value = host.key, onValueChange = {}, readOnly = true,
                     label = { Text("Approved server public key") }, modifier = Modifier.fillMaxWidth().testTag("host-key"))

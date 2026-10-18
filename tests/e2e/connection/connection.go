@@ -66,5 +66,5 @@ func Connect(ctx context.Context, target string, host core.Host, config string, 
 	if key == nil {
 		return nil, errors.New("unknown SSH host key")
 	}
-	return core.ConnectEmbedded(ctx, core.EmbeddedOptions{Address: selected.Address, Port: selected.Port, User: selected.User, Identity: id, HostKey: key, Root: host.Root, Discovery: host.Discovery})
+	return core.ConnectEmbedded(ctx, core.EmbeddedOptions{Address: selected.Address, Port: selected.Port, User: selected.User, Identity: id, HostKey: key, Root: host.Root, Discovery: host.Discovery, InboxMode: host.InboxMode})
 }

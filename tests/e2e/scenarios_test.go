@@ -1156,3 +1156,56 @@ func TestInboxTimesAndBatchDeletion(t *testing.T) {
 		}
 	})
 }
+
+func TestInboxCommandBatchKeepsVerificationAndSFTPFallback(t *testing.T) {
+	runTransports(t, func(t *testing.T, mode string) {
+		w := newWorld(t, mode)
+		w.approve()
+		text := []byte("inbox command metadata — 世界\n")
+		w.ok(w.alice, text, "send", "--to", "bob", "--stdin")
+		file := filepath.Join(w.alice.dir, "binary.bin")
+		data := []byte{0, 255, 10, 128, 32}
+		if err := os.WriteFile(file, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		w.ok(w.alice, nil, "send", "--to", "bob", "--file", file)
+		baseline := w.ok(w.bob, nil, "inbox", "--json", "--inbox-mode", "sftp")
+		beforeAuth := bytes.Count(w.logs(), []byte("Accepted publickey for parcel"))
+		auto := w.ok(w.bob, nil, "inbox", "--json")
+		if got := bytes.Count(w.logs(), []byte("Accepted publickey for parcel")); got != beforeAuth+1 {
+			t.Fatalf("inbox command opened extra authenticated TCP: %d -> %d", beforeAuth, got)
+		}
+		equalBytes(t, baseline, auto)
+		var items []core.Item
+		if err := json.Unmarshal(auto, &items); err != nil || len(items) != 2 {
+			t.Fatalf("expected both verified parcels: %s %v", auto, err)
+		}
+		var textID, fileID string
+		for _, item := range items {
+			if item.Type == "text" {
+				textID = item.ID
+			} else {
+				fileID = item.ID
+			}
+		}
+		if textID == "" || fileID == "" {
+			t.Fatal("text/file metadata missing")
+		}
+		w.ok(w.bob, nil, "untrust", "alice")
+		equalBytes(t, []byte("[]\n"), w.fails(w.bob, nil, "unapproved sender", "inbox", "--json"))
+		w.fails(w.bob, nil, "unapproved sender", "receive", textID, "--stdout")
+		w.assertExists(w.remote(w.bob, textID), true)
+		w.ok(w.bob, nil, "trust", w.alice.fingerprint, "--name", "alice")
+		equalBytes(t, baseline, w.ok(w.bob, nil, "inbox", "--json"))
+		// An SFTP-only account must work quietly through the capability fallback.
+		w.admin("sh", "-c", "printf '\nForceCommand internal-sftp\n' >> /etc/ssh/sshd_config")
+		w.reloadSSHD()
+		equalBytes(t, baseline, w.ok(w.bob, nil, "inbox", "--json"))
+		equalBytes(t, text, w.ok(w.bob, nil, "receive", textID, "--stdout"))
+		w.assertExists(w.remote(w.bob, textID), false)
+		w.assertExists(w.remote(w.bob, fileID), true)
+		equalBytes(t, data, w.ok(w.bob, nil, "receive", fileID, "--stdout", "--keep"))
+		w.ok(w.bob, nil, "delete", fileID)
+		w.assertExists(w.remote(w.bob, fileID), false)
+	})
+}

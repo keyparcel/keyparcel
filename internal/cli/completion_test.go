@@ -27,6 +27,8 @@ func TestLocalCompletion(t *testing.T) {
 		words, want []string
 	}{
 		{"commands", []string{"tr"}, []string{"trust"}},
+		{"inbox policy", []string{"inbox", "--inbox-mode", ""}, []string{"auto", "sftp"}},
+		{"setup policy", []string{"setup", "--inbox-mode", "sf"}, []string{"sftp"}},
 		{"next name flag", []string{"trust", "SHA256:test", ""}, []string{"--name"}},
 		{"hosts", []string{"devices", "--host", "in"}, []string{"inbox"}},
 		{"inline hosts", []string{"devices", "--host=in"}, []string{"--host=inbox"}},

@@ -13,6 +13,7 @@ import (
 	"math/rand"
 	"os"
 	"path"
+	"reflect"
 	"sort"
 	"time"
 
@@ -185,6 +186,15 @@ func run() error {
 	if err = s.Client.MkdirAll(s.InboxDir()); err != nil {
 		return err
 	}
+	if err = measure("inbox-command-initial", 1, nil, func() error {
+		items, rejected, ids, e := s.ListAccelerated(cfg)
+		if e == nil && (len(items) != 0 || len(rejected) != 0 || len(ids) != 0) {
+			e = errors.New("initial command inbox not empty")
+		}
+		return e
+	}, nil); err != nil {
+		return err
+	}
 	for _, entries := range []int{0, 1, 10} {
 		if entries > 0 {
 			for i := 0; i < entries; i++ {
@@ -193,15 +203,27 @@ func run() error {
 				}
 			}
 		}
-		if err = measure(fmt.Sprintf("inbox-%d", entries), count, nil, func() error {
-			items, rejected, _, e := s.List(cfg)
-			if e == nil && (len(items) != entries || len(rejected) != 0) {
-				e = errors.New("incorrect verified inbox")
+		var expected []core.Item
+		if err = measure(fmt.Sprintf("inbox-sftp-%d", entries), count, nil, func() error {
+			items, rejected, ids, e := s.ListSFTP(cfg)
+			if e == nil && (len(items) != entries || len(rejected) != 0 || len(ids) != entries) {
+				e = errors.New("incorrect verified SFTP inbox")
+			}
+			expected = items
+			return e
+		}, nil); err != nil {
+			return err
+		}
+		if err = measure(fmt.Sprintf("inbox-accelerated-%d", entries), count, nil, func() error {
+			items, rejected, ids, e := s.ListAccelerated(cfg)
+			if e == nil && (!reflect.DeepEqual(items, expected) || len(rejected) != 0 || len(ids) != entries) {
+				e = errors.New("accelerated inbox differs from verified SFTP inbox")
 			}
 			return e
 		}, nil); err != nil {
 			return err
 		}
+
 		if entries > 0 {
 			if _, rejected, e := s.Delete(nil, true); e != nil || len(rejected) != 0 {
 				return fmt.Errorf("inbox cleanup: %v %v", e, rejected)

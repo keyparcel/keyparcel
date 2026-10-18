@@ -517,6 +517,12 @@ UI *ui_new(uintptr_t handle, const char *icon) {
     GtkWidget *advanced_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     field(ui, advanced_box, "root", "Remote storage");
     field(ui, advanced_box, "discovery", "Discovery file");
+    gtk_box_append(GTK_BOX(advanced_box),label("Inbox listing"));
+    GtkWidget *inbox_mode=gtk_combo_box_text_new();
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(inbox_mode),"auto","Automatic");
+    gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(inbox_mode),"sftp","SFTP only");
+    gtk_combo_box_set_active_id(GTK_COMBO_BOX(inbox_mode),"auto");
+    accessible(inbox_mode,"Inbox listing");remember(ui,"inbox-mode",inbox_mode);gtk_box_append(GTK_BOX(advanced_box),inbox_mode);
     gtk_box_append(GTK_BOX(advanced_box), label("OpenSSH configuration override (empty uses OpenSSH defaults)"));
     GtkWidget *ssh_config = label(""); remember(ui, "ssh-config", ssh_config); gtk_box_append(GTK_BOX(advanced_box), ssh_config);
     gtk_box_append(GTK_BOX(advanced_box), label("Server keys are managed in OpenSSH known_hosts. Identity and server fingerprints remain visible during trust approval."));
@@ -653,7 +659,8 @@ const char *ui_get(UI *ui, const char *name) {
 }
 void ui_set(UI *ui, const char *name, const char *text) {
     GtkWidget *w = g_hash_table_lookup(ui->fields, name);
-    if (GTK_IS_EDITABLE(w)) gtk_editable_set_text(GTK_EDITABLE(w), text);
+    if (GTK_IS_COMBO_BOX(w)) gtk_combo_box_set_active_id(GTK_COMBO_BOX(w),text);
+    else if (GTK_IS_EDITABLE(w)) gtk_editable_set_text(GTK_EDITABLE(w), text);
     else if (GTK_IS_LABEL(w)) gtk_label_set_text(GTK_LABEL(w), text);
 }
 char *ui_draft(UI *ui) {

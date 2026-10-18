@@ -38,7 +38,7 @@ func checkGTKProfilePreview(t *testing.T, m *model) {
 		return core.Host{Identity: path, Fingerprint: ssh.FingerprintSHA256(key.Public), Root: "storage", Discovery: "keys"}
 	}
 	first, second := makeHost(), makeHost()
-	second.Root, second.Discovery = "other-storage", "other-keys"
+	second.Root, second.Discovery, second.InboxMode = "other-storage", "other-keys", "sftp"
 	cfg := &core.Config{DefaultHost: "first", Hosts: map[string]core.Host{"first": first, "second": second, "same-key": second}, Peers: map[string]string{}}
 	if err := cfg.Save(m.store.path); err != nil {
 		t.Fatal(err)
@@ -46,6 +46,9 @@ func checkGTKProfilePreview(t *testing.T, m *model) {
 	m.settingsLoaded = false
 	active := profile{Target: "first", Host: first, Config: cfg}
 	m.applyProfile(active)
+	if m.get("inbox-mode") != "auto" {
+		t.Fatal("default inbox policy was not automatic")
+	}
 	var dials atomic.Int32
 	connection := core.NewConnection(m.ctx, func(context.Context) (*core.Session, error) { dials.Add(1); return nil, errors.New("unexpected dial") })
 	m.session.connection, m.session.target, m.session.host = connection, active.Target, first
@@ -64,7 +67,7 @@ func checkGTKProfilePreview(t *testing.T, m *model) {
 	m.enrollmentOpen = true
 	m.enrollment = enrollmentDetails{Public: "old", Fingerprint: "old"}
 	m.event("host-selected", "second", "")
-	if m.get("target") != "second" || m.get("identity") != second.Identity || m.get("root") != second.Root || m.get("discovery") != second.Discovery {
+	if m.get("target") != "second" || m.get("identity") != second.Identity || m.get("root") != second.Root || m.get("discovery") != second.Discovery || m.get("inbox-mode") != "sftp" {
 		t.Fatal("saved selection did not populate every form field")
 	}
 	if m.enrollmentOpen || m.enrollment != (enrollmentDetails{}) {
@@ -101,14 +104,15 @@ func checkGTKProfilePreview(t *testing.T, m *model) {
 	latest.Root = "latest-storage"
 	cfg.Hosts["second"] = latest
 	m.set("root", "unsaved-storage")
+	m.set("inbox-mode", "auto")
 	if !m.publishSnapshot(liveSnapshot{Profile: active}, m.profileVersion) {
 		t.Fatal("current profile-map update was rejected")
 	}
-	if m.hosts["new-profile"] != first || m.get("target") != "same-key" || m.get("root") != "unsaved-storage" {
+	if m.hosts["new-profile"] != first || m.get("target") != "same-key" || m.get("root") != "unsaved-storage" || m.get("inbox-mode") != "auto" {
 		t.Fatal("profile-map update overwrote unsaved fields")
 	}
 	m.event("host-selected", "second", "")
-	if m.get("root") != latest.Root {
+	if m.get("root") != latest.Root || m.get("inbox-mode") != "sftp" {
 		t.Fatal("selection used an obsolete saved-profile map")
 	}
 	// Missing saved identities must still populate the form without validation/dial.

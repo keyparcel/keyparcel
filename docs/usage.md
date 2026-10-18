@@ -61,6 +61,22 @@ Clients create remote directories as needed, using the account's permissions and
 server umask. Custom `setup --root PATH --discovery PATH` settings must reference the
 same storage and enrolled-key list on all participating clients.
 
+## Inbox listing
+
+Inbox listing automatically probes once per connection for compatible shell,
+`find`, `stat` and `head` behavior (GNU and BusyBox are tested). When supported,
+one read-only SSH command streams filenames, timestamps and bounded encrypted
+metadata prefixes; clients still decrypt and verify signed metadata locally.
+Unsupported servers and aggregate safety limits fall back to ordinary SFTP.
+Malformed/truncated responses and connection loss fail the refresh rather than
+publishing a partial inbox. No server helper is installed.
+
+Use `setup --inbox-mode sftp` to save a profile that disables this optimization,
+or `inbox --inbox-mode sftp` for one invocation. `auto` restores automatic probing.
+The GUIs offer **Inbox listing: Automatic / SFTP only** in Advanced settings.
+Discovery, completion, all transfers and mutations always use SFTP. Receive still
+fully verifies the original parcel before exposing content.
+
 ## Receiving and retention
 
 The GTK and Android GUIs keep received transfers until **Remove & close** is

@@ -24,6 +24,7 @@ type Host struct {
 	Fingerprint string `json:"fingerprint"`
 	Root        string `json:"root"`
 	Discovery   string `json:"discovery"`
+	InboxMode   string `json:"inbox_mode,omitempty"`
 }
 type Config struct {
 	Hosts       map[string]Host   `json:"hosts"`
@@ -74,6 +75,9 @@ func LoadConfig(file string) (*Config, error) {
 	for target, h := range c.Hosts {
 		if err = ValidateTarget(target); err != nil {
 			return nil, err
+		}
+		if !validInboxMode(h.InboxMode) {
+			return nil, fmt.Errorf("invalid inbox mode for host %q", target)
 		}
 		if h.Identity == "" || h.Fingerprint == "" || h.Root == "" || h.Discovery == "" {
 			return nil, fmt.Errorf("incomplete configuration for host %q", target)

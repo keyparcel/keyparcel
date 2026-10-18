@@ -124,6 +124,11 @@ func (m *model) settingsFields(p profile) {
 	m.set("identity", identity)
 	m.set("root", root)
 	m.set("discovery", discovery)
+	mode := p.Host.InboxMode
+	if mode == "" {
+		mode = "auto"
+	}
+	m.set("inbox-mode", mode)
 	m.settingsLoaded = true
 }
 
@@ -135,8 +140,9 @@ type profileLoad struct {
 
 func (m *model) saveAndConnect() {
 	target, identity, root, discovery := m.get("target"), m.get("identity"), m.get("root"), m.get("discovery")
+	inboxMode := m.get("inbox-mode")
 	m.run("Saving shared settings…", func(_ context.Context) (any, error) {
-		if err := m.store.setup(target, identity, root, discovery); err != nil {
+		if err := m.store.setup(target, identity, root, discovery, inboxMode); err != nil {
 			return nil, err
 		}
 		return m.store.load(target)

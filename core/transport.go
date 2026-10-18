@@ -32,6 +32,7 @@ type Session struct {
 	channel        *sftpChannel
 	openSFTP       func() (*sftpChannel, error)
 	waitTransport  func() error
+	inbox          *inboxAcceleration
 	channelMu      sync.Mutex
 	channels       []*sftpChannel
 	channelsClosed bool
@@ -316,7 +317,7 @@ func (s *Session) openPackage(id string) (*sftp.File, time.Time, error) {
 	f, err := s.Client.Open(p)
 	return f, info.ModTime().UTC(), err
 }
-func (s *Session) List(c *Config) ([]Item, []Rejected, []string, error) {
+func (s *Session) ListSFTP(c *Config) ([]Item, []Rejected, []string, error) {
 	ids, err := s.IDs()
 	if err != nil {
 		return nil, nil, nil, err
@@ -329,9 +330,9 @@ func (s *Session) List(c *Config) ([]Item, []Rejected, []string, error) {
 		if errors.Is(e, io.EOF) || errors.Is(e, io.ErrUnexpectedEOF) {
 			return nil, nil, nil, fmt.Errorf("open package %s: %w", id, e)
 		}
-		var m Manifest
+		var item Item
 		if e == nil {
-			m, _, e = ReadPackage(s.ctx, io.LimitReader(f, 1024*1024), s.Identity, c.Peers, id)
+			item, e = s.readInboxItem(c, id, uploaded, io.LimitReader(f, inboxPrefixLimit))
 			closeErr := f.Close()
 			if closeErr != nil {
 				return nil, nil, nil, fmt.Errorf("close package %s: %w", id, closeErr)
@@ -347,26 +348,38 @@ func (s *Session) List(c *Config) ([]Item, []Rejected, []string, error) {
 			bad = append(bad, Rejected{id, e.Error()})
 			continue
 		}
-		name := ""
-		for n, pub := range c.Peers {
-			p, _ := ParsePublic(pub)
-			if ssh.FingerprintSHA256(p) == m.Sender {
-				name = n
-				break
-			}
-		}
-		if m.Sender == ssh.FingerprintSHA256(s.Identity.Public) {
-			name = "self"
-		}
-		items = append(items, Item{Manifest: m, From: name, UploadedAt: uploaded})
+		items = append(items, item)
 	}
+	sortInbox(items)
+	return items, bad, ids, nil
+}
+
+func sortInbox(items []Item) {
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].UploadedAt.Equal(items[j].UploadedAt) {
 			return items[i].ID < items[j].ID
 		}
 		return items[i].UploadedAt.After(items[j].UploadedAt)
 	})
-	return items, bad, ids, nil
+}
+
+func (s *Session) readInboxItem(c *Config, id string, uploaded time.Time, r io.Reader) (Item, error) {
+	m, _, err := ReadPackage(s.ctx, r, s.Identity, c.Peers, id)
+	if err != nil {
+		return Item{}, err
+	}
+	name := ""
+	for n, pub := range c.Peers {
+		p, _ := ParsePublic(pub)
+		if ssh.FingerprintSHA256(p) == m.Sender {
+			name = n
+			break
+		}
+	}
+	if m.Sender == ssh.FingerprintSHA256(s.Identity.Public) {
+		name = "self"
+	}
+	return Item{Manifest: m, From: name, UploadedAt: uploaded}, nil
 }
 
 // Transport failures may be local I/O errors or SFTP status responses.

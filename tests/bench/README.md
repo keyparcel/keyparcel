@@ -33,15 +33,23 @@ the runner's CPU/disk, so timings can include that contention; they do not share
 a network cap or SSH connection.
 
 Small uses five measured samples and valid signed/encrypted 512-byte file parcels:
-discovery, verified Inbox at 0/1/10 items, full-ID receive/delete, and all four
+discovery, verified Inbox at 0/1/10 items through both SFTP and accelerated SSH,
+full-ID receive/delete, and all four
 existing/missing-inbox × fresh/cached-discovery send cases. Preparation and cleanup
 are outside operation timers. Receives include normal full verification and atomic
 local SaveContent; exact saved bytes are checked. Sends include package creation
 and atomic publication, then are received/checked/deleted outside the send timer.
+Each small cell first records one `inbox-command-initial` sample (probe plus empty
+listing). Its accelerated rows require the actual command capability and compare
+verified items exactly with SFTP; unsupported servers fail this measurement instead
+of silently timing a fallback. There are 90 rows across both transports/three RTTs:
+six initial samples and 84 rows of five samples.
+
 Bulk uses three measured uploads and downloads per transport: 10 MiB at 20 ms
 RTT and 2 MiB at 100 ms RTT, both at 100 Mbit/s. Uploads
 use fresh discovery. Downloads verify and atomically save the actual uploaded
-parcels. Payload bytes are deterministic pseudorandom data, not zero fill.
+parcels. This transfer path remains SFTP; inbox acceleration does not change bulk
+transport or settings. Payload bytes are deterministic pseudorandom data, not zero fill.
 
 All samples are retained, including the first; there are no discarded warmups.
 Tables report commit, transport, requested RTT, planned/completed sample counts,

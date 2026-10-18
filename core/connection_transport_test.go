@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -75,6 +76,7 @@ func TestConnectionConcurrentTransport(t *testing.T) {
 			var tcp, authenticated, subsystems atomic.Int32
 			owners := make(chan *ssh.ServerConn, 20)
 			var rejectChannel atomic.Bool
+			execHeld := make(chan struct{})
 			handlers := sftp.InMemHandler()
 			held := &heldListing{FileLister: handlers.FileList}
 			gate := held.hold()
@@ -121,6 +123,32 @@ func TestConnectionConcurrentTransport(t *testing.T) {
 								}
 								defer channel.Close()
 								for request := range requests {
+									if request.Type == "exec" {
+										var command struct{ Command string }
+										if ssh.Unmarshal(request.Payload, &command) != nil {
+											request.Reply(false, nil)
+											return
+										}
+										request.Reply(true, nil)
+										code := uint32(0)
+										switch command.Command {
+										case "test:binary":
+											channel.Write([]byte{0, 255, 10})
+										case "test:hold":
+											close(execHeld)
+											io.Copy(io.Discard, channel)
+										case "test:exit":
+											code = 7
+										case "test:stderr":
+											channel.Stderr().Write(bytes.Repeat([]byte("x"), 128*1024))
+										case "test:malformed":
+											channel.Write([]byte("bad frame\n"))
+										default:
+											code = 127
+										}
+										channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{code}))
+										return
+									}
 									if request.Type != "subsystem" {
 										request.Reply(false, nil)
 										continue
@@ -218,6 +246,38 @@ func TestConnectionConcurrentTransport(t *testing.T) {
 			if err := <-polled; err != nil {
 				t.Fatal("poll failed after concurrent transfer:", err)
 			}
+			// Exec channels share this owner and must never retire its SFTP roles
+			// on a remote exit, bounded stderr, or malformed read-only response.
+			for _, command := range []string{"test:binary", "test:exit", "test:stderr", "test:malformed"} {
+				err := c.Do(ctx, func(s *Session) error {
+					return s.inbox.run(ctx, command, func(r io.Reader) error {
+						if command == "test:malformed" {
+							_, _, _, err := s.decodeInbox(&Config{}, r)
+							return err
+						}
+						data, err := io.ReadAll(io.LimitReader(r, 16))
+						if command == "test:binary" && !bytes.Equal(data, []byte{0, 255, 10}) {
+							return errors.New("exec changed binary bytes")
+						}
+						return err
+					})
+				})
+				if command == "test:binary" && err != nil {
+					t.Fatal("binary exec:", err)
+				}
+				if command != "test:binary" && err == nil {
+					t.Fatal("exec failure was hidden:", command)
+				}
+				if command == "test:stderr" && !errors.Is(err, errInboxCommandOutput) {
+					t.Fatal("stderr bound:", err)
+				}
+				if err := c.Do(ctx, func(s *Session) error { _, err := s.Client.Stat("/parcel"); return err }); err != nil {
+					t.Fatal("exec failure retired SFTP owner:", command, err)
+				}
+			}
+			if tcp.Load() != 1 || authenticated.Load() != 1 {
+				t.Fatal("exec opened another authenticated transport")
+			}
 			// A normal remote application error must preserve the same authenticated socket.
 			if err := c.Do(ctx, func(s *Session) error { _, err := s.Client.Stat("/absent"); return err }); !os.IsNotExist(err) {
 				t.Fatal("missing expected file error:", err)
@@ -285,10 +345,17 @@ func TestConnectionConcurrentTransport(t *testing.T) {
 			var actions atomic.Int32
 			err = c.Do(admitted, func(s *Session) error {
 				actions.Add(1)
-				cancelAdmitted()
-				<-s.ctx.Done()
-				_, err := s.Client.Stat("/parcel")
-				return err
+				if _, err := s.Client.Stat("/parcel"); err != nil {
+					return err
+				}
+				go func() {
+					select {
+					case <-execHeld:
+						cancelAdmitted()
+					case <-ctx.Done():
+					}
+				}()
+				return s.inbox.run(s.ctx, "test:hold", func(r io.Reader) error { _, err := io.Copy(io.Discard, r); return err })
 			})
 			if !errors.Is(err, context.Canceled) {
 				t.Fatal("admitted cancellation:", err)

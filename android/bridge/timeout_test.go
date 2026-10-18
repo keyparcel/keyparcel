@@ -74,18 +74,20 @@ func testRequestDeadline(t *testing.T, persistent bool) {
 				finished <- err
 				return
 			}
-			for request := range requests {
-				if request.Type != "subsystem" {
-					request.Reply(false, nil)
-					continue
+			go func() {
+				for request := range requests {
+					if request.Type != "subsystem" {
+						request.Reply(false, nil)
+						continue
+					}
+					request.Reply(true, nil)
+					fs := sftp.NewRequestServer(channel, sftp.Handlers{FileList: listing})
+					err := fs.Serve()
+					fs.Close()
+					finished <- err
+					return
 				}
-				request.Reply(true, nil)
-				fs := sftp.NewRequestServer(channel, sftp.Handlers{FileList: listing})
-				err := fs.Serve()
-				fs.Close()
-				finished <- err
-				return
-			}
+			}()
 		}
 		finished <- errors.New("no SFTP subsystem requested")
 	}()

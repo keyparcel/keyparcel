@@ -14,13 +14,13 @@ import (
 )
 
 var completionFlags = map[string][]string{
-	"setup":   {"--host", "--identity", "--default", "--root", "--discovery"},
+	"setup":   {"--host", "--identity", "--default", "--root", "--discovery", "--inbox-mode"},
 	"devices": {"--json"}, "trust": {"--name"}, "untrust": {},
 	"send":    {"--to", "--text", "--stdin", "--file"},
-	"inbox":   {"--json", "--watch", "--interval"},
+	"inbox":   {"--json", "--watch", "--interval", "--inbox-mode"},
 	"receive": {"--stdout", "--copy", "--save-to", "--keep", "--overwrite"}, "delete": {"--all"}, "bench": {"--rounds"},
 }
-var valueFlags = map[string]bool{"--host": true, "--config": true, "--ssh-config": true, "--identity": true, "--root": true, "--discovery": true, "--name": true, "--to": true, "--text": true, "--file": true, "--save-to": true, "--interval": true, "--rounds": true}
+var valueFlags = map[string]bool{"--host": true, "--config": true, "--ssh-config": true, "--identity": true, "--root": true, "--discovery": true, "--name": true, "--to": true, "--text": true, "--file": true, "--save-to": true, "--interval": true, "--rounds": true, "--inbox-mode": true}
 
 // Completion is read-only and failures intentionally produce no shell diagnostics.
 func complete(ctx context.Context, words []string, out io.Writer) error {
@@ -121,6 +121,9 @@ func completeWithConnector(ctx context.Context, words []string, out io.Writer, c
 			}
 		}
 		return emit(values)
+	}
+	if pending == "--inbox-mode" {
+		return emit([]string{"auto", "sftp"})
 	}
 	cfg, err := core.LoadConfig(configPath)
 	if err != nil {
