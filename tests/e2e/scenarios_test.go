@@ -495,7 +495,12 @@ func TestMetadataReadsStayBounded(t *testing.T) {
 		os.WriteFile(source, input, 0600)
 		w.ok(w.alice, nil, "send", "--to", "bob", "--file", source)
 		before := w.admin("cat", "/var/log/sftp.log")
-		items := w.items(w.bob)
+		// This instrumentation counts SFTP read packets; command-prefix bounds
+		// are checked independently with the actual GNU/BusyBox scripts.
+		var items []core.Item
+		if err := json.Unmarshal(w.ok(w.bob, nil, "inbox", "--json", "--inbox-mode", "sftp"), &items); err != nil {
+			t.Fatal(err)
+		}
 		if len(items) != 1 {
 			t.Fatal(items)
 		}
