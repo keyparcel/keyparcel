@@ -55,6 +55,7 @@ func TestDiagnosticOperationOutcomes(t *testing.T) {
 	}{
 		{name: "cancel", err: fmt.Errorf("wrapped: %w", context.Canceled), outcome: "cancelled"},
 		{name: "stale", err: &recipientChanged{}, outcome: "discarded"},
+		{name: "stale request", err: fmt.Errorf("wrapped: %w", errRequestContextChanged), outcome: "discarded"},
 		{name: "superseded", err: errors.New("old error"), discarded: true, outcome: "discarded"},
 		{name: "timeout", err: context.DeadlineExceeded, outcome: "failed", warning: true},
 		{name: "confirmation", value: "confirm", outcome: "confirmation_required"},

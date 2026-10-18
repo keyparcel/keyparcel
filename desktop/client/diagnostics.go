@@ -48,7 +48,7 @@ func diagnosticCategory(err error) string {
 		return "not_found"
 	}
 	var changed *recipientChanged
-	if errors.As(err, &changed) {
+	if errors.As(err, &changed) || errors.Is(err, errRequestContextChanged) {
 		return "context_changed"
 	}
 	var network net.Error

@@ -27,6 +27,8 @@ type sessionOwner struct {
 	diagnostics *diagnostics
 }
 
+var errRequestContextChanged = errors.New("server or approvals changed; try the operation again")
+
 type interactiveDial struct{}
 
 func (o *sessionOwner) stamp() uint64 {
@@ -51,7 +53,7 @@ func (o *sessionOwner) request(ctx context.Context, p profile, sshConfig, helper
 	o.mu.Lock()
 	if generation != o.generation {
 		o.mu.Unlock()
-		return nil, errors.New("server or approvals changed; try the operation again")
+		return nil, errRequestContextChanged
 	}
 	if o.target != p.Target || o.host != p.Host {
 		o.generation++
