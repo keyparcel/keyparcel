@@ -65,8 +65,10 @@ apply to the CLI.
 Listing verifies signed metadata, not the complete content. Receive fully verifies
 content in temporary storage before output. Successful receive deletes the
 recipient's remote copy unless `--keep` is used. Failed delivery retains it; failed
-deletion after delivery reports both outcomes and exits unsuccessfully. Short IDs
-must uniquely match a completed package in the current inbox; JSON retains full IDs.
+deletion after delivery reports both outcomes and exits unsuccessfully. Receive and
+delete use full 32-character transfer IDs directly. Short IDs (at least eight
+characters) must uniquely match a completed package in the current inbox; JSON
+retains full IDs.
 
 `--save-to PATH` accepts an existing directory or an exact output filename for both
 file and text transfers. Directory saves use the original filename for files and
@@ -127,6 +129,8 @@ Completion suggests commands, flags, local peer names, `self`, configured hosts,
 file paths. `trust` queries current discovery for supported, unapproved keys
 excluding self; after a fingerprint, successive completions suggest `--name` and a
 valid unused remote comment. Remote comments are naming hints, not identity
-verification. `receive` and `delete` suggest full incoming IDs. Remote completion has
-a one-second query deadline, does not prompt, and returns no suggestions when
-discovery or SSH fails. It uses no cache.
+verification. `receive` and `delete` suggest full incoming IDs from parcel filenames
+without reading or verifying their contents. A suggestion can be invalid or from an
+unapproved sender; actual receive still fully verifies it before delivery. Remote
+completion has a five-second query deadline, does not prompt, and returns no
+suggestions when discovery or SSH fails. It uses no cache.

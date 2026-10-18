@@ -356,13 +356,19 @@ func connectionFailure(err error) bool {
 }
 func (s *Session) Receive(c *Config, prefix string, deliver func(Manifest, *os.File) error, keep bool) (Manifest, error) {
 	var m Manifest
-	ids, err := s.IDs()
-	if err != nil {
-		return m, err
+	if len(prefix) < 8 || len(prefix) > 32 || !validHex(prefix, len(prefix)) {
+		return m, errors.New("transfer ID must be 8–32 lowercase hexadecimal characters")
 	}
-	id, err := ResolveID(prefix, ids)
-	if err != nil {
-		return m, err
+	id := prefix
+	if len(prefix) < 32 {
+		ids, err := s.IDs()
+		if err != nil {
+			return m, err
+		}
+		id, err = ResolveID(prefix, ids)
+		if err != nil {
+			return m, err
+		}
 	}
 	f, _, err := s.openPackage(id)
 	if err != nil {
@@ -394,9 +400,21 @@ func (s *Session) Receive(c *Config, prefix string, deliver func(Manifest, *os.F
 	return m, nil
 }
 func (s *Session) Delete(prefixes []string, all bool) (int, []Rejected, error) {
-	ids, err := s.IDs()
-	if err != nil {
-		return 0, nil, err
+	list := all || len(prefixes) == 0
+	for _, prefix := range prefixes {
+		if len(prefix) >= 8 && len(prefix) < 32 && validHex(prefix, len(prefix)) {
+			list = true
+			break
+		}
+	}
+	var ids []string
+	if list {
+		// List before changing a mixed batch, preserving listing-failure retention.
+		var err error
+		ids, err = s.IDs()
+		if err != nil {
+			return 0, nil, err
+		}
 	}
 	if all {
 		prefixes = ids
@@ -405,7 +423,11 @@ func (s *Session) Delete(prefixes []string, all bool) (int, []Rejected, error) {
 	failures := []Rejected{}
 	seen := map[string]bool{}
 	for _, prefix := range prefixes {
-		id, e := ResolveID(prefix, ids)
+		id := prefix
+		var e error
+		if !validHex(id, 32) {
+			id, e = ResolveID(prefix, ids)
+		}
 		if e != nil {
 			failures = append(failures, Rejected{prefix, e.Error()})
 			continue
