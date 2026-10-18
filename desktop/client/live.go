@@ -17,13 +17,14 @@ type ownedConnection struct {
 
 // Owns transport selection; Connection owns admission and shared cancellation.
 type sessionOwner struct {
-	mu         sync.Mutex
-	ctx        context.Context
-	connection *core.Connection
-	target     string
-	host       core.Host
-	current    atomic.Pointer[ownedConnection]
-	generation uint64
+	mu          sync.Mutex
+	ctx         context.Context
+	connection  *core.Connection
+	target      string
+	host        core.Host
+	current     atomic.Pointer[ownedConnection]
+	generation  uint64
+	diagnostics *diagnostics
 }
 
 type interactiveDial struct{}
@@ -60,12 +61,15 @@ func (o *sessionOwner) request(ctx context.Context, p profile, sshConfig, helper
 			o.connection.Close()
 		}
 		o.target, o.host = p.Target, p.Host
+		report := &dialDiagnostics{diagnostics: o.diagnostics}
 		o.connection = core.NewConnection(o.ctx, func(ctx context.Context) (*core.Session, error) {
-			if ctx.Value(interactiveDial{}) == true {
-				return core.ConnectWithAskpass(ctx, p.Target, p.Host, sshConfig, helper)
-			}
-			// Background reconnects must never open repeated approval/credential dialogs.
-			return core.ConnectForCompletion(ctx, p.Target, p.Host, sshConfig)
+			return report.dial(ctx, func() (*core.Session, error) {
+				if ctx.Value(interactiveDial{}) == true {
+					return core.ConnectWithAskpass(ctx, p.Target, p.Host, sshConfig, helper)
+				}
+				// Background reconnects must never open repeated approval/credential dialogs.
+				return core.ConnectForCompletion(ctx, p.Target, p.Host, sshConfig)
+			})
 		})
 	}
 	o.current.Store(&ownedConnection{o.connection, p.Target, p.Host})

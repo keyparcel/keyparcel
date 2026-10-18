@@ -109,3 +109,35 @@ Network/file operations have a two-minute deadline and a Cancel action; a timeou
 or cancellation cleans staging and restores controls. File selection currently
 uses local paths. Candidate installs are checked on Ubuntu 24.04, Debian 13 and
 Fedora 44; native Wayland and other distributions remain unverified; background transfers and notifications are not implemented.
+
+## Diagnostic logs
+
+The GTK client writes timestamped diagnostics to stderr: build information,
+settings-write outcomes, applied profile changes, reconnects, failed operations,
+and the first background-refresh failure followed by recovery. Repeated retry
+failures are quiet by default. `--verbose` adds operation durations/outcomes and
+connection details; successful background polls are not logged.
+
+For a bug report, close the app, launch it from a terminal and reproduce briefly:
+
+```sh
+umask 077
+keyparcel-gtk --verbose >keyparcel-diagnostic.log 2>&1
+```
+
+For a source build, use `desktop/client/build/keyparcel-gtk` instead. Close the app
+to finish capture. Desktop-menu launches may route stderr to a session journal or
+discard it; there is no portable automatic log file.
+
+Application events exclude message/file contents, keys, fingerprints, enrollment
+material, server/user names, paths, parcel IDs and raw error text in both modes.
+They use fixed operation names and error categories instead; `unknown` means the
+underlying error cannot be classified safely, not that the operation succeeded.
+A generic SSH setup failure may also follow rejection of a host-approval prompt.
+Timings describe operation/dial duration, not individual network requests.
+
+**Review the combined file before sharing it.** GTK/GLib, OpenSSH helpers, argument
+parsing and crash diagnostics can emit independently of this logger and may include
+local details. The existing on-screen errors remain detailed; redact identifiers
+before adding a screenshot or copying them into a report. No telemetry or
+persistent application log files are created.
