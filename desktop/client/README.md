@@ -10,9 +10,16 @@ profiles, device identity files, peer approvals and OpenSSH `known_hosts` stores
 
 Launch `desktop/client/build/keyparcel-gtk` after [building](DEVELOPMENT.md), or
 open it against an existing CLI profile. `--config`, `--ssh-config` and `--host`
-select alternate settings. In Settings, select/save a target and an existing
-unencrypted Ed25519 or supported RSA identity; copy its public key for enrollment
-on the server. Advanced settings contain remote paths and OpenSSH details.
+select alternate settings. In Settings, select a saved keyparcel profile or enter an SSH target and an
+existing unencrypted Ed25519 or supported RSA identity. **Browse…** accepts any
+private-key filename. **Save & connect** saves the shared CLI profile and connects;
+failed connections keep the settings and show an error. Advanced settings contain
+remote paths and OpenSSH details.
+
+Open **Show enrollment details** to validate the current identity locally and copy
+its public key for server enrollment. A matching adjacent `.pub` file supplies its
+comment; the private key determines the key and fingerprint. Editing the identity
+or choosing another saved profile clears these details. No key is generated.
 
 On first connection, compare the server fingerprint independently before approving
 the graphical OpenSSH prompt. Rejection changes no trust; changed keys block
@@ -95,7 +102,7 @@ configuration. Its accessible state accompanies color; it is not a reachability
 probe or an inbox-freshness label. Action errors stay with their screen, while
 brief confirmations appear at the bottom.
 Reconnections preserve server-key checks and never open approval dialogs in the
-background: use Connect in Settings when approval is needed. Server/trust changes
+background: use **Save & connect** in Settings when approval is needed. Server/trust changes
 invalidate affected cached results. Monitoring stops when the app exits.
 
 Network/file operations have a two-minute deadline and a Cancel action; a timeout

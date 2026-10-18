@@ -12,7 +12,7 @@ struct UI {
     GtkWidget *body, *status, *spinner, *cancel, *picker, *progress, *confirmation;
     GHashTable *fields, *inbox_rows, *device_rows, **current_rows, *next_rows;
     GtkWidget *row_box, *last_row;
-    gboolean closed, destroyed, has_file, send_locked;
+    gboolean closed, destroyed, has_file, send_locked, updating_settings, resetting_enrollment;
     int send_count;
 };
 typedef struct { UI *ui; char *action, *arg; GtkWidget *entry; } Action;
@@ -49,7 +49,7 @@ static GtkWidget *button(UI *ui, const char *label, const char *action, const ch
     GtkWidget *b = gtk_button_new_with_label(label);
     gtk_widget_set_halign(b, GTK_ALIGN_START);
     if (strcmp(action, "send-text") == 0 || strcmp(action, "send-file") == 0 ||
-        strcmp(action, "connect") == 0 || strcmp(action, "receive-text") == 0 || strcmp(action, "receive-file") == 0)
+        strcmp(action, "save-connect") == 0 || strcmp(action, "receive-text") == 0 || strcmp(action, "receive-file") == 0)
         gtk_widget_add_css_class(b, "suggested-action");
     g_signal_connect_data(b, "clicked", G_CALLBACK(clicked), action_new(ui, action, arg), action_free, 0);
     return b;
@@ -83,6 +83,87 @@ static GtkWidget *field(UI *ui, GtkWidget *box, const char *name, const char *ti
     remember(ui, name, entry);
     gtk_box_append(GTK_BOX(box), entry);
     return entry;
+}
+static void info_cancel_focus(GtkWidget *button) {
+    guint source=GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(button),"info-focus-source"));
+    g_object_set_data(G_OBJECT(button),"info-focus-source",NULL);
+    if (source) g_source_remove(source);
+}
+static gboolean info_focus_idle(gpointer data) {
+    GtkEventControllerFocus *focus=data;
+    GtkWidget *button=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(focus));
+    if (button) {
+        g_object_set_data(G_OBJECT(button),"info-focus-source",NULL);
+        if (gtk_event_controller_focus_contains_focus(focus) && gtk_widget_get_root(button) && !gtk_menu_button_get_active(GTK_MENU_BUTTON(button)))
+            gtk_menu_button_popup(GTK_MENU_BUTTON(button));
+    }
+    return G_SOURCE_REMOVE;
+}
+static void info_focus_enter(GtkEventControllerFocus *focus,gpointer data) {
+    (void)data;
+    GtkWidget *button=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(focus));
+    if (gtk_menu_button_get_active(GTK_MENU_BUTTON(button))) return;
+    info_cancel_focus(button);
+    // Defer keyboard help until GTK finishes assigning focus.
+    guint source=g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,info_focus_idle,g_object_ref(focus),g_object_unref);
+    g_object_set_data(G_OBJECT(button),"info-focus-source",GUINT_TO_POINTER(source));
+}
+static void info_focus_leave(GtkEventControllerFocus *focus,gpointer data) {
+    (void)data;
+    GtkWidget *button=gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(focus));
+    if (button) { info_cancel_focus(button);gtk_menu_button_popdown(GTK_MENU_BUTTON(button)); }
+}
+static void info_active_changed(GtkMenuButton *button,GParamSpec *spec,GtkEventControllerFocus *focus) {
+    (void)spec;
+    info_cancel_focus(GTK_WIDGET(button));
+    // Take pointer focus after activation, so focus help cannot preempt the click.
+    if (gtk_menu_button_get_active(button) && !gtk_event_controller_focus_contains_focus(focus))
+        gtk_widget_grab_focus(GTK_WIDGET(button));
+}
+static void info_label(UI *ui, GtkWidget *box, const char *title, const char *help, const char *name) {
+    GtkWidget *row=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,6);
+    GtkWidget *caption=label(title);gtk_label_set_wrap(GTK_LABEL(caption),FALSE);
+    gtk_label_set_selectable(GTK_LABEL(caption),FALSE);
+    gtk_box_append(GTK_BOX(row),caption);
+    GtkWidget *button=gtk_menu_button_new();
+    gtk_widget_set_focus_on_click(button,FALSE);
+    GtkWidget *symbol=gtk_image_new_from_icon_name("help-about-symbolic");
+    gtk_image_set_pixel_size(GTK_IMAGE(symbol),14);gtk_menu_button_set_child(GTK_MENU_BUTTON(button),symbol);
+    gtk_widget_add_css_class(button,"settings-info");gtk_widget_set_valign(button,GTK_ALIGN_CENTER);
+    gtk_widget_add_css_class(button,"flat");
+    accessible(button,name);gtk_widget_set_tooltip_text(button,help);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(button),GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,help,-1);
+    GtkWidget *popover=gtk_popover_new(), *text=label(help);
+    gtk_label_set_selectable(GTK_LABEL(text),FALSE);gtk_label_set_max_width_chars(GTK_LABEL(text),52);
+    gtk_popover_set_autohide(GTK_POPOVER(popover),FALSE);
+    gtk_popover_set_child(GTK_POPOVER(popover),text);gtk_menu_button_set_popover(GTK_MENU_BUTTON(button),popover);
+    remember(ui,name,popover);
+    GtkEventController *focus=gtk_event_controller_focus_new();
+    g_signal_connect(focus,"enter",G_CALLBACK(info_focus_enter),NULL);
+    g_signal_connect(focus,"leave",G_CALLBACK(info_focus_leave),NULL);
+    gtk_widget_add_controller(button,focus);
+    g_signal_connect_object(button,"notify::active",G_CALLBACK(info_active_changed),focus,0);
+    gtk_box_append(GTK_BOX(row),button);gtk_box_append(GTK_BOX(box),row);
+}
+static void host_selected(GtkComboBox *hosts, gpointer data) {
+    UI *ui=data;
+    gboolean popup=FALSE;g_object_get(hosts,"popup-shown",&popup,NULL);
+    if (popup) return; // Load the committed choice, not intermediate keyboard navigation.
+    const char *id=gtk_combo_box_get_active_id(hosts);
+    const char *text=gtk_editable_get_text(GTK_EDITABLE(gtk_combo_box_get_child(hosts)));
+    if (!ui->closed && !ui->updating_settings && id && strcmp(id,text)==0) goEvent(ui->handle,"host-selected",(char *)id,"");
+}
+static void host_popup_changed(GObject *object,GParamSpec *spec,gpointer data) {
+    (void)spec;host_selected(GTK_COMBO_BOX(object),data);
+}
+static void identity_changed(GtkEditable *entry,gpointer data) {
+    (void)entry;UI *ui=data;
+    if (!ui->closed && !ui->updating_settings) goEvent(ui->handle,"identity-changed","","");
+}
+static void enrollment_changed(GObject *object,GParamSpec *spec,gpointer data) {
+    (void)spec;UI *ui=data;
+    if (!ui->closed && !ui->resetting_enrollment)
+        goEvent(ui->handle,"enrollment-toggle",gtk_expander_get_expanded(GTK_EXPANDER(object)) ? "true" : "false","");
 }
 static GtkWidget *page(UI *ui, const char *name, const char *title) {
     GtkWidget *frame = g_object_new(GTK_TYPE_BOX,"orientation",GTK_ORIENTATION_VERTICAL,"spacing",14,
@@ -169,6 +250,11 @@ static gboolean back_key(GtkEventControllerKey *controller, guint key, guint cod
     if (key != GDK_KEY_Escape && !(key == GDK_KEY_Left && (state & GDK_ALT_MASK))) return FALSE;
     if (ui->picker) ui_cancel_picker(ui);
     else {
+        const char *help_names[]={"SSH target information","Identity file information"};
+        for (int i=0;i<2;i++) {
+            GtkWidget *help=g_hash_table_lookup(ui->fields,help_names[i]);
+            if (help && gtk_widget_get_visible(help)) { gtk_popover_popdown(GTK_POPOVER(help)); return TRUE; }
+        }
         GtkExpander *advanced = g_hash_table_lookup(ui->fields, "advanced");
         if (strcmp(gtk_stack_get_visible_child_name(ui->pages), "settings") == 0 && gtk_expander_get_expanded(advanced))
             gtk_expander_set_expanded(advanced, FALSE);
@@ -204,6 +290,26 @@ void ui_picker(UI *ui, int save, const char *filename) {
     gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
     if (save) gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(dialog), filename);
     dialog_attach(ui, dialog, action_new(ui, save ? "save-path" : "send-path", ""));
+}
+void ui_identity_picker(UI *ui) {
+    if (ui->picker) return;
+    GtkWidget *dialog=gtk_file_chooser_dialog_new("Choose identity file",ui->window,GTK_FILE_CHOOSER_ACTION_OPEN,
+        "Cancel",GTK_RESPONSE_CANCEL,"Open",GTK_RESPONSE_ACCEPT,NULL);
+    gtk_window_set_modal(GTK_WINDOW(dialog),TRUE);
+    dialog_attach(ui,dialog,action_new(ui,"identity-path",""));
+}
+void ui_settings_edit(UI *ui,int updating) { ui->updating_settings=updating; }
+void ui_enrollment(UI *ui,const char *public_key,const char *fingerprint,const char *error) {
+    ui_set(ui,"public-key",public_key);ui_set(ui,"identity-fingerprint",fingerprint);ui_set(ui,"enrollment-error",error);
+    gtk_widget_set_visible(g_hash_table_lookup(ui->fields,"enrollment-error"),error[0]!=0);
+    gtk_widget_set_sensitive(g_hash_table_lookup(ui->fields,"copy-key"),public_key[0]!=0);
+    gtk_widget_set_sensitive(g_hash_table_lookup(ui->fields,"copy-identity"),fingerprint[0]!=0);
+}
+void ui_enrollment_reset(UI *ui) {
+    ui->resetting_enrollment=TRUE;
+    gtk_expander_set_expanded(GTK_EXPANDER(g_hash_table_lookup(ui->fields,"enrollment")),FALSE);
+    ui->resetting_enrollment=FALSE;
+    ui_enrollment(ui,"","","");
 }
 void ui_cancel_picker(UI *ui) { if (ui->picker) gtk_dialog_response(GTK_DIALOG(ui->picker), GTK_RESPONSE_CANCEL); }
 int ui_picker_pending(UI *ui) { return ui->picker != NULL; }
@@ -299,7 +405,9 @@ UI *ui_new(uintptr_t handle, const char *icon) {
         ".keyparcel .connection-status.success { color: #287d38; }"
         ".keyparcel .connection-status.warning { color: #947000; }"
         ".keyparcel .connection-status.error { color: #c01c28; }"
-        ".keyparcel button { padding: 7px 14px; border-radius: 10px; }", -1);
+        ".keyparcel button { padding: 7px 14px; border-radius: 10px; }"
+        ".keyparcel .settings-info > button { padding: 2px; min-width: 24px; min-height: 24px; border-color: transparent; background: transparent; box-shadow: none; }"
+        ".keyparcel .settings-info > button:hover { background: alpha(@theme_fg_color, 0.08); }", -1);
     gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(style), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     g_object_unref(style);
     UI *ui = g_new0(UI, 1);
@@ -378,23 +486,33 @@ UI *ui_new(uintptr_t handle, const char *icon) {
     gtk_box_append(GTK_BOX(inbox), items);
 
     GtkWidget *settings = page(ui, "settings", "Settings — shared with the CLI");
-    gtk_box_append(GTK_BOX(settings), label("SSH target or saved host"));
+    info_label(ui,settings,"SSH target","Enter user@host or an SSH alias. The list contains keyparcel configurations previously saved through the CLI or this GTK app.","SSH target information");
     GtkWidget *hosts = gtk_combo_box_text_new_with_entry(); remember(ui, "hosts", hosts);
     remember(ui, "target", gtk_combo_box_get_child(GTK_COMBO_BOX(hosts)));
     accessible(gtk_combo_box_get_child(GTK_COMBO_BOX(hosts)), "SSH target"); gtk_box_append(GTK_BOX(settings), hosts);
-    gtk_box_append(GTK_BOX(settings), button(ui, "Use saved host", "use-host", ""));
-    field(ui, settings, "identity", "Identity file");
-    GtkWidget *actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    gtk_box_append(GTK_BOX(actions), button(ui, "Save settings", "setup", ""));
-    gtk_box_append(GTK_BOX(actions), button(ui, "Connect", "connect", "")); gtk_box_append(GTK_BOX(settings), actions);
-    GtkWidget *pub = label(""); remember(ui, "public-key", pub); gtk_box_append(GTK_BOX(settings), pub);
-    GtkWidget *fp = label(""); remember(ui, "identity-fingerprint", fp); gtk_box_append(GTK_BOX(settings), fp);
-    gtk_widget_add_css_class(pub, "key-material"); gtk_widget_add_css_class(fp, "key-material");
-    gtk_box_append(GTK_BOX(settings), label("Enroll this existing public key in the server's authorized_keys. Server approval is stored by OpenSSH."));
-    GtkWidget *copy_actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    gtk_box_append(GTK_BOX(copy_actions), button(ui, "Copy enrollment key", "copy-key", ""));
-    gtk_box_append(GTK_BOX(copy_actions), button(ui, "Copy identity fingerprint", "copy-identity", ""));
-    gtk_box_append(GTK_BOX(settings), copy_actions);
+    g_signal_connect(hosts,"changed",G_CALLBACK(host_selected),ui);
+    g_signal_connect(hosts,"notify::popup-shown",G_CALLBACK(host_popup_changed),ui);
+    info_label(ui,settings,"Identity file","Choose an unencrypted Ed25519 or RSA private key (RSA: at least 2048 bits), not the .pub file. Passphrase-protected keys aren’t supported yet.","Identity file information");
+    GtkWidget *identity_row=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,8), *identity=gtk_entry_new();
+    remember(ui,"identity",identity);accessible(identity,"Identity file");
+    gtk_entry_set_placeholder_text(GTK_ENTRY(identity),"~/.ssh/id_ed25519");gtk_widget_set_hexpand(identity,TRUE);
+    g_signal_connect(identity,"changed",G_CALLBACK(identity_changed),ui);
+    gtk_box_append(GTK_BOX(identity_row),identity);
+    gtk_box_append(GTK_BOX(identity_row),button(ui,"Browse…","choose-identity",""));gtk_box_append(GTK_BOX(settings),identity_row);
+    gtk_box_append(GTK_BOX(settings),button(ui,"Save & connect","save-connect",""));
+    GtkWidget *enrollment=gtk_expander_new("Show enrollment details"), *enrollment_box=gtk_box_new(GTK_ORIENTATION_VERTICAL,8);
+    remember(ui,"enrollment",enrollment);accessible(enrollment,"Show enrollment details");
+    GtkWidget *pub=label(""), *fp=label(""), *enrollment_error=label("");
+    remember(ui,"public-key",pub);remember(ui,"identity-fingerprint",fp);remember(ui,"enrollment-error",enrollment_error);
+    gtk_widget_add_css_class(pub,"key-material");gtk_widget_add_css_class(fp,"key-material");gtk_widget_add_css_class(enrollment_error,"error");
+    gtk_box_append(GTK_BOX(enrollment_box),enrollment_error);gtk_box_append(GTK_BOX(enrollment_box),pub);gtk_box_append(GTK_BOX(enrollment_box),fp);
+    gtk_box_append(GTK_BOX(enrollment_box),label("Enroll this public key in the server's authorized_keys. Server approval is stored by OpenSSH."));
+    GtkWidget *copy_actions=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,8);
+    GtkWidget *copy=button(ui,"Copy enrollment key","copy-key","");remember(ui,"copy-key",copy);gtk_box_append(GTK_BOX(copy_actions),copy);
+    copy=button(ui,"Copy identity fingerprint","copy-identity","");remember(ui,"copy-identity",copy);gtk_box_append(GTK_BOX(copy_actions),copy);
+    gtk_box_append(GTK_BOX(enrollment_box),copy_actions);gtk_expander_set_child(GTK_EXPANDER(enrollment),enrollment_box);gtk_box_append(GTK_BOX(settings),enrollment);
+    g_signal_connect(enrollment,"notify::expanded",G_CALLBACK(enrollment_changed),ui);
+    ui_enrollment_reset(ui);
     GtkWidget *advanced = gtk_expander_new("Advanced"); remember(ui, "advanced", advanced);
     GtkWidget *advanced_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     field(ui, advanced_box, "root", "Remote storage");
@@ -554,7 +672,7 @@ void ui_clear(UI *ui, const char *name) {
     }
     while ((child = gtk_widget_get_first_child(w))) gtk_box_remove(GTK_BOX(w), child);
 }
-void ui_host(UI *ui, const char *name) { gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(g_hash_table_lookup(ui->fields, "hosts")), name); }
+void ui_host(UI *ui, const char *name) { gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(g_hash_table_lookup(ui->fields, "hosts")), name, name); }
 void ui_send_ready(UI *ui, int has_file) {
     ui->has_file = has_file;
     gboolean selected = ui->send_count > 0;
@@ -782,4 +900,22 @@ void ui_feedback_delivery(UI *ui, const char *name, const char *outcome, const c
 void ui_saved_origin(UI *ui,int parcel) {
     GtkWidget *b=g_hash_table_lookup(ui->fields,"saved-back");
     gtk_button_set_label(GTK_BUTTON(b),parcel ? "Back to parcel" : "Back to Inbox");
+}
+
+void ui_present(UI *ui) { g_application_activate(G_APPLICATION(ui->app)); }
+void ui_flush(void) { while (g_main_context_pending(NULL)) g_main_context_iteration(NULL,FALSE); }
+InfoState ui_info_state(UI *ui,const char *name) {
+    InfoState result={0};
+    GtkWidget *popover=g_hash_table_lookup(ui->fields,name), *button=gtk_widget_get_parent(popover);
+    graphene_rect_t bounds;
+    if (gtk_widget_compute_bounds(button,GTK_WIDGET(ui->window),&bounds)) {
+        result.x=bounds.origin.x;result.y=bounds.origin.y;
+        result.width=bounds.size.width;result.height=bounds.size.height;
+    }
+    result.mapped=gtk_widget_get_mapped(button);
+    result.focused=(gtk_widget_get_state_flags(button)&GTK_STATE_FLAG_FOCUS_WITHIN)!=0;
+    result.open=gtk_widget_get_visible(popover);
+    result.hovered=(gtk_widget_get_state_flags(gtk_widget_get_first_child(button))&GTK_STATE_FLAG_PRELIGHT)!=0;
+    result.pressed=(gtk_widget_get_state_flags(gtk_widget_get_first_child(button))&GTK_STATE_FLAG_ACTIVE)!=0;
+    return result;
 }

@@ -157,6 +157,33 @@ def fill(name, value, root=None):
     assert node.get_editable_text_iface().set_text_contents(value), f"Cannot edit {name}"
 
 
+def keyboard_focus(name, role):
+    # GTK's AT-SPI GrabFocus is unavailable on some native controls; use Tab.
+    window = subprocess.check_output(["xdotool", "search", "--onlyvisible", "--pid", str(process.pid), "--name", "^keyparcel$"],timeout=5).decode().splitlines()[-1]
+    subprocess.check_call(["xdotool", "windowactivate", "--sync", window], timeout=5)
+    def focused():
+        node = control(app, name, role)
+        if node.get_state_set().contains(Atspi.StateType.FOCUSED):
+            return node
+        keys("Tab")
+    return wait("keyboard focus on " + name, focused)
+
+
+def choose_saved_host(name):
+    keyboard_focus("SSH target", Atspi.Role.TEXT)
+    keys("Alt_L", "Down")
+    combo = control(app, "SSH target", Atspi.Role.TEXT).get_parent().get_parent()
+    wait("saved-profile chooser opens", lambda: any(n.get_role() == Atspi.Role.TOGGLE_BUTTON and n.get_state_set().contains(Atspi.StateType.PRESSED) for n in walk(combo)))
+    # GTK 4's legacy combo popup omits cell names from AT-SPI; select its
+    # sorted saved-profile row with native keyboard input, not entry typing.
+    profiles = sorted(json.loads((fixture.directory / "desktop/config.json").read_text())["hosts"])
+    keys("Home")
+    for _ in range(profiles.index(name)):
+        keys("Down")
+    keys("Return")
+    wait("saved host loaded", lambda: text_contents(control(app,"SSH target",Atspi.Role.TEXT)) == name and control(app,"Save & connect").get_state_set().contains(Atspi.StateType.SENSITIVE))
+
+
 def select_recipient(name):
     # Existing single-recipient scenarios replace their previous selection.
     others = [node.get_name() for node in walk(app) if node.get_role() == Atspi.Role.PUSH_BUTTON and node.get_name().startswith("Remove recipient ") and node.get_name() != f"Remove recipient {name}"]
@@ -320,18 +347,70 @@ try:
     fixture.start(fresh=True)
     start()
     control(app,"SSH target",Atspi.Role.TEXT)
+    assert text_contents(control(app, "Identity file", Atspi.Role.TEXT)) == "", "Missing default identity was prefilled"
+    assert not find(app, "Copy enrollment key"), "Enrollment controls are visible before explicit disclosure"
+    screenshot("settings-fresh.png")
+    for info_name, help_text in (
+        ("SSH target information", "Enter user@host or an SSH alias. The list contains keyparcel configurations previously saved through the CLI or this GTK app."),
+        ("Identity file information", "Choose an unencrypted Ed25519 or RSA private key (RSA: at least 2048 bits), not the .pub file. Passphrase-protected keys aren’t supported yet."),
+    ):
+        assert control(app, info_name).get_description() == help_text, "Settings information text changed"
+        info = control(app, info_name, Atspi.Role.TOGGLE_BUTTON)
+        keyboard_focus(info_name, Atspi.Role.TOGGLE_BUTTON)
+        status(help_text) # Keyboard focus, not a hover-only explanation.
+        if info_name == "SSH target information": screenshot("settings-info-help.png")
+        keys("Escape")
+        wait("information dismissed with Escape",lambda: not find(app,help_text,Atspi.Role.LABEL))
+        activate(info)
+        status(help_text) # Native click opens the same explanation.
+        keys("Escape")
+        wait("clicked information dismissed",lambda: not find(app,help_text,Atspi.Role.LABEL))
+    keyboard_focus("SSH target", Atspi.Role.TEXT)
+    wait("leaving information closes its popover", lambda: not find(app, "Choose an unencrypted Ed25519 or RSA private key (RSA: at least 2048 bits), not the .pub file. Passphrase-protected keys aren’t supported yet.", Atspi.Role.LABEL))
+    subprocess.check_call(["xdotool", "mousemove", "1100", "900"],timeout=5)
     fill("SSH target", "inbox")
+    missing_identity = str(fixture.directory / "desktop/missing-identity")
+    fill("Identity file", missing_identity)
+    activate(control(app, "Show enrollment details"))
+    wait("local enrollment error", lambda: any("no such file" in n.get_name().lower() for n in walk(app) if n.get_state_set().contains(Atspi.StateType.SHOWING)))
+    assert not control(app, "Copy enrollment key").get_state_set().contains(Atspi.StateType.SENSITIVE), "Invalid identity enables enrollment copy"
+    screenshot("settings-enrollment-error.png")
     fill("Identity file", str(fixture.directory / "desktop/id_ed25519"))
-    click("Save settings")
-    status("Settings saved")
+    wait("identity edit collapses enrollment", lambda: not find(app, "Copy enrollment key"))
+    click("Browse…")
+    picker = file_dialog("Choose identity file")
+    click("Cancel", picker)
+    wait("identity picker cancel", lambda: not find(app, "Choose identity file"))
+    assert text_contents(control(app,"Identity file",Atspi.Role.TEXT)) == str(fixture.directory / "desktop/id_ed25519"), "Identity picker cancel changed path"
+    # Browse accepts arbitrary private-key filenames, without an extension filter.
+    arbitrary_identity = fixture.directory / "desktop/arbitrary-private-key"
+    arbitrary_identity.write_bytes((fixture.directory / "desktop/id_ed25519").read_bytes())
+    arbitrary_identity.chmod(0o600)
+    (Path(str(arbitrary_identity) + ".pub")).write_text(fixture.public("desktop") + "\n")
+    click("Browse…")
+    picker = file_dialog("Choose identity file")
+    keys("Control_L", "l")
+    editable(picker).get_editable_text_iface().set_text_contents(str(arbitrary_identity))
+    keys("Return")
+    wait("identity picker selection", lambda: text_contents(control(app,"Identity file",Atspi.Role.TEXT)) == str(arbitrary_identity))
+    activate(control(app, "Show enrollment details"))
+    wait("enrollment copy available", lambda: control(app,"Copy enrollment key").get_state_set().contains(Atspi.StateType.SENSITIVE))
     click("Copy enrollment key")
     status("Copied")
-    assert clipboard().decode().split()[:2] == fixture.public("desktop").split()[:2], "Enrollment key differs from selected CLI identity"
+    assert clipboard().decode() == fixture.public("desktop"), "Enrollment key/comment differs from validated private identity"
+    click("Copy identity fingerprint")
+    wait("private-derived fingerprint copied",lambda: clipboard().decode() == fixture.fingerprint("desktop"))
+    screenshot("settings-enrollment-details.png")
     screenshot("status-confirmation.png")
+    assert not (fixture.directory / "desktop/config.json").exists(), "Enrollment preview saved settings"
     wait("brief confirmation expires",lambda: not find(app,"Copied"),seconds=6)
     assert not find(app,"Operation progress"), "Idle work left progress visible"
+    activate(control(app, "Show enrollment details"))
+    # Restore the fixture alias's configured identity; OpenSSH deliberately rejects conflicting IdentityFile paths.
+    fill("Identity file", str(fixture.directory / "desktop/id_ed25519"))
+    screenshot("settings.png")
 
-    click("Connect")
+    click("Save & connect")
     approval = control(Atspi.get_desktop(0), "SSH server approval")
     assert any("SHA256:" in n.get_name() for n in walk(approval)), "OpenSSH fingerprint absent from approval"
     wait("actual connection setup is yellow",lambda: control(app,"Connection status").get_description() == "Connecting")
@@ -340,9 +419,15 @@ try:
     previous_approval = approval.get_process_id()
     click("Reject", approval)
     wait("rejected approval helper exits", lambda: not Path(f"/proc/{previous_approval}").exists())
-    wait("rejection restores settings", lambda: control(app, "Connect").get_state_set().contains(Atspi.StateType.SENSITIVE))
+    wait("rejection restores settings", lambda: control(app, "Save & connect").get_state_set().contains(Atspi.StateType.SENSITIVE))
     assert not (fixture.directory / "desktop/known_hosts").read_text(), "Reject saved server trust"
-    click("Connect")
+    saved = json.loads((fixture.directory / "desktop/config.json").read_text())
+    assert saved["default_host"] == "inbox" and saved["hosts"]["inbox"]["identity"] == str(fixture.directory / "desktop/id_ed25519"), "Failed connection lost saved CLI profile/default"
+    assert text_contents(control(app,"Identity file",Atspi.Role.TEXT)) == str(fixture.directory / "desktop/id_ed25519"), "Failed connection lost entered identity"
+    wait("connection rejection remains a contextual error", lambda: find(app,"Dismiss error",Atspi.Role.PUSH_BUTTON))
+    assert not find(app,"Copy enrollment key"), "Save & connect forced enrollment details open"
+    screenshot("settings-connection-error.png")
+    click("Save & connect")
     approval = control(Atspi.get_desktop(0), "SSH server approval")
     assert approval.get_process_id() != previous_approval, "Discovered stale approval dialog"
     click("Approve server key", approval)
@@ -486,8 +571,13 @@ try:
     config_path.write_text(json.dumps(state))
     click("Settings")
     idle()
-    fill("SSH target", "other")
-    click("Use saved host")
+    fill("SSH target", "unsaved-target")
+    assert json.loads(config_path.read_text())["default_host"] == "inbox", "Typing target saved a profile"
+    activate(control(app, "Show enrollment details"))
+    wait("saved-host enrollment before selection", lambda: control(app,"Copy enrollment key").get_state_set().contains(Atspi.StateType.SENSITIVE))
+    choose_saved_host("other")
+    assert not find(app,"Copy enrollment key"), "Different saved host retained enrollment disclosure"
+    assert text_contents(control(app,"Identity file",Atspi.Role.TEXT)) == str(fixture.directory / "desktop/id_ed25519"), "Saved profile did not load its identity"
     idle()
     click("Back")
     idle()
@@ -497,8 +587,7 @@ try:
     assert not control(app, "Send file", Atspi.Role.PUSH_BUTTON).get_state_set().contains(Atspi.StateType.SENSITIVE), "Host change left sending enabled without a recipient"
     click("Settings")
     idle()
-    fill("SSH target", "inbox")
-    click("Use saved host")
+    choose_saved_host("inbox")
     idle()
     click("Back")
     idle()
@@ -969,7 +1058,7 @@ try:
         fixture.exec("pkill", "-u", "parcel")
         wait("jump transport disconnects", lambda: control(app,"Connection status").get_description() == "Disconnected")
         click("Settings")
-        click("Connect")
+        click("Save & connect")
         previous = None
         for endpoint in ("gateway", "target"):
             dialog = wait(f"graphical approval for jump {endpoint}", lambda: (d if (d := find(Atspi.get_desktop(0), "SSH server approval")) and d.get_process_id() != previous else None))

@@ -74,7 +74,7 @@ func (m *model) poll() {
 				// An intervening user operation owns the current state; discard old results.
 				return
 			}
-			if p := snapshot.Profile; p.Config != nil && (m.target != p.Target || m.host != p.Host || !reflect.DeepEqual(m.peers, p.Config.Peers)) {
+			if p := snapshot.Profile; p.Config != nil && (m.target != p.Target || m.host != p.Host || !reflect.DeepEqual(m.peers, p.Config.Peers) || !reflect.DeepEqual(m.hosts, p.Config.Hosts)) {
 				m.applyProfile(snapshot.Profile)
 			}
 			manual := m.refreshRequested

@@ -55,3 +55,14 @@ void ui_send_state(UI *ui, int count, int locked, int retry, int has_file, int c
 
 void ui_feedback(UI *ui, const char *headline, int visible, int expanded);
 void ui_feedback_delivery(UI *ui, const char *name, const char *outcome, const char *id);
+
+void ui_settings_edit(UI *ui, int updating);
+void ui_identity_picker(UI *ui);
+void ui_enrollment_reset(UI *ui);
+void ui_enrollment(UI *ui,const char *public_key,const char *fingerprint,const char *error);
+
+// Native fixture probes; input still comes from real X11 pointer/keyboard events.
+typedef struct { int x, y, width, height, mapped, focused, open, hovered, pressed; } InfoState;
+void ui_present(UI *ui);
+void ui_flush(void);
+InfoState ui_info_state(UI *ui, const char *name);
