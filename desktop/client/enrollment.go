@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/cgo"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 	"keyparcel/core"
@@ -95,11 +96,14 @@ func (m *model) openEnrollment() {
 		m.showEnrollment(enrollmentDetails{}, errors.New("Identity reader is still finishing; try opening details again"))
 		return
 	}
+	started := time.Now()
+	m.options.diagnostics.start("Read enrollment")
 	C.ui_ref(m.ui)
 	go func() {
 		details, err := readEnrollment(path)
 		<-m.workers
 		callback := cgo.NewHandle(func() {
+			m.options.diagnostics.finish("Read enrollment", started, nil, err, m.closed || !m.enrollmentOpen || version != m.enrollmentVersion || path != m.get("identity"))
 			if m.closed || !m.enrollmentOpen || version != m.enrollmentVersion || path != m.get("identity") {
 				return
 			}

@@ -32,6 +32,7 @@ import (
 type options struct {
 	config, sshConfig, host, helper string
 	timeout                         time.Duration
+	diagnostics                     *diagnostics
 }
 type inbox struct {
 	Items    []core.Item
@@ -52,6 +53,7 @@ type model struct {
 	workers                           chan struct{}
 	sequence                          uint64
 	closed                            bool
+	loggedConnection                  string
 	session                           sessionOwner
 	profileVersion                    uint64
 	polling, hasSnapshot              bool
@@ -131,14 +133,20 @@ func (m *model) clear(name string) {
 	cstrings([]string{name}, func(v []*C.char) { C.ui_clear(m.ui, v[0]) })
 }
 func (m *model) copy(text string) bool {
+	started := time.Now()
+	m.options.diagnostics.start("Copy")
+	var copyError error
+	defer func() { m.options.diagnostics.finish("Copy", started, nil, copyError, false) }()
 	m.confirm("")
 	if err := clipboardText(text); err != nil {
+		copyError = err
 		m.message(err.Error())
 		return false
 	}
 	accepted := false
 	cstrings([]string{text}, func(v []*C.char) { accepted = C.ui_copy(m.ui, v[0]) != 0 })
 	if !accepted {
+		copyError = errors.New("clipboard rejected")
 		m.message("Clipboard could not accept this text")
 		return false
 	}
@@ -176,6 +184,8 @@ func (m *model) run(notice string, work func(context.Context) (any, error), done
 		m.message("File workers are still finishing; try again shortly.")
 		return false
 	}
+	started := time.Now()
+	m.options.diagnostics.start(notice)
 	m.refreshRequested = false
 	C.ui_refreshing(m.ui, 0)
 	m.profileVersion++
@@ -203,6 +213,7 @@ func (m *model) run(notice string, work func(context.Context) (any, error), done
 		}
 		cancel()
 		callback := cgo.NewHandle(func() {
+			m.options.diagnostics.finish(notice, started, outcome.value, outcome.err, m.closed || m.sequence != sequence)
 			if m.closed || m.sequence != sequence {
 				return
 			}
@@ -258,10 +269,16 @@ func (m *model) load(target string) {
 func (m *model) applyProfile(p profile) {
 	profileChanged := m.target != p.Target || m.host != p.Host
 	if profileChanged {
+		if m.host.Identity != "" {
+			m.options.diagnostics.profileSwitch()
+		} else {
+			m.options.diagnostics.resetBackground()
+		}
 		m.clearEnrollment()
 	}
 	trustChanged := m.target != p.Target || m.host != p.Host || !reflect.DeepEqual(m.peers, p.Config.Peers)
 	if trustChanged {
+		m.options.diagnostics.resetBackground()
 		m.session.invalidate(p.Target, p.Host)
 		m.profileVersion++
 		m.items, m.devices, m.rejected = nil, nil, nil
@@ -859,9 +876,10 @@ func (m *model) remove() {
 }
 
 func newModel(o options) *model {
-	m := &model{options: o, store: store{path: o.config}, target: o.host, workers: make(chan struct{}, 2)}
+	m := &model{options: o, store: store{path: o.config, diagnostics: o.diagnostics}, target: o.host, workers: make(chan struct{}, 2)}
 	m.ctx, m.cancel = context.WithCancel(context.Background())
 	m.session.ctx = m.ctx
+	m.session.diagnostics = o.diagnostics
 	cstrings([]string{branding.Icon}, func(v []*C.char) {
 		m.ui = C.ui_new(C.uintptr_t(cgo.NewHandle(m)), v[0])
 	})
@@ -896,13 +914,17 @@ func main() {
 		}
 		return
 	}
+	d := newDiagnostics(os.Stderr, false)
+	d.startup()
 	defaultConfig, err := core.ConfigPath()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		d.log.Error("startup_failed", "category", diagnosticCategory(err))
 		os.Exit(1)
 	}
 	f := flag.NewFlagSet("keyparcel-gtk", flag.ExitOnError)
 	o := options{}
+	var verbose bool
+	f.BoolVar(&verbose, "verbose", false, "safe operation and connection diagnostics on stderr")
 	f.StringVar(&o.config, "config", defaultConfig, "shared CLI configuration")
 	f.StringVar(&o.sshConfig, "ssh-config", "", "OpenSSH configuration override")
 	f.StringVar(&o.host, "host", "", "configured SSH target")
@@ -912,20 +934,23 @@ func main() {
 		fmt.Fprintln(os.Stderr, "unexpected arguments or invalid timeout")
 		os.Exit(1)
 	}
+	o.diagnostics = newDiagnostics(os.Stderr, verbose)
+	d = o.diagnostics
 	o.helper, err = os.Executable()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		d.log.Error("startup_failed", "category", diagnosticCategory(err))
 		os.Exit(1)
 	}
 	temporary, err := os.MkdirTemp("", "keyparcel-gtk-")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		d.log.Error("startup_failed", "category", diagnosticCategory(err))
 		os.Exit(1)
 	}
 	defer os.RemoveAll(temporary)
 	os.Setenv("TMPDIR", temporary)
 	m := newModel(o)
 	if m.ui == nil {
+		d.log.Error("startup_failed", "category", "native")
 		os.Exit(1)
 	}
 	m.page("inbox")
