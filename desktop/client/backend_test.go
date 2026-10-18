@@ -238,13 +238,21 @@ func TestGTKLifecycleAndImmediateCancellation(t *testing.T) {
 	if len(m.devices) != 1 || m.devices[0].Fingerprint != "updated discovery" {
 		t.Fatal("failed refresh discarded discovery snapshot")
 	}
+	var diagnosticsLog bytes.Buffer
+	m.options.diagnostics = newDiagnostics(&diagnosticsLog, false)
 	m.set("target", "second")
 	if m.target != "first" || m.active != nil {
 		t.Fatal("typing a saved target applied its profile")
 	}
+	if diagnosticsLog.Len() != 0 {
+		t.Fatal("typing a target logged a profile switch:", diagnosticsLog.String())
+	}
 	m.enrollmentOpen = true
 	m.enrollment = enrollmentDetails{Public: "old", Fingerprint: "old"}
 	m.applyProfile(profile{Config: cfg, Target: "second", Host: host})
+	if !strings.Contains(diagnosticsLog.String(), "msg=profile_switch") || strings.Contains(diagnosticsLog.String(), path) {
+		t.Fatal("applied profile switch missing or exposed values:", diagnosticsLog.String())
+	}
 	if m.devices != nil || m.publishSnapshot(liveSnapshot{Profile: discoveryProfile, Devices: []core.Device{{Fingerprint: "stale discovery"}}, DevicesOK: true}, discoveryVersion) {
 		t.Fatal("profile change retained or stale refresh repopulated discovery")
 	}
@@ -309,6 +317,9 @@ func TestGTKLifecycleAndImmediateCancellation(t *testing.T) {
 	}
 	if m.active != nil {
 		t.Fatal("timeout did not restore controls")
+	}
+	if !strings.Contains(diagnosticsLog.String(), "category=timeout") || !strings.Contains(diagnosticsLog.String(), "level=WARN") {
+		t.Fatal("real operation timeout was not diagnosed:", diagnosticsLog.String())
 	}
 	close(release)
 	m.event("choose-file", "", "") // Shutdown must also cancel a newly opened picker.

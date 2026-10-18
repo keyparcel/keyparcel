@@ -22,8 +22,9 @@ const clipboardLimit = 16 * 1024 * 1024
 const previewLimit = 65536
 
 type store struct {
-	path string
-	mu   sync.Mutex
+	path        string
+	mu          sync.Mutex
+	diagnostics *diagnostics
 }
 type profile struct {
 	Config              *core.Config
@@ -76,7 +77,9 @@ func (s *store) update(change func(*core.Config) error) error {
 	if err = change(cfg); err != nil {
 		return err
 	}
-	return cfg.Save(s.path)
+	err = cfg.Save(s.path)
+	s.diagnostics.settingsWrite(err)
+	return err
 }
 
 func (s *store) setup(target, identity, root, discovery string, mode ...string) error {
