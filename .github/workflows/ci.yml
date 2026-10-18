@@ -231,3 +231,37 @@ jobs:
         env:
           RESULT: ${{ needs.android.result }}
         run: test "$RESULT" = success
+
+  transport-benchmark:
+    name: Transport benchmark ${{ matrix.suite }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {suite: small, timeout: 6}
+          - {suite: bulk, timeout: 12}
+    # Independent informational checks: no required aggregate depends on these jobs.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Measure production transports
+        run: bash tests/bench/run.sh "$SUITE"
+        env:
+          SUITE: ${{ matrix.suite }}
+      - name: Summarize measurements
+        if: always()
+        run: |
+          if [[ -f test-artifacts/bench/$SUITE.log ]]; then
+            printf '### Transport benchmark: %s\n\n```text\n' "$SUITE" >> "$GITHUB_STEP_SUMMARY"
+            cat "test-artifacts/bench/$SUITE.log" >> "$GITHUB_STEP_SUMMARY"
+            printf '\n```\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+        env:
+          SUITE: ${{ matrix.suite }}

@@ -99,6 +99,7 @@ type world struct {
 	transcript             bytes.Buffer
 	ctx                    context.Context
 	mode                   string
+	netAdmin               bool
 	cancel                 context.CancelFunc
 }
 
@@ -123,8 +124,10 @@ func makeWorld(t *testing.T, clipboard bool, bobKeyType, mode string) *world {
 }
 
 type worldOptions struct {
-	timeout    time.Duration
-	publishSSH bool
+	timeout     time.Duration
+	publishSSH  bool
+	netAdmin    bool
+	serverImage string
 }
 
 func makeWorldWithOptions(t *testing.T, clipboard bool, bobKeyType, mode string, options worldOptions) *world {
@@ -134,7 +137,7 @@ func makeWorldWithOptions(t *testing.T, clipboard bool, bobKeyType, mode string,
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), options.timeout)
-	w := &world{t: t, dir: dir, ctx: ctx, cancel: cancel, mode: mode}
+	w := &world{t: t, dir: dir, ctx: ctx, cancel: cancel, mode: mode, netAdmin: options.netAdmin}
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cleanupCancel()
@@ -195,10 +198,17 @@ func makeWorldWithOptions(t *testing.T, clipboard bool, bobKeyType, mode string,
 		t.Fatalf("create network: %v %s", err, diag)
 	}
 	serverArgs := []string{"run", "-d", "--network", w.network, "--network-alias", "inbox"}
+	if options.netAdmin {
+		serverArgs = append(serverArgs, "--cap-add", "NET_ADMIN")
+	}
 	if options.publishSSH {
 		serverArgs = append(serverArgs, "-p", "127.0.0.1::22")
 	}
-	out, diag, err = container(ctx, nil, append(serverArgs, image)...)
+	serverImage := image
+	if options.serverImage != "" {
+		serverImage = options.serverImage
+	}
+	out, diag, err = container(ctx, nil, append(serverArgs, serverImage)...)
 	if err != nil {
 		t.Fatalf("start SSH container: %v %s", err, diag)
 	}
@@ -260,7 +270,11 @@ func (w *world) makeClient(name, imageName, keyType string) client {
 	dir := filepath.Join(w.dir, name)
 	os.MkdirAll(dir, 0700)
 	c := client{dir: dir, key: filepath.Join(dir, "id_"+keyType), config: filepath.Join(dir, "config.json"), sshConfig: filepath.Join(dir, "ssh_config")}
-	out, diag, err := container(w.ctx, nil, "run", "-d", "--init", "--network", w.network, "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), "--env", "KEYPARCEL_TEST_TRANSPORT="+w.mode, "--env", "HOME="+dir, "--workdir", dir, "--mount", "type=bind,src="+dir+",dst="+dir, imageName)
+	args := []string{"run", "-d", "--init"}
+	if w.netAdmin {
+		args = append(args, "--cap-add", "NET_ADMIN")
+	}
+	out, diag, err := container(w.ctx, nil, append(args, "--network", w.network, "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), "--env", "KEYPARCEL_TEST_TRANSPORT="+w.mode, "--env", "HOME="+dir, "--workdir", dir, "--mount", "type=bind,src="+dir+",dst="+dir, imageName)...)
 	if err != nil {
 		w.t.Fatalf("start client: %v %s", err, diag)
 	}

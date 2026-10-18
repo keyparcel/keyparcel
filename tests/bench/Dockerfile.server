@@ -1,0 +1,2 @@
+FROM keyparcel-test-sshd:local
+RUN apk add --no-cache iproute2 iputils iperf3 ethtool
