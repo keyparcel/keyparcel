@@ -575,22 +575,44 @@ try:
     assert json.loads(config_path.read_text())["default_host"] == "inbox", "Typing target saved a profile"
     activate(control(app, "Show enrollment details"))
     wait("saved-host enrollment before selection", lambda: control(app,"Copy enrollment key").get_state_set().contains(Atspi.StateType.SENSITIVE))
+    saved_before_preview = config_path.read_bytes()
+    preview_connection = fixture.exec("pgrep", "-f", "sshd.*parcel@internal-sftp").decode().splitlines()
     choose_saved_host("other")
     assert not find(app,"Copy enrollment key"), "Different saved host retained enrollment disclosure"
     assert text_contents(control(app,"Identity file",Atspi.Role.TEXT)) == str(fixture.directory / "desktop/id_ed25519"), "Saved profile did not load its identity"
-    idle()
+    assert config_path.read_bytes() == saved_before_preview, "Profile preview wrote config/default"
     click("Back")
     idle()
-    control(app, "Choose recipient…", Atspi.Role.PUSH_BUTTON)
-    assert text_contents(control(app, "Message")) == message, "Host change discarded draft contents"
+    control(app, "Remove recipient bob", Atspi.Role.PUSH_BUTTON)
+    assert text_contents(control(app, "Message")) == message, "Profile preview discarded draft contents"
     control(app, "draft-世界.bin · 11 B", Atspi.Role.LABEL)
-    assert not control(app, "Send file", Atspi.Role.PUSH_BUTTON).get_state_set().contains(Atspi.StateType.SENSITIVE), "Host change left sending enabled without a recipient"
-    click("Settings")
-    idle()
-    choose_saved_host("inbox")
-    idle()
-    click("Back")
-    idle()
+    assert control(app, "Send file", Atspi.Role.PUSH_BUTTON).get_state_set().contains(Atspi.StateType.SENSITIVE), "Profile preview invalidated the active recipient"
+    assert fixture.exec("pgrep", "-f", "sshd.*parcel@internal-sftp").decode().splitlines() == preview_connection, "Profile preview replaced the active SSH session"
+    # Applying the preview is explicit, with the same real SSH fixture under another alias.
+    profile_ssh = fixture.directory / "desktop/ssh_config"
+    original_profile_ssh = profile_ssh.read_text()
+    profile_ssh.write_text(original_profile_ssh + original_profile_ssh.replace("Host inbox\n", "Host other\n", 1))
+    try:
+        click("Settings")
+        assert text_contents(control(app,"SSH target",Atspi.Role.TEXT)) == "other", "Navigation lost the previewed form"
+        click("Save & connect")
+        idle()
+        control(app,"Host: other",Atspi.Role.LABEL)
+        assert json.loads(config_path.read_text())["default_host"] == "other", "Save & connect did not apply the selected form"
+        click("Send")
+        control(app, "Choose recipient…", Atspi.Role.PUSH_BUTTON)
+        assert text_contents(control(app, "Message")) == message, "Host change discarded draft contents"
+        control(app, "draft-世界.bin · 11 B", Atspi.Role.LABEL)
+        assert not control(app, "Send file", Atspi.Role.PUSH_BUTTON).get_state_set().contains(Atspi.StateType.SENSITIVE), "Host change left sending enabled without a recipient"
+        click("Settings")
+        choose_saved_host("inbox")
+        assert json.loads(config_path.read_text())["default_host"] == "other", "Preview changed the saved default"
+        click("Save & connect")
+        idle()
+        control(app,"Host: inbox",Atspi.Role.LABEL)
+        click("Send")
+    finally:
+        profile_ssh.write_text(original_profile_ssh)
     click("Discard draft")
     status("Draft discarded")
     assert text_contents(control(app, "Message")) == "", "Explicit discard retained text"

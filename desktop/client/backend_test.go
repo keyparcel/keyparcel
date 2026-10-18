@@ -264,6 +264,7 @@ func TestGTKLifecycleAndImmediateCancellation(t *testing.T) {
 	}
 	m.applyProfile(profile{Config: cfg})
 	await("invalid-profile worker did not retire", func() bool { return m.pendingCallbacks() == baselinePending })
+	checkGTKProfilePreview(t, m)
 	m.recipient = "self"
 	feedback := &sendFeedback{}
 	m.feedback = feedback
