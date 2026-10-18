@@ -78,7 +78,9 @@ func (a *inboxAcceleration) available(ctx context.Context) (bool, error) {
 			return nil
 		})
 		a.supported = err == nil
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || connectionFailure(err) {
+		// EOF from exec setup is owner/control failure. Clean unsupported
+		// output reaches the comparison above with no reader error.
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || connectionFailure(err) {
 			a.probeErr = err
 		}
 	})

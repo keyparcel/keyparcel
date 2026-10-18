@@ -184,7 +184,7 @@ func TestInboxFramesFailClosed(t *testing.T) {
 }
 
 func TestInboxFallbackAndTransportFailures(t *testing.T) {
-	for _, kind := range []string{"unsupported", "budget", "malformed", "lost", "sftp"} {
+	for _, kind := range []string{"unsupported", "budget", "malformed", "lost", "control EOF", "sftp"} {
 		t.Run(kind, func(t *testing.T) {
 			server := sftptest.New(t)
 			identity := testIdentity(t)
@@ -199,6 +199,9 @@ func TestInboxFallbackAndTransportFailures(t *testing.T) {
 			}
 			a.run = func(ctx context.Context, command string, consume func(io.Reader) error) error {
 				calls++
+				if kind == "control EOF" {
+					return io.EOF
+				}
 				if kind == "lost" {
 					return io.ErrClosedPipe
 				}
@@ -215,7 +218,7 @@ func TestInboxFallbackAndTransportFailures(t *testing.T) {
 			}
 			s.inbox = a
 			items, rejected, ids, err := s.List(cfg)
-			if kind == "malformed" || kind == "lost" {
+			if kind == "malformed" || kind == "lost" || kind == "control EOF" {
 				if err == nil || items != nil || rejected != nil || ids != nil {
 					t.Fatalf("failure used SFTP/partial data: %+v %v", items, err)
 				}
