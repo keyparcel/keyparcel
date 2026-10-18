@@ -120,6 +120,12 @@ SSH takes explicit connection settings and a trusted server key; it does not use
 OpenSSH configuration, agents, jump hosts or external commands. Cancel the context
 or close the session to stop work.
 
+Each external OpenSSH session supervises a dedicated non-persistent master in a
+private temporary directory and opens one SFTP channel through that socket.
+It never attaches to a user's existing master. Missing or lost sockets fail
+closed instead of opening another TCP connection; closing/canceling the owner
+reaps its master and removes the socket directory. Embedded SSH is unchanged.
+
 GUI callers share one `core.Connection`, which admits one automatic poll and one
 foreground network request on the same concurrent-safe SFTP client. Polls never
 queue; manual refresh uses foreground admission. A request gets its own context
