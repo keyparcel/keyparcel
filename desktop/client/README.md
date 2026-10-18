@@ -11,7 +11,9 @@ profiles, device identity files, peer approvals and OpenSSH `known_hosts` stores
 Launch `desktop/client/build/keyparcel-gtk` after [building](DEVELOPMENT.md), or
 open it against an existing CLI profile. `--config`, `--ssh-config` and `--host`
 select alternate settings. In Settings, select a saved keyparcel profile or enter an SSH target and an
-existing unencrypted Ed25519 or supported RSA identity. **Browse…** accepts any
+existing unencrypted Ed25519 or supported RSA identity. Selecting a saved profile
+only fills the form; the active connection and drafts remain unchanged until
+**Save & connect**. **Browse…** accepts any
 private-key filename. **Save & connect** saves the shared CLI profile and connects;
 failed connections keep the settings and show an error. Advanced settings contain
 remote paths and OpenSSH details.

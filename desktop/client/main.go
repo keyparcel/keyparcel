@@ -311,7 +311,7 @@ func (m *model) applyProfile(p profile) {
 	}
 	m.set("target", targetText)
 	C.ui_settings_edit(m.ui, 0)
-	if profileChanged || !m.settingsLoaded {
+	if !m.settingsLoaded {
 		m.settingsFields(p)
 	}
 	m.set("active-host", "Host: "+p.Target)
@@ -470,10 +470,10 @@ func (m *model) event(action, arg, value string) {
 		m.page(arg)
 
 	case "host-selected":
-		if arg != m.target {
-			m.clearEnrollment()
+		m.clearEnrollment()
+		if host, ok := m.hosts[arg]; ok {
+			m.settingsFields(profile{Target: arg, Host: host})
 		}
-		m.load(arg)
 	case "identity-changed":
 		m.clearEnrollment()
 	case "choose-identity":
