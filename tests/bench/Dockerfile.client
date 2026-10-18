@@ -1,0 +1,2 @@
+FROM keyparcel-test-client:local
+RUN apt-get update && apt-get install -y --no-install-recommends iproute2 iputils-ping iperf3 ethtool && rm -rf /var/lib/apt/lists/*

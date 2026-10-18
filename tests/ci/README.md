@@ -97,3 +97,8 @@ console output is available on successful runs.
 Local workflow validation uses `actionlint .github/workflows/ci.yml`, plus the fast
 helper regressions. Accelerated Android execution requires writable `/dev/kvm`; use the documented
 software-emulation development targets on hosts without it.
+
+Two additional independent, non-required [transport benchmark jobs](../bench/README.md)
+measure production embedded/OpenSSH latency and bulk transfers on isolated shaped
+links. They do not feed the Android aggregate or other required checks. Correctness
+and setup failures remain visible; timing changes alone do not fail a job.
