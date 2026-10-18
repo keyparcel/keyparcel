@@ -152,10 +152,24 @@ func connect(ctx context.Context, target string, h Host, sshConfig string, compl
 		return nil, err
 	}
 	s := &Session{Identity: id, ctx: ctx}
-	s.Client, s.closeTransport, err = master.openSFTP()
+	s.openSFTP = func() (*sftpChannel, error) {
+		client, closeChannel, err := master.openSFTP()
+		if err != nil {
+			return nil, err
+		}
+		return newSFTPChannel(client, closeChannel), nil
+	}
+	s.waitTransport = func() error { <-master.done; return master.err }
+	s.channel, err = s.openChannel()
 	if err != nil {
 		master.close()
 		return nil, err
+	}
+	s.Client = s.channel.client
+	s.closeTransport = func() error {
+		// Retire the owner first, so a blocked channel cannot hold shutdown hostage.
+		master.close()
+		return s.channel.close()
 	}
 	cwd, err := s.Client.Getwd()
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -125,16 +126,21 @@ func ConnectEmbedded(ctx context.Context, options EmbeddedOptions) (_ *Session, 
 	}
 	client := ssh.NewClient(connection, channels, requests)
 	s := &Session{Identity: id, ctx: ctx}
-	s.Client, err = sftp.NewClient(client, sftp.UseConcurrentReads(false), sftp.UseConcurrentWrites(false))
+	s.openSFTP = func() (*sftpChannel, error) {
+		return openEmbeddedSFTP(client)
+	}
+	s.waitTransport = client.Wait
+	s.channel, err = s.openChannel()
 	if err != nil {
 		client.Close()
 		return nil, fmt.Errorf("SFTP connection: %w", err)
 	}
+	s.Client = s.channel.client
 	s.closeTransport = func() error {
 		stop()
 		// Close SSH first to unblock requests; SFTP's subsequent EOF error is expected.
 		client.Close()
-		s.Client.Close()
+		s.channel.close()
 		return nil
 	}
 	cwd, err := s.Client.Getwd()
@@ -154,4 +160,44 @@ func ConnectEmbedded(ctx context.Context, options EmbeddedOptions) (_ *Session, 
 	}
 	ok = true
 	return s, nil
+}
+
+// Keep the SSH channel handle so failed subsystem setup and channel-only close
+// release it without closing the authenticated client.
+func openEmbeddedSFTP(owner *ssh.Client) (_ *sftpChannel, err error) {
+	session, err := owner.NewSession()
+	if err != nil {
+		return nil, err
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			session.Close()
+		}
+	}()
+	in, err := session.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	out, err := session.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	stderr, err := session.StderrPipe()
+	if err != nil {
+		return nil, err
+	}
+	go io.Copy(io.Discard, stderr)
+	if err = session.RequestSubsystem("sftp"); err != nil {
+		return nil, err
+	}
+	client, err := sftp.NewClientPipe(out, in, sftp.UseConcurrentReads(false), sftp.UseConcurrentWrites(false))
+	if err != nil {
+		return nil, err
+	}
+	ok = true
+	return newSFTPChannel(client, func() error {
+		session.Close()
+		return client.Close()
+	}), nil
 }

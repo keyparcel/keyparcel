@@ -126,7 +126,6 @@ func (m *opensshMaster) openSFTP() (*sftp.Client, func() error, error) {
 	closeTransport := func() error {
 		closeErr := client.Close()
 		err := cmd.Wait()
-		m.close()
 		if closeErr != nil {
 			return closeErr
 		}

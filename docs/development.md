@@ -124,10 +124,12 @@ Each external OpenSSH session supervises a dedicated non-persistent master in a
 private temporary directory and opens one SFTP channel through that socket.
 It never attaches to a user's existing master. Missing or lost sockets fail
 closed instead of opening another TCP connection; closing/canceling the owner
-reaps its master and removes the socket directory. Embedded SSH is unchanged.
+reaps its master and removes the socket directory. Embedded SSH opens channels on its single authenticated SSH client.
 
 GUI callers share one `core.Connection`, which admits one automatic poll and one
-foreground network request on the same concurrent-safe SFTP client. Polls never
+foreground network request on separate SFTP channels sharing that SSH owner.
+The default session client remains available to non-GUI callers; the second
+channel opens lazily when the other operation category first needs it. Polls never
 queue; manual refresh uses foreground admission. A request gets its own context
 and approval snapshot. Starting work invalidates older poll results without
 canceling healthy polling I/O. Approval-only changes retain SSH; changing the
@@ -141,8 +143,11 @@ calls have no per-request wire cancellation; context isolation does not change
 that limitation. Bridge timeouts bound each synchronous network method, not an
 entire multi-method GUI action. Later requests may reconnect, but mutations are
 never replayed. Ordinary remote permission or local delivery errors retain the
-client; stream loss retires it. Sharing one SFTP stream/TCP connection still
-shares bandwidth and server-side packet blocking.
+owner. A failed SFTP channel returns its error without replay; a later request
+may reopen that category's channel on the same SSH owner. Actual SSH owner loss
+retires both channels. Separate channels avoid a poll blocking foreground SFTP
+packet handling, but still share TCP bandwidth, congestion and head-of-line
+blocking; they do not create another TCP connection or authentication.
 
 Android consumes verified temporary files through a receive callback rather than
 the CLI's hard-link publication helper. The callback must finish consuming the

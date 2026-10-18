@@ -438,7 +438,9 @@ try:
 
     click("Devices")
     status("Unapproved\n" + fixture.fingerprint("peer") + "\npeer")
-    connection_ids = wait("exactly one persistent GUI session after CLI exit", lambda: (ids if len(ids := fixture.exec("pgrep", "-f", "sshd.*parcel@internal-sftp").decode().splitlines()) == 1 else None))
+    connection_ids = wait("two persistent GUI SFTP channels after CLI exit", lambda: (ids if len(ids := fixture.exec("pgrep", "-f", "sshd.*parcel@internal-sftp").decode().splitlines()) == 2 else None))
+    channel_owners = fixture.exec("ps", "-o", "ppid=", "-p", ",".join(connection_ids)).decode().split()
+    assert len(channel_owners) == 2 and len(set(channel_owners)) == 1, "SFTP channels do not share one SSH owner"
     fixture.exec("sed", "-i", "s/ peer$/ peer-auto/", "/home/parcel/.ssh/authorized_keys")
     click("Send"); click("Settings"); click("Back"); click("Devices")
     status("Unapproved\n" + fixture.fingerprint("peer") + "\npeer-auto")
