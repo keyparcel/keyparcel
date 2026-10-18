@@ -226,6 +226,18 @@ func TestGTKLifecycleAndImmediateCancellation(t *testing.T) {
 	host := core.Host{Identity: path}
 	cfg.Hosts = map[string]core.Host{"first": host, "second": host}
 	m.applyProfile(profile{Config: cfg, Target: "first", Host: host})
+	discoveryProfile := profile{Config: cfg, Target: "first", Host: host}
+	discoveryVersion := m.profileVersion
+	for _, fingerprint := range []string{"initial discovery", "updated discovery"} {
+		m.publishSnapshot(liveSnapshot{Profile: discoveryProfile, Devices: []core.Device{{Fingerprint: fingerprint}}, DevicesOK: true}, discoveryVersion)
+		if len(m.devices) != 1 || m.devices[0].Fingerprint != fingerprint {
+			t.Fatal("successful refresh did not update discovery snapshot")
+		}
+	}
+	m.publishSnapshot(liveSnapshot{Profile: discoveryProfile}, discoveryVersion)
+	if len(m.devices) != 1 || m.devices[0].Fingerprint != "updated discovery" {
+		t.Fatal("failed refresh discarded discovery snapshot")
+	}
 	m.set("target", "second")
 	if m.target != "first" || m.active != nil {
 		t.Fatal("typing a saved target applied its profile")
@@ -233,6 +245,9 @@ func TestGTKLifecycleAndImmediateCancellation(t *testing.T) {
 	m.enrollmentOpen = true
 	m.enrollment = enrollmentDetails{Public: "old", Fingerprint: "old"}
 	m.applyProfile(profile{Config: cfg, Target: "second", Host: host})
+	if m.devices != nil || m.publishSnapshot(liveSnapshot{Profile: discoveryProfile, Devices: []core.Device{{Fingerprint: "stale discovery"}}, DevicesOK: true}, discoveryVersion) {
+		t.Fatal("profile change retained or stale refresh repopulated discovery")
+	}
 	if m.enrollmentOpen || m.enrollment != (enrollmentDetails{}) {
 		t.Fatal("different host with the same identity retained details")
 	}

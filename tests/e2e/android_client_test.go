@@ -199,7 +199,31 @@ func TestAndroidTextClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	fileID := send(nil, "--file", file)
-	phase("exchange", "text_id", textID, "file_id", fileID, "peer_fingerprint", w.alice.fingerprint, "other_peer_fingerprint", w.bob.fingerprint)
+	func() {
+		defer w.admin("chmod", "0600", "/home/parcel/.ssh/authorized_keys")
+		adb("shell", "run-as", app, "rm", "-f", "cache/send-discovery-ready", "cache/send-discovery-go")
+		phaseWhile("exchange", func(ctx context.Context) error {
+			ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+			defer cancel()
+			for {
+				_, _, err := command(ctx, nil, filepath.Join(sdk, "platform-tools", "adb"), "-s", serial, "shell", "run-as", app, "test", "-f", "cache/send-discovery-ready")
+				if err == nil {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(250 * time.Millisecond):
+				}
+			}
+			out, diag, err := container(ctx, nil, "exec", w.id, "chmod", "000", "/home/parcel/.ssh/authorized_keys")
+			if err != nil {
+				return fmt.Errorf("hold discovery: %w: %s%s", err, out, diag)
+			}
+			_, _, err = command(ctx, nil, filepath.Join(sdk, "platform-tools", "adb"), "-s", serial, "shell", "run-as", app, "touch", "cache/send-discovery-go")
+			return err
+		}, "text_id", textID, "file_id", fileID, "peer_fingerprint", w.alice.fingerprint, "other_peer_fingerprint", w.bob.fingerprint)
+	}()
 	inboxDir := "/home/parcel/.local/share/keyparcel/inbox/" + core.DeviceID(key)
 	remote := func(id string) string { return inboxDir + "/" + id + ".age" }
 	w.assertExists(remote(textID), true)

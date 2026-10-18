@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"keyparcel/core"
@@ -236,9 +237,17 @@ func (m *model) retrySend() {
 type sendResult struct {
 	Deliveries []core.Delivery
 	Err        error
+	Profile    profile
+	Discovery  []core.Device
+}
+
+func sameDiscoveryContext(a, b profile) bool {
+	return a.Target == b.Target && a.Host == b.Host && a.Public == b.Public &&
+		a.Config != nil && b.Config != nil && reflect.DeepEqual(a.Config.Peers, b.Config.Peers)
 }
 
 func (m *model) performSend(a *sendAttempt, names []string, prepare bool) {
+	cachedProfile, cached := m.sendProfile(), m.devices
 	started := m.run("Sending…", func(ctx context.Context) (any, error) {
 		result := sendResult{}
 		p, err := m.store.load(a.Profile.Target)
@@ -285,8 +294,19 @@ func (m *model) performSend(a *sendAttempt, names []string, prepare bool) {
 			if a.File {
 				kind = "file"
 			}
-			deliveries, e := s.Send(p.Config, names, kind, filename, input)
-			return sendResult{deliveries, e}, e
+			discovery := cached
+			if !sameDiscoveryContext(cachedProfile, p) {
+				discovery = nil
+			}
+			if discovery == nil {
+				var e error
+				discovery, e = s.Discover(p.Config)
+				if e != nil {
+					return sendResult{Err: e}, e
+				}
+			}
+			deliveries, e := s.SendWithDiscovery(p.Config, names, kind, filename, input, discovery)
+			return sendResult{Deliveries: deliveries, Err: e, Profile: p, Discovery: discovery}, e
 		})
 		if value != nil {
 			r := value.(sendResult)
@@ -302,6 +322,10 @@ func (m *model) performSend(a *sendAttempt, names []string, prepare bool) {
 			return
 		}
 		result := value.(sendResult)
+		if result.Discovery != nil && sameDiscoveryContext(result.Profile, m.sendProfile()) {
+			m.devices = result.Discovery
+			m.drawDevices()
+		}
 		var changed *recipientChanged
 		if errors.As(result.Err, &changed) {
 			m.applyProfile(changed.profile)

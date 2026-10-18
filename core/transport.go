@@ -127,12 +127,21 @@ type Delivery struct {
 }
 
 func (s *Session) Send(c *Config, names []string, kind string, filename *string, input io.Reader) ([]Delivery, error) {
+	return s.SendWithDiscovery(c, names, kind, filename, input, nil)
+}
+
+// SendWithDiscovery accepts a caller's discovery snapshot for this server/identity.
+// Nil fetches fresh discovery; local recipient approvals are always checked.
+func (s *Session) SendWithDiscovery(c *Config, names []string, kind string, filename *string, input io.Reader, devices []Device) ([]Delivery, error) {
 	if len(names) == 0 {
 		return nil, errors.New("at least one recipient is required")
 	}
-	devices, err := s.Discover(c)
-	if err != nil {
-		return nil, err
+	if devices == nil {
+		var err error
+		devices, err = s.Discover(c)
+		if err != nil {
+			return nil, err
+		}
 	}
 	present := map[string]bool{}
 	for _, d := range devices {
@@ -175,32 +184,34 @@ func (s *Session) Send(c *Config, names []string, kind string, filename *string,
 	for i, p := range keys {
 		d := Delivery{Recipient: names[i], ID: m.ID}
 		dir := path.Join(s.Root, "inbox", DeviceID(p))
-		err = s.Client.MkdirAll(dir)
+		var attempt [8]byte
+		_, err = rand.Read(attempt[:])
 		if err == nil {
-			var attempt [8]byte
-			_, err = rand.Read(attempt[:])
+			tmp := path.Join(dir, m.ID+"."+hex.EncodeToString(attempt[:])+".part")
+			dest := path.Join(dir, m.ID+".age")
+			var remote *sftp.File
+			remote, err = s.Client.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+			if errors.Is(err, os.ErrNotExist) {
+				if err = s.Client.MkdirAll(dir); err == nil {
+					remote, err = s.Client.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+				}
+			}
 			if err == nil {
-				tmp := path.Join(dir, m.ID+"."+hex.EncodeToString(attempt[:])+".part")
-				dest := path.Join(dir, m.ID+".age")
-				var remote *sftp.File
-				remote, err = s.Client.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+				_, err = f.Seek(0, 0)
 				if err == nil {
-					_, err = f.Seek(0, 0)
-					if err == nil {
-						_, err = io.Copy(remote, f)
-					}
-					closeErr := remote.Close()
-					if err == nil {
-						err = closeErr
-					}
-					if err == nil {
-						err = s.Client.Rename(tmp, dest)
-						// A lost acknowledgement cannot prove whether publication happened.
-						d.Unconfirmed = connectionFailure(err) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
-					}
-					if err != nil {
-						s.Client.Remove(tmp)
-					}
+					_, err = io.Copy(remote, f)
+				}
+				closeErr := remote.Close()
+				if err == nil {
+					err = closeErr
+				}
+				if err == nil {
+					err = s.Client.Rename(tmp, dest)
+					// A lost acknowledgement cannot prove whether publication happened.
+					d.Unconfirmed = connectionFailure(err) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+				}
+				if err != nil {
+					s.Client.Remove(tmp)
 				}
 			}
 		}

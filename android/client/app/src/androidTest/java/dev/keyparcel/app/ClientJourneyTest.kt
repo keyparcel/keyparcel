@@ -596,6 +596,14 @@ class ClientJourneyTest {
         compose.waitUntil(150_000) { liveModel.refreshRevision >= revision + 2 }
         check(value("message") == input) { "Timed refresh discarded the text draft" }
         compose.onNodeWithTag("remove-recipient-laptop").assertExists()
+        val discovery = requireNotNull(liveModel.discoverySnapshot)
+        File(compose.activity.cacheDir, "send-discovery-ready").writeText("ready")
+        compose.waitUntil(150_000) { File(compose.activity.cacheDir, "send-discovery-go").exists() }
+        val failedRefresh = liveModel.refreshRevision
+        compose.runOnIdle { liveModel.refreshDevices() }
+        compose.waitUntil(150_000) { liveModel.refreshRevision > failedRefresh && !liveModel.refreshing }
+        check(liveModel.error.orEmpty().contains("permission denied", ignoreCase = true)) { "Discovery fixture was not unreadable" }
+        check(liveModel.discoverySnapshot == discovery) { "Failed refresh lost discovery used by send" }
         compose.onNodeWithTag("message").performScrollTo().performTouchInput { click() }
         field("message", input)
         compose.onNodeWithTag("send-message").assertIsDisplayed().assertIsEnabled()
@@ -758,6 +766,7 @@ class ClientJourneyTest {
         compose.runOnIdle {
             // Reconnect with the short deadline before the fixture stalls SSH.
             model.setForeground(false)
+            check(model.discoverySnapshot == null) { "Retired context retained send discovery" }
             model.requestTimeoutMillis = 10_000L
             model.setForeground(true)
         }
@@ -765,6 +774,7 @@ class ClientJourneyTest {
         val beforeInbox = model.inbox
         val beforeRejected = model.rejected
         val beforeDevices = model.devices
+        val beforeDiscovery = requireNotNull(model.discoverySnapshot)
         File(compose.activity.cacheDir, "stalled-ready").writeText("ready")
         compose.waitUntil(150_000) { File(compose.activity.cacheDir, "stalled-go").exists() }
         compose.onNodeWithTag("refresh-inbox").assertIsEnabled()
@@ -812,6 +822,7 @@ class ClientJourneyTest {
         screenshot("status-error")
         check(model.inbox == beforeInbox && model.rejected == beforeRejected) { "Failed refresh replaced the last good inbox" }
         check(model.devices == beforeDevices) { "Failed refresh replaced the last good discovery snapshot" }
+        check(model.discoverySnapshot == beforeDiscovery) { "Failed refresh discarded the send discovery snapshot" }
         compose.onNodeWithTag("refresh-inbox").assertIsEnabled()
         compose.onNodeWithTag("send-screen").assertIsEnabled()
         compose.onNodeWithTag("settings").assertIsEnabled()

@@ -1,16 +1,54 @@
 package bridge
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"golang.org/x/crypto/ssh"
 	"keyparcel/core"
 )
+
+func TestCachedSendJSONValidationAndCurrentApprovals(t *testing.T) {
+	key, err := GenerateIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, err := PublicKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{ctx: context.Background(), session: &core.Session{}, config: &core.Config{Peers: map[string]string{}}}
+	for _, invalid := range []string{"null", "{}", "broken"} {
+		if _, err := c.SendTextToWithDiscovery(`["peer"]`, "draft", invalid); err == nil {
+			t.Fatalf("invalid discovery snapshot accepted: %s", invalid)
+		}
+	}
+	report, err := c.SendTextToWithDiscovery(`["peer"]`, "draft", `[]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(report), &result); err != nil || !strings.Contains(result.Error, "not approved") {
+		t.Fatalf("snapshot bypassed current approvals: %s %v", report, err)
+	}
+	c.config.Peers["peer"] = public
+	report, err = c.SendTextToWithDiscovery(`["peer"]`, "draft", `[]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(report), &result); err != nil || !strings.Contains(result.Error, "not enrolled") {
+		t.Fatalf("empty successful snapshot triggered network or sending: %s %v", report, err)
+	}
+}
 
 func TestServerKeysAreIndependentOfPeerKeySupport(t *testing.T) {
 	private, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

@@ -40,7 +40,7 @@ func TestStalePollCannotRestoreDeletedRowsOrTrustResults(t *testing.T) {
 	for _, change := range []string{"delete", "profile", "approval", "busy", "closed"} {
 		t.Run(change, func(t *testing.T) {
 			m := &model{profileVersion: 1, hasSnapshot: true}
-			snapshot := liveSnapshot{Items: []core.Item{item}, InboxOK: true, DevicesOK: true}
+			snapshot := liveSnapshot{Items: []core.Item{item}, Devices: []core.Device{{Fingerprint: "stale discovery"}}, InboxOK: true, DevicesOK: true}
 			version := m.profileVersion
 			switch change {
 			case "delete", "profile", "approval":

@@ -684,12 +684,20 @@ try:
     status("Parcel deleted")
     wait("Successful removal retained transfer",lambda: id not in ids("desktop"))
 
+    refresh()
     click("Send")
     idle()
     select_recipient("This device")
     fill("Message", message)
-    click("Send text")
-    wait("self-send clears sent text", lambda: text_contents(control(app, "Message")) == "")
+    fixture.exec("chmod", "000", "/home/parcel/.ssh/authorized_keys")
+    try:
+        refresh()
+        wait("manual discovery failure", lambda: any("refresh failed" in n.get_name().lower() and "permission denied" in n.get_name().lower() for n in walk(app)))
+        click("Send")
+        click("Send text")
+        wait("cached-discovery self-send clears sent text", lambda: text_contents(control(app, "Message")) == "")
+    finally:
+        fixture.exec("chmod", "600", "/home/parcel/.ssh/authorized_keys")
     assert text_contents(control(app, "Message")) == "", "Self-send did not clear sent text on Send"
     control(app, "Remove recipient This device", Atspi.Role.PUSH_BUTTON)
     refresh()
