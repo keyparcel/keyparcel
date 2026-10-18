@@ -65,6 +65,7 @@ type model struct {
 	items                             []core.Item
 	devices                           []core.Device
 	peers                             map[string]string
+	hosts                             map[string]core.Host
 	navigation                        navigation
 	host                              core.Host
 	view                              *received
@@ -74,6 +75,10 @@ type model struct {
 	addingRecipient                   *profile
 	recipient                         string
 	extraRecipients                   []string
+	settingsLoaded                    bool
+	enrollmentVersion                 uint64
+	enrollmentOpen                    bool
+	enrollment                        enrollmentDetails
 	feedback                          *sendFeedback
 	sending                           *sendAttempt
 }
@@ -112,6 +117,9 @@ func (m *model) progress(text string) {
 	cstrings([]string{text}, func(v []*C.char) { C.ui_progress(m.ui, v[0]) })
 }
 func (m *model) page(name string) {
+	if m.navigation.current == "settings" && name != "settings" {
+		m.clearEnrollment()
+	}
 	if m.navigation.current != name {
 		m.refreshRequested = false
 	}
@@ -229,15 +237,30 @@ func (m *model) run(notice string, work func(context.Context) (any, error), done
 }
 
 func (m *model) load(target string) {
-	m.run("Loading settings…", func(context.Context) (any, error) { return m.store.load(target) }, func(value any) {
-		p := value.(profile)
+	m.run("Loading settings…", func(context.Context) (any, error) {
+		p, err := m.store.load(target)
+		if p.Config == nil {
+			return nil, err
+		}
+		return profileLoad{p, err}, nil
+	}, func(value any) {
+		result := value.(profileLoad)
+		p := result.Profile
+		m.settingsLoaded = false
 		m.applyProfile(p)
+		if result.Err != nil {
+			m.message(result.Err.Error())
+		}
 		if p.Target == "" {
 			m.page("settings")
 		}
 	})
 }
 func (m *model) applyProfile(p profile) {
+	profileChanged := m.target != p.Target || m.host != p.Host
+	if profileChanged {
+		m.clearEnrollment()
+	}
 	trustChanged := m.target != p.Target || m.host != p.Host || !reflect.DeepEqual(m.peers, p.Config.Peers)
 	if trustChanged {
 		if m.pollCancel != nil {
@@ -278,26 +301,23 @@ func (m *model) applyProfile(p profile) {
 		m.message("Server or recipient approval changed; choose recipients again. Previous deliveries are not undone.")
 	}
 	m.peers = p.Config.Peers
+	m.hosts = p.Config.Hosts
 	m.host = p.Host
 	m.target = p.Target
 	m.public = p.Public
 	m.fingerprint = p.Fingerprint
+	targetText := m.get("target")
+	C.ui_settings_edit(m.ui, 1)
 	m.clear("hosts")
 	for _, name := range sortedKeys(p.Config.Hosts) {
 		cstrings([]string{name}, func(v []*C.char) { C.ui_host(m.ui, v[0]) })
 	}
-	m.set("target", p.Target)
-	m.set("identity", p.Host.Identity)
-	m.set("root", p.Host.Root)
-	m.set("discovery", p.Host.Discovery)
-	if p.Target == "" {
-		m.set("identity", "~/.ssh/id_ed25519")
-		m.set("root", ".local/share/keyparcel")
-		m.set("discovery", ".ssh/authorized_keys")
+	m.set("target", targetText)
+	C.ui_settings_edit(m.ui, 0)
+	if profileChanged || !m.settingsLoaded {
+		m.settingsFields(p)
 	}
 	m.set("active-host", "Host: "+p.Target)
-	m.set("public-key", p.Public)
-	m.set("identity-fingerprint", p.Fingerprint)
 	m.recipient = recipient
 	m.set("ssh-config", m.options.sshConfig)
 	m.drawSend()
@@ -445,32 +465,38 @@ func (m *model) event(action, arg, value string) {
 		m.save = nil
 		m.page(arg)
 
-	case "use-host":
-		m.load(m.get("target"))
-	case "setup":
-		target, identity, root, discovery := m.get("target"), m.get("identity"), m.get("root"), m.get("discovery")
-		m.run("Saving shared settings…", func(context.Context) (any, error) {
-			if err := m.store.setup(target, identity, root, discovery); err != nil {
-				return nil, err
-			}
-			return m.store.load(target)
-		}, func(v any) { m.applyProfile(v.(profile)); m.confirm("Settings saved") })
-	case "connect":
-		target := m.target
-		m.run("Connecting through OpenSSH…", func(ctx context.Context) (any, error) {
-			return m.remote(ctx, target, nil, func(s *core.Session, p profile) (any, error) { return p, nil })
-		}, func(v any) {
-			m.applyProfile(v.(profile))
-			m.page("inbox")
-		})
+	case "host-selected":
+		if arg != m.target {
+			m.clearEnrollment()
+		}
+		m.load(arg)
+	case "identity-changed":
+		m.clearEnrollment()
+	case "choose-identity":
+		C.ui_identity_picker(m.ui)
+	case "identity-path":
+		m.clearEnrollment()
+		m.set("identity", arg)
+	case "enrollment-toggle":
+		if arg == "true" {
+			m.openEnrollment()
+		} else {
+			m.clearEnrollment()
+		}
+	case "save-connect":
+		m.saveAndConnect()
 	case "inbox":
 		m.refreshInbox()
 	case "devices":
 		m.refreshDevices()
 	case "copy-key":
-		m.copy(m.public)
+		if m.enrollmentOpen && m.enrollment.Public != "" {
+			m.copy(m.enrollment.Public)
+		}
 	case "copy-identity":
-		m.copy(m.fingerprint)
+		if m.enrollmentOpen && m.enrollment.Fingerprint != "" {
+			m.copy(m.enrollment.Fingerprint)
+		}
 	case "copy-peer", "copy-id":
 		m.copy(arg)
 	case "details":
@@ -834,7 +860,7 @@ func newModel(o options) *model {
 	})
 	if m.ui != nil {
 		m.set("target", o.host)
-		m.set("identity", "~/.ssh/id_ed25519")
+		m.set("identity", defaultIdentity())
 		m.set("root", ".local/share/keyparcel")
 		m.set("discovery", ".ssh/authorized_keys")
 		m.page("settings")
@@ -935,9 +961,10 @@ func hostApprovalPrompt(prompt string) bool {
 		strings.Contains(prompt, "Are you sure you want to continue connecting ")
 }
 
-func iterate()                       { C.ui_iterate() }
-func (m *model) pickerPending() bool { return C.ui_picker_pending(m.ui) != 0 }
-func (m *model) cancelPicker()       { C.ui_cancel_picker(m.ui) }
+func iterate()                         { C.ui_iterate() }
+func (m *model) pendingCallbacks() int { return int(C.ui_pending(m.ui)) }
+func (m *model) pickerPending() bool   { return C.ui_picker_pending(m.ui) != 0 }
+func (m *model) cancelPicker()         { C.ui_cancel_picker(m.ui) }
 func (m *model) destroy() {
 	m.event("close", "", "")
 	C.ui_shutdown(m.ui)

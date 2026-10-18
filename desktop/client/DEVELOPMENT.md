@@ -88,7 +88,7 @@ files and transfers. The client/server can stop/restart without changing identit
 or endpoint (`inbox:22` on the private network). Dependency-image changes take
 full effect after reset/recreation; rebuilding source updates the shared binaries.
 Fresh mode retains enrolled identities/server/transfers: enter the printed identity
-path and target `inbox`, Save settings, then Connect to exercise graphical approval.
+path and target `inbox`, then **Save & connect** to exercise graphical approval.
 The peer stays configured. Close the window **and peer shell** before fresh/reset;
 reset verifies ownership and refuses active sessions. `smoke-gtk-down` deletes
 these containers, their network and all owned smoke files; copy saved files out

@@ -156,6 +156,98 @@ func TestGTKLifecycleAndImmediateCancellation(t *testing.T) {
 		t.Fatal("GTK initialization failed")
 	}
 	defer m.destroy()
+	checkGTKInformationPointerAndKeyboard(t, m)
+	// Local enrollment preview must not apply a profile or write configuration.
+	path := identity(t, t.TempDir())
+	m.set("identity", path)
+	version, baselinePending := m.profileVersion, m.pendingCallbacks()
+	await := func(description string, condition func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Second)
+		for !condition() && time.Now().Before(deadline) {
+			iterate()
+			time.Sleep(time.Millisecond)
+		}
+		if !condition() {
+			t.Fatal(description)
+		}
+	}
+	m.event("enrollment-toggle", "true", "")
+	await("valid enrollment did not load", func() bool { return m.enrollment.Public != "" })
+	if m.profileVersion != version || m.active != nil || m.target != "" {
+		t.Fatal("preview applied a profile or started connection work")
+	}
+	if _, err := os.Stat(m.store.path); !os.IsNotExist(err) {
+		t.Fatal("preview wrote shared settings", err)
+	}
+	m.set("identity", path+".missing") // Native entry changed signal invalidates immediately.
+	if m.enrollmentOpen || m.enrollment != (enrollmentDetails{}) || m.get("public-key") != "" {
+		t.Fatal("editing identity retained enrollment")
+	}
+	m.event("enrollment-toggle", "true", "")
+	await("invalid identity has no local error", func() bool { return m.get("enrollment-error") != "Reading identity…" })
+	if !m.enrollmentOpen || m.get("enrollment-error") == "" || m.enrollment != (enrollmentDetails{}) {
+		t.Fatal("invalid identity did not remain open with an error")
+	}
+	m.set("identity", path)
+	if m.get("enrollment-error") != "" || m.enrollmentOpen {
+		t.Fatal("path edit retained disclosure/error")
+	}
+	m.event("enrollment-toggle", "true", "")
+	// Wait for the worker without processing the pending GTK result, then edit.
+	readerDeadline := time.Now().Add(3 * time.Second)
+	for len(m.workers) != 0 && time.Now().Before(readerDeadline) {
+		time.Sleep(time.Millisecond)
+	}
+	m.set("identity", path+".edited")
+	await("stale enrollment result remained pending", func() bool { return m.pendingCallbacks() == baselinePending })
+	if m.enrollmentOpen || m.enrollment != (enrollmentDetails{}) {
+		t.Fatal("stale preview survived path edit")
+	}
+	m.set("identity", path)
+	m.event("enrollment-toggle", "true", "")
+	m.event("enrollment-toggle", "false", "")
+	await("closed disclosure reader did not finish", func() bool { return m.pendingCallbacks() == baselinePending })
+	if m.enrollmentOpen || m.enrollment != (enrollmentDetails{}) {
+		t.Fatal("closed disclosure accepted pending result")
+	}
+	m.event("choose-identity", "", "")
+	if !m.pickerPending() {
+		t.Fatal("identity picker did not open")
+	}
+	m.cancelPicker()
+	if m.get("identity") != path {
+		t.Fatal("canceling identity picker changed the path")
+	}
+	m.enrollmentOpen = true
+	m.enrollment = enrollmentDetails{Public: "old", Fingerprint: "old"}
+	cfg := &core.Config{Hosts: map[string]core.Host{}, Peers: map[string]string{}}
+	host := core.Host{Identity: path}
+	cfg.Hosts = map[string]core.Host{"first": host, "second": host}
+	m.applyProfile(profile{Config: cfg, Target: "first", Host: host})
+	m.set("target", "second")
+	if m.target != "first" || m.active != nil {
+		t.Fatal("typing a saved target applied its profile")
+	}
+	m.enrollmentOpen = true
+	m.enrollment = enrollmentDetails{Public: "old", Fingerprint: "old"}
+	m.applyProfile(profile{Config: cfg, Target: "second", Host: host})
+	if m.enrollmentOpen || m.enrollment != (enrollmentDetails{}) {
+		t.Fatal("different host with the same identity retained details")
+	}
+	m.applyProfile(profile{Config: cfg})
+	broken := core.Host{Identity: path + ".missing", Fingerprint: "saved-fingerprint", Root: "root", Discovery: "keys"}
+	brokenConfig := &core.Config{Hosts: map[string]core.Host{"broken": broken}, Peers: map[string]string{}, DefaultHost: "broken"}
+	if err := brokenConfig.Save(m.store.path); err != nil {
+		t.Fatal(err)
+	}
+	m.load("broken")
+	await("saved invalid profile did not load", func() bool { return m.active == nil && m.target == "broken" })
+	if m.get("identity") != broken.Identity || m.enrollmentOpen {
+		t.Fatal("saved invalid identity path was hidden or auto-previewed")
+	}
+	m.applyProfile(profile{Config: cfg})
+	await("invalid-profile worker did not retire", func() bool { return m.pendingCallbacks() == baselinePending })
 	m.recipient = "self"
 	feedback := &sendFeedback{}
 	m.feedback = feedback
