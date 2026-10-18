@@ -24,6 +24,10 @@ type liveSnapshot struct {
 func (m *model) watch() { C.ui_watch(m.ui) }
 
 func (m *model) connection(state string) {
+	if state != m.loggedConnection {
+		m.options.diagnostics.connection(state)
+		m.loggedConnection = state
+	}
 	cstrings([]string{state}, func(v []*C.char) { C.ui_connection(m.ui, v[0]) })
 }
 
@@ -37,6 +41,8 @@ func (m *model) requestRefresh() {
 	}
 	m.profileVersion++
 	version, target := m.profileVersion, m.target
+	started := time.Now()
+	m.options.diagnostics.start("Refresh")
 	generation := m.session.stamp()
 	ctx, cancel := context.WithTimeout(m.ctx, m.options.timeout)
 	m.manualCancel = cancel
@@ -47,7 +53,10 @@ func (m *model) requestRefresh() {
 	go func() {
 		snapshot, err := m.fetchSnapshot(ctx, target, false, generation)
 		cancel()
-		handle := cgo.NewHandle(func() { m.finishManualRefresh(snapshot, version, err) })
+		handle := cgo.NewHandle(func() {
+			m.options.diagnostics.finish("Refresh", started, nil, err, m.closed || version != m.profileVersion || m.active != nil)
+			m.finishManualRefresh(snapshot, version, err)
+		})
 		C.ui_post(m.ui, C.uintptr_t(handle))
 	}()
 }
@@ -63,6 +72,9 @@ func (m *model) finishManualRefresh(snapshot liveSnapshot, version uint64, err e
 	C.ui_refreshing(m.ui, 0)
 	if !m.publishSnapshot(snapshot, version) {
 		return
+	}
+	if err == nil {
+		m.options.diagnostics.background(nil)
 	}
 	if err != nil && manual {
 		m.message("Refresh failed; last successful data retained: " + err.Error())
@@ -91,6 +103,7 @@ func (m *model) poll() {
 			if !m.publishSnapshot(snapshot, version) {
 				return
 			}
+			m.options.diagnostics.background(err)
 			if err != nil {
 				if m.retryDelay == 0 {
 					m.retryDelay = time.Second
