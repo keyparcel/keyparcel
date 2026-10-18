@@ -78,6 +78,13 @@ func TestConnectionConcurrentTransport(t *testing.T) {
 				if _, err := exec.LookPath("ssh"); err != nil {
 					t.Skip("OpenSSH client unavailable")
 				}
+				// ControlPath must also work when the user's temp path has spaces.
+				dir, err := os.MkdirTemp("", "kp space-")
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { os.RemoveAll(dir) })
+				t.Setenv("TMPDIR", dir)
 			}
 			identity, host := testIdentity(t), testIdentity(t)
 			signer, err := ssh.ParsePrivateKey(host.private)
@@ -161,7 +168,7 @@ func TestConnectionConcurrentTransport(t *testing.T) {
 				t.Fatal(err)
 			}
 			config := filepath.Join(root, "ssh_config")
-			if err := os.WriteFile(config, []byte(fmt.Sprintf("Host fixture\n HostName %s\n Port %d\n User selected-user\n UserKnownHostsFile %s\n GlobalKnownHostsFile /dev/null\n IdentityAgent none\n", address, port, known)), 0600); err != nil {
+			if err := os.WriteFile(config, []byte(fmt.Sprintf("Host fixture\n HostName %s\n Port %d\n User selected-user\n UserKnownHostsFile %q\n GlobalKnownHostsFile /dev/null\n IdentityAgent none\n", address, port, known)), 0600); err != nil {
 				t.Fatal(err)
 			}
 			c := NewConnection(ctx, func(ctx context.Context) (*Session, error) {
@@ -237,6 +244,10 @@ func TestConnectionConcurrentTransport(t *testing.T) {
 			}
 			if tcp.Load() != 1 || authenticated.Load() != 1 {
 				t.Fatal("file error retired transport")
+			}
+			if backend == "openssh" {
+				c.Close()
+				checkOpenSSHMasterLifecycle(t, ctx, identity, config, &tcp, &authenticated, &subsystems)
 			}
 		})
 	}

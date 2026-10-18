@@ -11,7 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sys/unix"
 )
@@ -97,7 +96,9 @@ func connect(ctx context.Context, target string, h Host, sshConfig string, compl
 		}
 	}
 	args := sshArgs(h, sshConfig, tty != nil || askpass != "")
-	pre := exec.CommandContext(ctx, "ssh", append(append([]string{"-G"}, args...), target)...)
+	// Evaluate the same no-session configuration used for authentication, not
+	// the later mux child's subsystem configuration.
+	pre := exec.CommandContext(ctx, "ssh", append(append([]string{"-G"}, openSSHMasterArgs(args, "none")...), "-N", target)...)
 	quiet(pre)
 	pre.WaitDelay = 2 * time.Second
 	var diag bytes.Buffer
@@ -146,49 +147,15 @@ func connect(ctx context.Context, target string, h Host, sshConfig string, compl
 	if !selected {
 		return nil, errors.New("SSH effective configuration does not include selected identity")
 	}
+	master, err := startOpenSSHMaster(ctx, target, args, quiet, tty)
+	if err != nil {
+		return nil, err
+	}
 	s := &Session{Identity: id, ctx: ctx}
-	var stderr bytes.Buffer
-	var cmd *exec.Cmd
-	cmd = exec.CommandContext(ctx, "ssh", append(args, "-s", target, "sftp")...)
-	quiet(cmd)
-	cmd.WaitDelay = 2 * time.Second
-	cmd.Stderr = &stderr
-	if tty != nil {
-		// SSH owns the prompt and warnings; stdin/stdout remain SFTP protocol pipes.
-		cmd.Stderr = tty
-	}
-	in, err := cmd.StdinPipe()
+	s.Client, s.closeTransport, err = master.openSFTP()
 	if err != nil {
+		master.close()
 		return nil, err
-	}
-	out, err := cmd.StdoutPipe()
-	if err != nil {
-		in.Close()
-		return nil, err
-	}
-	if err = cmd.Start(); err != nil {
-		in.Close()
-		return nil, err
-	}
-	s.Client, err = sftp.NewClientPipe(out, in, sftp.UseConcurrentReads(false), sftp.UseConcurrentWrites(false))
-	if err != nil {
-		cmd.Process.Kill()
-		cmd.Wait()
-		if tty != nil {
-			return nil, fmt.Errorf("SSH/SFTP connection: %w", err)
-		}
-		return nil, fmt.Errorf("SSH/SFTP connection: %w: %s", err, strings.TrimSpace(stderr.String()))
-	}
-	s.closeTransport = func() error {
-		closeErr := s.Client.Close()
-		err := cmd.Wait()
-		if closeErr != nil {
-			return closeErr
-		}
-		if err != nil {
-			return fmt.Errorf("SSH: %w: %s", err, strings.TrimSpace(stderr.String()))
-		}
-		return nil
 	}
 	cwd, err := s.Client.Getwd()
 	if err != nil {
