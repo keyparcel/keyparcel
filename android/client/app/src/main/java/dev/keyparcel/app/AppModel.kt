@@ -84,6 +84,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     var rejected by mutableStateOf(emptyList<String>()); private set
     var inboxLoaded by mutableStateOf(false); private set
     var devicesLoaded by mutableStateOf(false); private set
+    internal var discoverySnapshot by mutableStateOf<String?>(null); private set
     var viewed by mutableStateOf<ViewedText?>(null); private set
     var pendingHost by mutableStateOf<Host?>(null); private set
     var selectedFile by mutableStateOf<SelectedDocument?>(null); private set
@@ -151,6 +152,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
 
     private fun retireConnection() = synchronized(sessionLock) {
         sessionEpoch++
+        discoverySnapshot = null
         connected?.client?.close()
         connected = null
     }
@@ -265,6 +267,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun invalidateVerifiedResults() {
+        discoverySnapshot = null
         pendingDelete = null
         inbox = emptyList(); rejected = emptyList(); devices = emptyList()
         inboxLoaded = false; devicesLoaded = false
@@ -274,6 +277,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
 
     private fun setHost(host: Host) {
         applySettings(settings.copy(host = host))
+        discoverySnapshot = null
         inbox = emptyList(); rejected = emptyList(); devices = emptyList()
         inboxLoaded = false; devicesLoaded = false; viewed = null; savedFile = null; pendingSave = null
     }
@@ -326,6 +330,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
                 d.getBoolean("self"), d.getBoolean("supported"))
         }
         devicesLoaded = true
+        discoverySnapshot = json
     }
 
     fun suggestedPeerName(device: Device): String {
@@ -501,11 +506,21 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         (listOf(recipient) + draft.additionalRecipients).filter { it.isNotEmpty() }.distinct(), publicKey)
 
     private suspend fun sendBatch(context: SendContext, names: List<String>, text: String, file: File?, filename: String): SendReport {
-        val json = withClient(requireNotNull(context.settings.host) { "Configure a server first" }) { client ->
+        val (captured, cached) = withContext(Dispatchers.Main) {
             require(context.matches(settings, publicKey)) { "Server or recipient approval changed; choose recipients again" }
-            val recipients = JSONArray(names).toString()
-            if (file == null) client.sendTextTo(recipients, text) else client.sendNamedFileTo(recipients, file.absolutePath, filename)
+            RefreshContext(settings, sessionEpoch, dataRevision) to discoverySnapshot
         }
+        var learned: String? = null
+        val json = withClient(requireNotNull(context.settings.host) { "Configure a server first" }, captured.settings) { client ->
+            require(context.matches(settings, publicKey)) { "Server or recipient approval changed; choose recipients again" }
+            val discovery = cached ?: client.discover().also { learned = it }
+            val recipients = JSONArray(names).toString()
+            if (file == null) client.sendTextToWithDiscovery(recipients, text, discovery)
+            else client.sendNamedFileToWithDiscovery(recipients, file.absolutePath, filename, discovery)
+        }
+        learned?.let { discovery -> withContext(Dispatchers.Main) {
+            if (captured.matches(settings, sessionEpoch, dataRevision, foreground)) publishDevices(discovery)
+        } }
         val result = JSONObject(json)
         val array = result.optJSONArray("deliveries")
         if (array == null || array.length() == 0) throw java.io.IOException(result.optString("error", "Send did not start"))

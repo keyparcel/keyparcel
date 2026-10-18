@@ -49,10 +49,16 @@ func TestSendContextCapturesEveryApprovedKey(t *testing.T) {
 	if !a.matches(p) {
 		t.Fatal("captured context does not match itself")
 	}
+	if !sameDiscoveryContext(p, p) {
+		t.Fatal("discovery context does not match itself")
+	}
 	changed := p
 	changed.Config = &core.Config{Peers: map[string]string{"bob": p.Config.Peers["bob"], "other": p.Public}}
 	if !a.matches(changed) {
 		t.Fatal("unrelated approval invalidates send")
+	}
+	if sameDiscoveryContext(p, changed) {
+		t.Fatal("approval change reused old discovery context")
 	}
 	changed.Config = &core.Config{Peers: map[string]string{}}
 	if a.matches(changed) {
@@ -65,6 +71,9 @@ func TestSendContextCapturesEveryApprovedKey(t *testing.T) {
 	}
 	changed = p
 	changed.Public = p.Config.Peers["bob"]
+	if sameDiscoveryContext(p, changed) {
+		t.Fatal("replacement identity reused old discovery context")
+	}
 	if a.matches(changed) {
 		t.Fatal("replacement self identity accepted")
 	}

@@ -33,6 +33,11 @@ uses the selected host's device key and needs no peer approval, including for
 receiving its own signed packages. That key must still be enrolled on the server;
 `self` is reserved as a local name.
 
+GUI sends reuse the last successful in-memory discovery snapshot until the profile
+or trust context changes. A failed refresh keeps that snapshot, so recently removed
+server enrollments may remain selectable until a successful refresh. Current local
+approvals are always required. CLI sends fetch fresh discovery each invocation.
+
 Each saved target has its own identity, root, and discovery settings. `--host`
 overrides the saved default for one invocation. All commands accept `--config PATH`;
 remote commands also accept `--ssh-config PATH` to ask OpenSSH to use a specific

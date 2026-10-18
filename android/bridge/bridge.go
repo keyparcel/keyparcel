@@ -367,15 +367,24 @@ func (c *Client) SendNamedFile(recipient, file, name string) (string, error) {
 // Batch sends preserve every per-recipient outcome, including partial failures.
 // A preflight error has no deliveries; callers must not infer success from JSON alone.
 func (c *Client) SendTextTo(recipientsJSON, text string) (string, error) {
-	return c.sendTo(recipientsJSON, "text", nil, strings.NewReader(text))
+	return c.sendTo(recipientsJSON, "text", nil, strings.NewReader(text), "")
 }
 func (c *Client) SendNamedFileTo(recipientsJSON, file, name string) (string, error) {
+	return c.SendNamedFileToWithDiscovery(recipientsJSON, file, name, "")
+}
+
+// The GUI binds this discovery JSON to its captured server/identity context.
+// Empty JSON preserves fresh discovery; "[]" is a successful empty snapshot.
+func (c *Client) SendTextToWithDiscovery(recipientsJSON, text, discoveryJSON string) (string, error) {
+	return c.sendTo(recipientsJSON, "text", nil, strings.NewReader(text), discoveryJSON)
+}
+func (c *Client) SendNamedFileToWithDiscovery(recipientsJSON, file, name, discoveryJSON string) (string, error) {
 	f, err := openSendFile(file, name)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
-	return c.sendTo(recipientsJSON, "file", &name, f)
+	return c.sendTo(recipientsJSON, "file", &name, f, discoveryJSON)
 }
 func openSendFile(file, name string) (*os.File, error) {
 	if !core.SafeFilename(name) {
@@ -403,13 +412,22 @@ func openSendFile(file, name string) (*os.File, error) {
 	}
 	return f, nil
 }
-func (c *Client) sendTo(recipientsJSON, kind string, filename *string, input io.Reader) (string, error) {
+func (c *Client) sendTo(recipientsJSON, kind string, filename *string, input io.Reader, discoveryJSON string) (string, error) {
 	var recipients []string
 	if err := json.Unmarshal([]byte(recipientsJSON), &recipients); err != nil {
 		return "", err
 	}
+	var discovery []core.Device
+	if discoveryJSON != "" {
+		if err := json.Unmarshal([]byte(discoveryJSON), &discovery); err != nil {
+			return "", err
+		}
+		if discovery == nil {
+			return "", errors.New("discovery snapshot must be an array")
+		}
+	}
 	result, err := clientRequest(c, func(s *core.Session) ([]core.Delivery, error) {
-		return s.Send(c.config, recipients, kind, filename, input)
+		return s.SendWithDiscovery(c.config, recipients, kind, filename, input, discovery)
 	})
 	report := struct {
 		Deliveries []core.Delivery `json:"deliveries"`

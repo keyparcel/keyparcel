@@ -4,6 +4,7 @@ package sftptest
 import (
 	"io"
 	"net"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -20,6 +21,14 @@ type Server struct {
 	wire     net.Conn
 	handlers sftp.Handlers
 	fault    atomic.Pointer[failure]
+	mu       sync.Mutex
+	calls    map[string]int
+}
+
+func (s *Server) Calls(method string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls[method]
 }
 
 // Fail affects the named request/path (empty path matches all). io.ErrClosedPipe drops the wire.
@@ -28,6 +37,9 @@ func (s *Server) Fail(method, path string, err error) {
 }
 
 func (s *Server) check(method, path string) error {
+	s.mu.Lock()
+	s.calls[method]++
+	s.mu.Unlock()
 	if f := s.fault.Load(); f != nil && f.method == method && (f.path == path || f.path == "") {
 		if f.err == io.ErrClosedPipe {
 			s.wire.Close()
@@ -40,9 +52,10 @@ func (s *Server) check(method, path string) error {
 func New(t testing.TB) *Server {
 	t.Helper()
 	clientWire, serverWire := net.Pipe()
-	s := &Server{wire: serverWire, handlers: sftp.InMemHandler()}
+	s := &Server{wire: serverWire, handlers: sftp.InMemHandler(), calls: map[string]int{}}
 	handlers := s.handlers
 	handlers.FileList, handlers.FileGet, handlers.FileCmd = s, s, s
+	handlers.FilePut = s
 	server := sftp.NewRequestServer(serverWire, handlers)
 	done := make(chan struct{})
 	go func() { defer close(done); server.Serve(); server.Close() }()
@@ -93,6 +106,13 @@ func (s *Server) Fileread(r *sftp.Request) (io.ReaderAt, error) {
 		return nil, err
 	}
 	return &reader{ReaderAt: rd, server: s, path: r.Filepath}, nil
+}
+
+func (s *Server) Filewrite(r *sftp.Request) (io.WriterAt, error) {
+	if err := s.check("Create", r.Filepath); err != nil {
+		return nil, err
+	}
+	return s.handlers.FilePut.Filewrite(r)
 }
 
 type reader struct {
