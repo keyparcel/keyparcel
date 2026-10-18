@@ -118,7 +118,25 @@ bytes; `core.GenerateIdentity` creates an Ed25519 identity for storage by its
 caller. OpenSSH and embedded connectors return the same `Session` API. Embedded
 SSH takes explicit connection settings and a trusted server key; it does not use
 OpenSSH configuration, agents, jump hosts or external commands. Cancel the context
-or close the session to stop work. Reconnection policy belongs to the caller.
+or close the session to stop work.
+
+GUI callers share one `core.Connection`, which admits one automatic poll and one
+foreground network request on the same concurrent-safe SFTP client. Polls never
+queue; manual refresh uses foreground admission. A request gets its own context
+and approval snapshot. Starting work invalidates older poll results without
+canceling healthy polling I/O. Approval-only changes retain SSH; changing the
+server, selected identity or host pin retires it. Android also closes it when
+backgrounded. A foreground request waiting on failed background setup may
+perform its own setup once, with its initiating dial policy; no action has run.
+
+Cancel or an admitted request's deadline disconnects the shared transport and
+both operations. Waiting cancellation leaves the transport alone. Most SFTP
+calls have no per-request wire cancellation; context isolation does not change
+that limitation. Bridge timeouts bound each synchronous network method, not an
+entire multi-method GUI action. Later requests may reconnect, but mutations are
+never replayed. Ordinary remote permission or local delivery errors retain the
+client; stream loss retires it. Sharing one SFTP stream/TCP connection still
+shares bandwidth and server-side packet blocking.
 
 Android consumes verified temporary files through a receive callback rather than
 the CLI's hard-link publication helper. The callback must finish consuming the

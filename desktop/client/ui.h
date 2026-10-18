@@ -16,6 +16,8 @@ void ui_message(UI *ui, const char *text);
 void ui_confirmation(UI *ui, const char *text);
 void ui_progress(UI *ui, const char *text);
 void ui_busy(UI *ui, int busy);
+const char *ui_operation_progress(UI *ui);
+int ui_activate_cancel(UI *ui);
 const char *ui_get(UI *ui, const char *name);
 void ui_set(UI *ui, const char *name, const char *text);
 char *ui_draft(UI *ui);

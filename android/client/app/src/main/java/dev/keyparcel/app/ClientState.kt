@@ -87,3 +87,9 @@ data class InboxDeleteRequest(val id: String, val settings: Settings) {
 data class Confirmation(val message: String, val dismissAt: Long) {
     fun expire(now: Long): Confirmation? = if (now >= dismissAt) null else this
 }
+
+// Results belong to both a transport epoch and the latest local mutation/trust snapshot.
+data class RefreshContext(val settings: Settings, val epoch: Long, val revision: Long) {
+    fun matches(current: Settings, currentEpoch: Long, currentRevision: Long, foreground: Boolean) =
+        foreground && settings == current && epoch == currentEpoch && revision == currentRevision
+}

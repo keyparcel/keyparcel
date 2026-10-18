@@ -23,11 +23,10 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -117,7 +116,9 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     @Volatile private var connected: Connected? = null
     @Volatile private var sessionEpoch = 0L
     @Volatile private var foreground = false
-    private val sessionLock = Mutex()
+    private val sessionLock = Any()
+    private var manualRefreshJob: Job? = null
+    private var dataRevision = 0L
     private var pollJob: Job? = null
     private var retry = RefreshRetry()
     private var pendingRefresh by mutableStateOf(false)
@@ -141,64 +142,79 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         foreground = value
         if (!value) {
             pollJob?.cancel()
+            manualRefreshJob?.cancel()
             pendingRefresh = false
             retireConnection()
         } else { retry = RefreshRetry(); startRefresh() }
         observeConnection()
     }
 
-    private fun retireConnection() {
+    private fun retireConnection() = synchronized(sessionLock) {
         sessionEpoch++
         connected?.client?.close()
         connected = null
     }
 
+    private data class RefreshResult(val items: String?, val discovery: String?, val failure: Exception?)
+
+    private suspend fun fetchRefresh(snapshot: Settings, background: Boolean): RefreshResult {
+        var items: String? = null
+        var discovery: String? = null
+        var failure: Exception? = null
+        try {
+            withClient(requireNotNull(snapshot.host), snapshot, background) { items = it.inbox(); discovery = it.discover() }
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (caught: Exception) { failure = caught }
+        return RefreshResult(items, discovery, failure)
+    }
+
+    private fun publishRefresh(result: RefreshResult) {
+        result.items?.let(::publishInbox)
+        result.discovery?.let(::publishDevices)
+        observeConnection()
+        refreshRevision++
+    }
+
     private fun requestRefresh() {
+        if (busy || manualRefreshJob?.isActive == true) return
         if (settings.host?.trusted != true) { error = "Connect and approve a server in Settings first"; return }
+        val snapshot = settings
+        val captured = RefreshContext(snapshot, sessionEpoch, ++dataRevision)
         pendingRefresh = true
         error = null
-        retry = retry.copy(nextAttemptMillis = 0)
-        startRefresh()
+        manualRefreshJob = viewModelScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) { fetchRefresh(snapshot, false) }
+                if (!captured.matches(settings, sessionEpoch, dataRevision, foreground)) return@launch
+                publishRefresh(result)
+                retry = if (result.failure == null) RefreshRetry() else retry.failed(SystemClock.elapsedRealtime())
+                if (pendingRefresh && error == null) result.failure?.let { error = it.message ?: it.toString() }
+            } finally {
+                if (captured.matches(settings, sessionEpoch, dataRevision, foreground)) pendingRefresh = false
+            }
+        }
     }
 
     fun cancelRefresh() {
         if (!pendingRefresh) return
         pendingRefresh = false
-        pollJob?.cancel()
-        retireConnection()
+        manualRefreshJob?.cancel()
+        dataRevision++
         error = "Refresh cancelled; last successful data retained"
         observeConnection()
     }
 
     private fun startRefresh() {
-        if (!foreground || !ready || busy || pollJob?.isActive == true || settings.host?.trusted != true ||
+        if (!foreground || !ready || busy || manualRefreshJob?.isActive == true || pollJob?.isActive == true || settings.host?.trusted != true ||
             SystemClock.elapsedRealtime() < retry.nextAttemptMillis) return
         val snapshot = settings
-        val epoch = sessionEpoch
+        val captured = RefreshContext(snapshot, sessionEpoch, dataRevision)
         pollJob = viewModelScope.launch {
-            var items: String? = null
-            var discovery: String? = null
-            try {
-                withContext(Dispatchers.IO) {
-                    withClient { items = it.inbox(); discovery = it.discover() }
-                }
-                if (settings != snapshot || epoch != sessionEpoch || !foreground) return@launch
-                publishInbox(requireNotNull(items))
-                publishDevices(requireNotNull(discovery))
-                retry = RefreshRetry()
-                observeConnection()
-                refreshRevision++
-                pendingRefresh = false
-            } catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: Exception) {
-                if (settings != snapshot || epoch != sessionEpoch || !foreground) return@launch
-                items?.let(::publishInbox)
-                observeConnection()
-                retry = retry.failed(SystemClock.elapsedRealtime())
-                if (pendingRefresh && error == null) error = failure.message ?: failure.toString()
-                refreshRevision++
-                pendingRefresh = false
-            }
+            val result = withContext(Dispatchers.IO) { fetchRefresh(snapshot, true) }
+            // Mutations own newer state, even if this poll finishes after Delete.
+            if (!captured.matches(settings, sessionEpoch, dataRevision, foreground) || busy) return@launch
+            publishRefresh(result)
+            retry = if (result.failure == null) RefreshRetry() else retry.failed(SystemClock.elapsedRealtime())
         }
     }
 
@@ -214,8 +230,11 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         } finally { key.fill(0) }
     }) { (saved, public, fp) ->
         if (publicKey.isNotEmpty() && publicKey != public) {
-            viewed = null; savedFile = null; pendingSave = null
-            if (page == Page.Text || page == Page.File) navigation = navigation.open(Page.Inbox)
+            retireConnection()
+            dataRevision++
+            invalidateVerifiedResults()
+            clearPendingSend()
+            draft = draft.copy(recipient = "", additionalRecipients = emptyList())
         }
         applySettings(saved)
         publicKey = public
@@ -233,17 +252,24 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         if (settings != updated) {
             // Old verification results must never survive a trust-context change.
             pendingDelete = null
-            pollJob?.cancel()
+            dataRevision++
             pendingRefresh = false
-            retireConnection()
-            inbox = emptyList(); rejected = emptyList(); devices = emptyList()
-            inboxLoaded = false; devicesLoaded = false
-            viewed = null; savedFile = null; pendingSave = null
-            if (page == Page.Text || page == Page.File) navigation = navigation.open(Page.Inbox)
+            invalidateVerifiedResults()
             retry = RefreshRetry()
         }
-        settings = updated
+        synchronized(sessionLock) {
+            if (settings.host != updated.host) retireConnection()
+            settings = updated
+        }
         observeConnection()
+    }
+
+    private fun invalidateVerifiedResults() {
+        pendingDelete = null
+        inbox = emptyList(); rejected = emptyList(); devices = emptyList()
+        inboxLoaded = false; devicesLoaded = false
+        viewed = null; savedFile = null; pendingSave = null
+        if (page == Page.Text || page == Page.File) navigation = navigation.open(Page.Inbox)
     }
 
     private fun setHost(host: Host) {
@@ -618,37 +644,48 @@ class AppModel(application: Application) : AndroidViewModel(application) {
 
     fun clipboardError(message: String?) { error = message; confirmationJob?.cancel(); confirmation = null }
 
-    private suspend fun <T> withClient(host: Host = requireNotNull(settings.host) { "Configure a server in Settings first" }, action: (Client) -> T): T = sessionLock.withLock {
+    private suspend fun <T> withClient(
+        host: Host = requireNotNull(settings.host) { "Configure a server in Settings first" },
+        snapshot: Settings = settings,
+        background: Boolean = false,
+        action: (Client) -> T
+    ): T {
         require(host.trusted) { "Connect in Settings and approve the server first" }
         currentCoroutineContext().ensureActive()
-        val epoch = sessionEpoch
-        var connection = connected
-        if (connection == null || connection.host != host || connection.epoch != epoch) {
-            connection?.client?.close()
-            val key = IdentityStore(getApplication()).loadOrCreate()
-            val client = try {
-                Bridge.newPersistentClient(key, host.address, host.port.toLong(), host.user, host.key, host.root, host.discovery,
-                    requestTimeoutMillis)
-            } finally { key.fill(0) }
-            connection = Connected(host, client, epoch)
-            connected = connection
+        val peers = JSONObject(snapshot.peers.toMap()).toString()
+        val timeout = requestTimeoutMillis
+        val client = synchronized(sessionLock) {
+            require(foreground) { "Connection suspended while the app is in the background" }
+            // A request captured before a profile change must not resurrect it.
+            require(settings == snapshot && settings.host == host) { "The server changed; try the operation again" }
+            val epoch = sessionEpoch
+            var connection = connected
+            if (connection == null || connection.host != host || connection.epoch != epoch) {
+                connection?.client?.close()
+                val key = IdentityStore(getApplication()).loadOrCreate()
+                val owner = try {
+                    Bridge.newPersistentClient(key, host.address, host.port.toLong(), host.user, host.key, host.root, host.discovery, timeout)
+                } finally { key.fill(0) }
+                connection = Connected(host, owner, epoch)
+                connected = connection
+            }
+            connection.client.newRequest(peers, timeout, background)
         }
-        val client = connection.client
-        if (epoch != sessionEpoch || !foreground) {
-            client.close()
-            if (connected === connection) connected = null
-            throw java.io.IOException("Connection suspended while the app is in the background")
-        }
-        client.setRequestTimeout(requestTimeoutMillis)
-        client.setPeers(JSONObject(settings.peers).toString())
-        action(client)
+        try {
+            currentCoroutineContext().ensureActive()
+            return suspendCancellableCoroutine { continuation ->
+                continuation.invokeOnCancellation { client.cancelRequest() }
+                try { continuation.resumeWith(Result.success(action(client))) }
+                catch (failure: Exception) { continuation.resumeWith(Result.failure(failure)) }
+            }
+        } finally { client.cancelRequest() }
     }
 
     private fun <T> work(label: String, task: suspend () -> T, success: (T) -> Unit) {
         if (busy) return
-        // User operations preempt a slow poll and never wait behind a backlog.
+        // Running polls keep their transport; their older snapshots cannot publish.
         pendingRefresh = false
-        if (pollJob?.isActive == true) { pollJob?.cancel(); retireConnection() }
+        dataRevision++
         confirmationJob?.cancel(); confirmation = null
         busy = true; error = null; progress = label
         viewModelScope.launch {

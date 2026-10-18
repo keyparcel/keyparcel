@@ -4,6 +4,17 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ClientStateTest {
+    @Test fun refreshCannotRestoreRowsAfterDeleteOrTrustChanges() {
+        val original = Settings(Host("server", 22, "user", "pin"), mapOf("bob" to "approved"))
+        val poll = RefreshContext(original, 4, 10)
+        assertTrue(poll.matches(original, 4, 10, true))
+        assertFalse("Delete supersedes the older Inbox list", poll.matches(original, 4, 11, true))
+        assertFalse("Reconnect supersedes the old transport", poll.matches(original, 5, 10, true))
+        assertFalse("Removed approvals invalidate verified results", poll.matches(original.copy(peers = emptyMap()), 4, 10, true))
+        assertFalse("Changed pin invalidates results", poll.matches(original.copy(host = original.host!!.copy(key = "new pin")), 4, 10, true))
+        assertFalse("Background results cannot publish", poll.matches(original, 4, 10, false))
+    }
+
     @Test fun settingsReturnsToTheScreenThatOpenedIt() {
         for (parent in listOf(Page.Inbox, Page.Send, Page.Devices)) {
             val navigation = NavigationState().open(parent).open(Page.Settings).open(Page.Settings)
