@@ -23,16 +23,29 @@ func TestTransportPerformance(t *testing.T) {
 	}
 	build, stop := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer stop()
+	images := map[string]string{}
 	for _, role := range []string{"server", "client"} {
-		out, diag, err := container(build, nil, "build", "-t", "keyparcel-bench-"+role+":local", "-f", filepath.Join(repo, "tests/bench/Dockerfile."+role), filepath.Join(repo, "tests/bench"))
+		iid := filepath.Join(t.TempDir(), "image-id")
+		out, diag, err := container(build, nil, "build", "--iidfile", iid, "-f", filepath.Join(repo, "tests/bench/Dockerfile."+role), filepath.Join(repo, "tests/bench"))
 		if err != nil {
 			t.Fatalf("benchmark image: %v %s%s", err, out, diag)
 		}
+		id, err := os.ReadFile(iid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		images[role] = strings.TrimSpace(string(id))
 	}
-	originalClient := clientImage
-	clientImage = "keyparcel-bench-client:local"
-	defer func() { clientImage = originalClient }()
-	w := makeWorldWithOptions(t, false, "ed25519", "openssh", worldOptions{timeout: 9 * time.Minute, netAdmin: true, serverImage: "keyparcel-bench-server:local"})
+	for _, backend := range []string{"embedded", "openssh"} {
+		t.Run(backend, func(t *testing.T) {
+			t.Parallel()
+			runTransportCohort(t, suite, backend, images["server"], images["client"])
+		})
+	}
+}
+
+func runTransportCohort(t *testing.T, suite, backend, serverImage, clientImage string) {
+	w := makeWorldWithOptions(t, false, "ed25519", backend, worldOptions{timeout: 4 * time.Minute, netAdmin: true, serverImage: serverImage, clientImage: clientImage})
 	worker, err := os.ReadFile(os.Getenv("KEYPARCEL_BENCH_BINARY"))
 	if err != nil {
 		t.Fatal(err)
@@ -54,7 +67,7 @@ func TestTransportPerformance(t *testing.T) {
 	if suite == "bulk" {
 		rtts = []int{20, 100}
 	}
-	fmt.Printf("suite=%s commit=%s link=100Mbit/s per-direction; isolated endpoint eth0 egress only; no random loss\n", suite, os.Getenv("KEYPARCEL_BENCH_REVISION"))
+	fmt.Printf("backend=%s suite=%s commit=%s link=100Mbit/s per-direction; isolated endpoint eth0 egress only; no random loss\n", backend, suite, os.Getenv("KEYPARCEL_BENCH_REVISION"))
 	for _, rtt := range rtts {
 		for _, id := range []string{w.id, w.alice.id} {
 			root(id, "ethtool", "-K", "eth0", "tso", "off", "gso", "off", "gro", "off")
@@ -63,7 +76,7 @@ func TestTransportPerformance(t *testing.T) {
 			if !strings.Contains(string(actual), "netem") || !strings.Contains(string(actual), "rate 100Mbit") {
 				t.Fatalf("unexpected link settings: %s", actual)
 			}
-			fmt.Printf("RTT=%d endpoint=%s actual_qdisc=%s", rtt, map[bool]string{true: "server", false: "client"}[id == w.id], actual)
+			fmt.Printf("backend=%s RTT=%d endpoint=%s actual_qdisc=%s", backend, rtt, map[bool]string{true: "server", false: "client"}[id == w.id], actual)
 		}
 		ping := root(w.alice.id, "ping", "-c", "5", "-i", "0.05", "-w", "5", "inbox")
 		match := regexp.MustCompile(`= [0-9.]+/([0-9.]+)/`).FindSubmatch(ping)
@@ -96,15 +109,13 @@ func TestTransportPerformance(t *testing.T) {
 			if rate <= 0 || rate > 130 {
 				t.Fatalf("100Mbit link cap not observed: %f", rate)
 			}
-			fmt.Printf("link target_RTT_ms=%d ping_mean_ms=%.3f direction=%s iperf_receiver_Mbit_s=%.3f flows=4 omitted_s=1 measured_s=3\n", rtt, actualRTT, map[bool]string{true: "download", false: "upload"}[reverse], rate)
+			fmt.Printf("backend=%s link target_RTT_ms=%d ping_mean_ms=%.3f direction=%s iperf_receiver_Mbit_s=%.3f flows=4 omitted_s=1 measured_s=3\n", backend, rtt, actualRTT, map[bool]string{true: "download", false: "upload"}[reverse], rate)
 		}
-		for _, backend := range []string{"embedded", "openssh"} {
-			out, diag, e := w.exec(w.alice, nil, "env", "KEYPARCEL_TEST_TRANSPORT="+backend, executable, "-suite", suite, "-rtt", strconv.Itoa(rtt), "-revision", os.Getenv("KEYPARCEL_BENCH_REVISION"))
-			fmt.Print(string(out))
-			fmt.Print(string(diag))
-			if e != nil {
-				t.Fatalf("production benchmark %s RTT%d: %v", backend, rtt, e)
-			}
+		out, diag, e := w.exec(w.alice, nil, "env", "KEYPARCEL_TEST_TRANSPORT="+backend, executable, "-suite", suite, "-rtt", strconv.Itoa(rtt), "-revision", os.Getenv("KEYPARCEL_BENCH_REVISION"))
+		fmt.Print(string(out))
+		fmt.Print(string(diag))
+		if e != nil {
+			t.Fatalf("production benchmark %s RTT%d: %v", backend, rtt, e)
 		}
 	}
 }

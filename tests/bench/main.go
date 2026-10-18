@@ -34,6 +34,17 @@ func run() error {
 	if *suite != "small" && *suite != "bulk" {
 		return errors.New("invalid benchmark suite")
 	}
+	payloadBytes := 512
+	if *suite == "bulk" {
+		switch *rtt {
+		case 20:
+			payloadBytes = 10 * 1024 * 1024
+		case 100:
+			payloadBytes = 2 * 1024 * 1024
+		default:
+			return errors.New("bulk requires 20 or 100 ms RTT")
+		}
+	}
 	cfg, err := core.LoadConfig("config.json")
 	if err != nil {
 		return err
@@ -77,12 +88,12 @@ func run() error {
 		sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
 		goodput := "-"
 		if *suite == "bulk" && name != "setup" {
-			goodput = fmt.Sprintf("%.3f", float64(10*1024*1024)*8/(total.Seconds()/float64(n))/1e6)
+			goodput = fmt.Sprintf("%.3f", float64(payloadBytes)*8/(total.Seconds()/float64(n))/1e6)
 		}
 		fmt.Printf("%s\t%d\t%s\t%d\t%d\t%.3f\t%.3f\t%d\t%s\n", backend, *rtt, name, n, len(values), total.Seconds()*1000/float64(n), values[n/2].Seconds()*1000, failures, goodput)
 		return nil
 	}
-	fmt.Printf("commit=%s suite=%s bytes=%d backend=%s current production transport settings; durations=ms\n", *revision, *suite, map[string]int{"small": 512, "bulk": 10 * 1024 * 1024}[*suite], backend)
+	fmt.Printf("commit=%s suite=%s bytes=%d backend=%s current production transport settings; durations=ms\n", *revision, *suite, payloadBytes, backend)
 	fmt.Println("backend\tRTT_ms\toperation\tplanned\tcompleted\tmean_ms\tmedian_ms\tfailures\tgoodput_Mbit_s")
 	var fresh *core.Session
 	if err = measure("setup", count, nil, func() error { var e error; fresh, e = dial(); return e }, func() error { return fresh.Close() }); err != nil {
@@ -98,10 +109,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	payload := make([]byte, 512)
-	if *suite == "bulk" {
-		payload = make([]byte, 10*1024*1024)
-	}
+	payload := make([]byte, payloadBytes)
 	_, _ = rand.New(rand.NewSource(1)).Read(payload)
 	filename := "benchmark.bin"
 	var id string
@@ -153,11 +161,11 @@ func run() error {
 	}
 	if *suite == "bulk" {
 		var ids []string
-		if err = measure("upload-10MiB", count, nil, func() error { return send(false) }, func() error { ids = append(ids, id); return nil }); err != nil {
+		if err = measure(fmt.Sprintf("upload-%dMiB", payloadBytes/(1024*1024)), count, nil, func() error { return send(false) }, func() error { ids = append(ids, id); return nil }); err != nil {
 			return err
 		}
 		next := 0
-		return measure("download-10MiB", count, func() error { id = ids[next]; next++; return nil }, receive, func() error {
+		return measure(fmt.Sprintf("download-%dMiB", payloadBytes/(1024*1024)), count, func() error { id = ids[next]; next++; return nil }, receive, func() error {
 			if e := verify(); e != nil {
 				return e
 			}

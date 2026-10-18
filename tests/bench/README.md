@@ -24,8 +24,13 @@ A native Go fixture worker runs as the existing ordinary client user. It calls
 production `core.Session` methods through the existing embedded/OpenSSH test
 connector, with current production SFTP options. Setup measures identity/config
 loading, authentication and SFTP initialization; closing is outside that timer.
-Remaining rows reuse one authenticated Session per backend/link cell. Backends
-run sequentially on the same shaped fixture, never competing for its link.
+Remaining rows reuse one authenticated Session per backend/link cell. Shared
+images build once, then embedded/OpenSSH cohorts run in parallel. Each owns a
+separate SSH server, clients, private network, shaped endpoints and parcel root;
+operations and measured samples remain sequential within that cohort. Image IDs
+are immutable and no global fixture defaults change during fanout. Cohorts share
+the runner's CPU/disk, so timings can include that contention; they do not share
+a network cap or SSH connection.
 
 Small uses five measured samples and valid signed/encrypted 512-byte file parcels:
 discovery, verified Inbox at 0/1/10 items, full-ID receive/delete, and all four
@@ -33,7 +38,8 @@ existing/missing-inbox × fresh/cached-discovery send cases. Preparation and cle
 are outside operation timers. Receives include normal full verification and atomic
 local SaveContent; exact saved bytes are checked. Sends include package creation
 and atomic publication, then are received/checked/deleted outside the send timer.
-Bulk uses three measured 10 MiB uploads and downloads, at 20/100 ms RTT. Uploads
+Bulk uses three measured uploads and downloads per transport: 10 MiB at 20 ms
+RTT and 2 MiB at 100 ms RTT, both at 100 Mbit/s. Uploads
 use fresh discovery. Downloads verify and atomically save the actual uploaded
 parcels. Payload bytes are deterministic pseudorandom data, not zero fill.
 
@@ -45,3 +51,7 @@ prints its incomplete count and fails the job. Table durations exclude provision
 calibration and cleanup; the **complete Actions job duration** is the CI runtime
 budget measure. Shell, Go fixture and job timeouts bound failures. Summaries also
 appear in Actions; normal stdout is sufficient without an artifact download.
+
+The whole-job budget is five minutes **including** provisioning, calibration and
+cleanup. This is a review/merge criterion, not an operation-performance assertion
+or a required CI gate.

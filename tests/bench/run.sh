@@ -9,4 +9,4 @@ export KEYPARCEL_BENCH_REVISION=$(git rev-parse HEAD)
 if [[ -n $(git status --porcelain) ]]; then KEYPARCEL_BENCH_REVISION+=-dirty; fi
 export KEYPARCEL_BENCH_BINARY="$PWD/test-artifacts/bench/worker"
 go build -tags=e2e -o "$KEYPARCEL_BENCH_BINARY" ./tests/bench
-go test -tags=e2e,performance -count=1 -timeout=10m -v -run '^TestTransportPerformance$' ./tests/e2e | tee "test-artifacts/bench/$1.log"
+go test -tags=e2e,performance -count=1 -timeout=5m -parallel=2 -v -run '^TestTransportPerformance$' ./tests/e2e | tee "test-artifacts/bench/$1.log"

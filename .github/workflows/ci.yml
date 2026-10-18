@@ -241,7 +241,7 @@ jobs:
       matrix:
         include:
           - {suite: small, timeout: 6}
-          - {suite: bulk, timeout: 12}
+          - {suite: bulk, timeout: 6}
     # Independent informational checks: no required aggregate depends on these jobs.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

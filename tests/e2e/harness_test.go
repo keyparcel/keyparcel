@@ -128,6 +128,7 @@ type worldOptions struct {
 	publishSSH  bool
 	netAdmin    bool
 	serverImage string
+	clientImage string
 }
 
 func makeWorldWithOptions(t *testing.T, clipboard bool, bobKeyType, mode string, options worldOptions) *world {
@@ -214,13 +215,17 @@ func makeWorldWithOptions(t *testing.T, clipboard bool, bobKeyType, mode string,
 	}
 	w.id = strings.TrimSpace(string(out))
 	w.port = "22"
-	w.alice = w.makeClient("alice", clientImage, "ed25519")
-	bobImage := clientImage
+	selectedClientImage := clientImage
+	if options.clientImage != "" {
+		selectedClientImage = options.clientImage
+	}
+	w.alice = w.makeClient("alice", selectedClientImage, "ed25519")
+	bobImage := selectedClientImage
 	if clipboard {
 		bobImage = clipboardImage
 	}
 	w.bob = w.makeClient("bob", bobImage, bobKeyType)
-	w.carol = w.makeClient("carol", clientImage, "ed25519")
+	w.carol = w.makeClient("carol", selectedClientImage, "ed25519")
 	authorized := []byte{}
 	for _, c := range []client{w.alice, w.bob, w.carol} {
 		b, e := os.ReadFile(c.key + ".pub")
