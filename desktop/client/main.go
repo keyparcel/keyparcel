@@ -56,6 +56,7 @@ type model struct {
 	profileVersion                    uint64
 	polling, hasSnapshot              bool
 	pollCancel                        context.CancelFunc
+	manualCancel                      context.CancelFunc
 	retryAt                           time.Time
 	retryDelay                        time.Duration
 	refreshRequested                  bool
@@ -176,9 +177,7 @@ func (m *model) run(notice string, work func(context.Context) (any, error), done
 		return false
 	}
 	m.refreshRequested = false
-	if m.pollCancel != nil {
-		m.pollCancel()
-	}
+	C.ui_refreshing(m.ui, 0)
 	m.profileVersion++
 	m.sequence++
 	sequence := m.sequence
@@ -263,9 +262,7 @@ func (m *model) applyProfile(p profile) {
 	}
 	trustChanged := m.target != p.Target || m.host != p.Host || !reflect.DeepEqual(m.peers, p.Config.Peers)
 	if trustChanged {
-		if m.pollCancel != nil {
-			m.pollCancel()
-		}
+		m.session.invalidate(p.Target, p.Host)
 		m.profileVersion++
 		m.items, m.devices, m.rejected = nil, nil, nil
 		m.view, m.save = nil, nil
@@ -324,6 +321,7 @@ func (m *model) applyProfile(p profile) {
 }
 
 func (m *model) remote(ctx context.Context, target string, expected *core.Host, action func(*core.Session, profile) (any, error)) (any, error) {
+	generation := m.session.stamp()
 	p, err := m.store.load(target)
 	if err != nil {
 		return nil, err
@@ -334,7 +332,7 @@ func (m *model) remote(ctx context.Context, target string, expected *core.Host, 
 	if expected != nil && p.Host != *expected {
 		return nil, &recipientChanged{p}
 	}
-	return m.session.request(ctx, p, m.options.sshConfig, m.options.helper, true, action)
+	return m.session.request(ctx, p, m.options.sshConfig, m.options.helper, true, false, generation, action)
 }
 func (m *model) refreshInbox() { m.requestRefresh() }
 func (m *model) drawInbox(rejected []core.Rejected) {
@@ -412,6 +410,12 @@ func (m *model) event(action, arg, value string) {
 	if action == "cancel" {
 		if m.active != nil {
 			m.active()
+		} else if m.manualCancel != nil {
+			m.profileVersion++
+			m.manualCancel()
+			m.refreshRequested = false
+			C.ui_refreshing(m.ui, 0)
+			m.message("Operation cancelled; remote transfers retained.")
 		} else if m.pollCancel != nil {
 			m.profileVersion++
 			m.pollCancel()

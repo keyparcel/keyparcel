@@ -92,7 +92,9 @@ func ValidatePeer(name, publicKey string) error {
 	return err
 }
 
-// Client operations are synchronous; call them sequentially. Close interrupts SSH.
+// Client operations are synchronous. Use separate NewRequest snapshots for
+// concurrent GUI operations; legacy mutable clients remain sequential. Close
+// interrupts the shared SSH transport, including every request snapshot.
 type Client struct {
 	session        *core.Session
 	config         *core.Config
@@ -100,6 +102,8 @@ type Client struct {
 	cancel         context.CancelFunc
 	connection     *core.Connection
 	requestTimeout time.Duration
+	background     bool
+	immutable      bool
 }
 
 func Connect(privateKey []byte, address string, port int, user, hostKey, root, discovery string) (*Client, error) {
@@ -165,7 +169,38 @@ func NewPersistentClient(privateKey []byte, address string, port int, user, host
 	return c, nil
 }
 
+// NewRequest captures immutable approvals and timeout for one GUI operation.
+// It shares this owner's transport; Close intentionally disconnects all views.
+// Request settings cannot be changed; construct another snapshot instead.
+// Call CancelRequest when finished to release its context.
+func (c *Client) NewRequest(peersJSON string, timeoutMillis int, background bool) (*Client, error) {
+	if c.connection == nil {
+		return nil, errors.New("request snapshots require a persistent client")
+	}
+	request := &Client{session: c.session, config: &core.Config{}, ctx: c.ctx, cancel: c.cancel, connection: c.connection, background: background}
+	if err := request.SetPeers(peersJSON); err != nil {
+		return nil, err
+	}
+	if err := request.SetRequestTimeout(timeoutMillis); err != nil {
+		return nil, err
+	}
+	request.ctx, request.cancel = context.WithCancel(c.ctx)
+	request.immutable = true
+	return request, nil
+}
+
+// CancelRequest cancels a snapshot's context. Connection decides whether it has
+// admitted I/O to disconnect; a canceled waiter cannot close a healthy owner.
+func (c *Client) CancelRequest() {
+	if c.immutable {
+		c.cancel()
+	}
+}
+
 func (c *Client) SetRequestTimeout(timeoutMillis int) error {
+	if c.immutable {
+		return errors.New("request settings are immutable; create a new request")
+	}
 	if timeoutMillis <= 0 || int64(timeoutMillis) > int64((1<<63-1)/time.Millisecond) {
 		return errors.New("request timeout must be a positive duration in milliseconds")
 	}
@@ -176,6 +211,9 @@ func (c *Client) SetRequestTimeout(timeoutMillis int) error {
 // SetPeers replaces the complete approval snapshot; removing trust must not
 // leave an old key in a reused session. Call sequentially with other operations.
 func (c *Client) SetPeers(peersJSON string) error {
+	if c.immutable {
+		return errors.New("request settings are immutable; create a new request")
+	}
 	var peers map[string]string
 	if err := json.Unmarshal([]byte(peersJSON), &peers); err != nil {
 		return err
@@ -200,7 +238,11 @@ func clientRequest[T any](c *Client, action func(*core.Session) (T, error)) (T, 
 	ctx, cancel := context.WithTimeout(c.ctx, c.requestTimeout)
 	defer cancel()
 	var result T
-	err := c.connection.Do(ctx, func(s *core.Session) error { var err error; result, err = action(s); return err })
+	run := c.connection.Do
+	if c.background {
+		run = c.connection.Poll
+	}
+	err := run(ctx, func(s *core.Session) error { var err error; result, err = action(s); return err })
 	return result, requestError(ctx, err)
 }
 
@@ -244,6 +286,9 @@ func requestError(ctx context.Context, err error) error {
 
 // Approve pins a public key already verified by the caller, independently of discovery.
 func (c *Client) Approve(name, publicKey string) error {
+	if c.immutable {
+		return errors.New("request settings are immutable; create a new request")
+	}
 	if err := ValidatePeer(name, publicKey); err != nil {
 		return err
 	}

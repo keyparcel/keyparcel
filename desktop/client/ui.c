@@ -633,6 +633,17 @@ void ui_busy(UI *ui, int busy) {
     gtk_widget_set_sensitive(ui->body, !busy); gtk_widget_set_sensitive(ui->cancel, busy);
     if (!busy) ui_progress(ui,"");
 }
+const char *ui_operation_progress(UI *ui) {
+    if (!gtk_spinner_get_spinning(GTK_SPINNER(ui->spinner)) ||
+        !gtk_widget_is_sensitive(ui->cancel) ||
+        strcmp(gtk_stack_get_visible_child_name(GTK_STACK(ui->progress)), "active") != 0) return "";
+    return gtk_label_get_text(GTK_LABEL(ui->status));
+}
+int ui_activate_cancel(UI *ui) {
+    if (!gtk_widget_is_sensitive(ui->cancel)) return 0;
+    g_signal_emit_by_name(ui->cancel, "clicked");
+    return 1;
+}
 const char *ui_get(UI *ui, const char *name) {
     GtkWidget *w = g_hash_table_lookup(ui->fields, name);
     if (GTK_IS_COMBO_BOX(w)) { const char *id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(w)); return id ? id : ""; }

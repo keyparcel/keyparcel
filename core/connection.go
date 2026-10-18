@@ -2,31 +2,45 @@ package core
 
 import (
 	"context"
+	"errors"
+	"io"
+	"sync"
 	"sync/atomic"
 )
+
+// ErrPollBusy means an automatic refresh was skipped; polls never queue.
+var ErrPollBusy = errors.New("automatic refresh already running")
 
 type connectionStatus struct {
 	name      string
 	transport context.Context
 }
 
-// Connection owns one reusable SSH/SFTP session. Do serializes its callers;
-// cancellation retires the transport, so a stalled request cannot poison reuse.
-// User operations are never retried: their result may already exist remotely.
-type Connection struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	dial      func(context.Context) (*Session, error)
-	gate      chan struct{}
-	session   *Session
-	transport context.Context
-	retire    context.CancelFunc
-	stopClose func() bool
-	status    atomic.Pointer[connectionStatus]
+type connectionLease struct {
+	background bool
+	ctx        context.Context
+	cancel     context.CancelFunc
+	fail       context.CancelCauseFunc
+	ready      chan struct{}
+	session    *Session
+	err        error
 }
 
-// State reports the owned transport, without probing the server or taking a
-// request lease. Connected means no loss has been observed, not a health check.
+// Connection admits one foreground operation and one automatic poll on its
+// single concurrent-safe SFTP client. Cancellation of admitted I/O disconnects
+// both operations; mutations are never replayed.
+type Connection struct {
+	ctx        context.Context
+	cancel     context.CancelFunc
+	dial       func(context.Context) (*Session, error)
+	foreground chan struct{}
+	poll       chan struct{}
+	mu         sync.Mutex
+	lease      *connectionLease
+	status     atomic.Pointer[connectionStatus]
+}
+
+// State observes transport loss without probing the server.
 func (c *Connection) State() string {
 	if c.ctx.Err() != nil {
 		return "Suspended"
@@ -43,26 +57,21 @@ func (c *Connection) State() string {
 
 func NewConnection(parent context.Context, dial func(context.Context) (*Session, error)) *Connection {
 	ctx, cancel := context.WithCancel(parent)
-	c := &Connection{ctx: ctx, cancel: cancel, dial: dial, gate: make(chan struct{}, 1)}
-	c.gate <- struct{}{}
-	return c
+	return &Connection{ctx: ctx, cancel: cancel, dial: dial, foreground: make(chan struct{}, 1), poll: make(chan struct{}, 1)}
 }
 
-// Close also interrupts setup or an operation in progress. It does not wait for
-// a caller's local filesystem work to finish.
-func (c *Connection) Close() { c.cancel() }
+// Close permanently shuts down the owner, including an in-progress dial.
+func (c *Connection) Close() { c.cancel(); c.Disconnect() }
 
-func (c *Connection) drop() {
-	if c.retire != nil {
-		c.retire()
+// Disconnect retires the shared transport. Later requests may reconnect.
+func (c *Connection) Disconnect() {
+	c.mu.Lock()
+	lease := c.lease
+	c.lease = nil
+	c.mu.Unlock()
+	if lease != nil {
+		lease.cancel()
 	}
-	if c.stopClose != nil {
-		c.stopClose()
-	}
-	if c.session != nil {
-		c.session.Close()
-	}
-	c.session = nil
 }
 
 func (c *Connection) Do(ctx context.Context, action func(*Session) error) error {
@@ -71,52 +80,155 @@ func (c *Connection) Do(ctx context.Context, action func(*Session) error) error 
 		return ctx.Err()
 	case <-c.ctx.Done():
 		return c.ctx.Err()
-	case <-c.gate:
+	case c.foreground <- struct{}{}:
 	}
-	defer func() { c.gate <- struct{}{} }()
-	if err := ctx.Err(); err != nil {
-		return err
-	}
+	defer func() { <-c.foreground }()
+	return c.run(ctx, action, false)
+}
+
+// Poll never accumulates waiting refreshes. Foreground admission is independent.
+func (c *Connection) Poll(ctx context.Context, action func(*Session) error) error {
 	if err := c.ctx.Err(); err != nil {
 		return err
 	}
-	if c.session == nil || c.transport.Err() != nil {
-		c.drop()
-		c.transport, c.retire = context.WithCancel(c.ctx)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	// This cancellation belongs to this lease only. Wait for a racing callback
-	// before another request can acquire the session.
-	retired := make(chan struct{})
-	stop := context.AfterFunc(ctx, func() { c.retire(); close(retired) })
-	var err error
-	if c.session == nil {
-		c.status.Store(&connectionStatus{"Connecting", c.transport})
-		c.session, err = c.dial(c.transport)
-		if err == nil {
-			c.status.Store(&connectionStatus{"Connected", c.transport})
-			session := c.session
-			c.stopClose = context.AfterFunc(c.transport, func() { session.Close() })
-			if session.Client != nil {
-				retire := c.retire
-				go func() { session.Client.Wait(); retire() }()
+	select {
+	case c.poll <- struct{}{}:
+		defer func() { <-c.poll }()
+		return c.run(ctx, action, true)
+	default:
+		return ErrPollBusy
+	}
+}
+
+func (c *Connection) acquire(ctx context.Context, background, handoff bool) (*connectionLease, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	if err := c.ctx.Err(); err != nil {
+		c.mu.Unlock()
+		return nil, err
+	}
+	lease := c.lease
+	owner := lease == nil || lease.ctx.Err() != nil
+	if owner {
+		// Preserve the initiating request's dial policy values, not its lifetime.
+		transport, fail := context.WithCancelCause(context.WithoutCancel(ctx))
+		cancel := func() { fail(context.Canceled) }
+		lease = &connectionLease{background: background, ctx: transport, cancel: cancel, fail: fail, ready: make(chan struct{})}
+		c.lease = lease
+		c.status.Store(&connectionStatus{"Connecting", transport})
+		stop := context.AfterFunc(c.ctx, cancel)
+		context.AfterFunc(transport, func() { stop() })
+	}
+	c.mu.Unlock()
+	if !owner {
+		// A canceled waiter must not retire the dial owned by another request.
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-lease.ctx.Done():
+			if errors.Is(context.Cause(lease.ctx), context.Canceled) {
+				return nil, context.Canceled
 			}
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-c.ctx.Done():
+				return nil, c.ctx.Err()
+			case <-lease.ready:
+			}
+		case <-lease.ready:
+		}
+		if lease.err != nil {
+			// A foreground caller waiting on failed background setup gets its
+			// own dial policy once. No action has run, and healthy polls stay.
+			if handoff && !background && lease.background && !errors.Is(context.Cause(lease.ctx), context.Canceled) {
+				return c.acquire(ctx, false, false)
+			}
+			return nil, lease.err
+		}
+		return lease, nil
+	}
+	stop := context.AfterFunc(ctx, lease.cancel)
+	session, err := c.dial(lease.ctx)
+	stop()
+	c.mu.Lock()
+	if c.lease != lease || lease.ctx.Err() != nil || ctx.Err() != nil || c.ctx.Err() != nil {
+		if err == nil {
+			err = context.Canceled
 		}
 	}
+	lease.session, lease.err = session, err
 	if err == nil {
-		c.session.ctx = ctx
-		err = action(c.session)
+		c.status.Store(&connectionStatus{"Connected", lease.ctx})
+		context.AfterFunc(lease.ctx, func() { session.Close() })
+		if session.Client != nil {
+			go func() {
+				err := session.Client.Wait()
+				if err == nil {
+					err = io.ErrClosedPipe
+				}
+				lease.fail(err)
+			}()
+		}
+	} else {
+		lease.fail(err)
 	}
+	close(lease.ready)
+	c.mu.Unlock()
+	if err != nil {
+		if session != nil {
+			session.Close()
+		}
+		return nil, err
+	}
+	return lease, nil
+}
+
+func (c *Connection) run(ctx context.Context, action func(*Session) error, background bool) error {
+	lease, err := c.acquire(ctx, background, !background)
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := context.Cause(lease.ctx); err != nil {
+		return err
+	}
+	// Capture this generation: a late cancellation cannot close its replacement.
+	retired := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() { lease.cancel(); close(retired) })
+	operation, cancel := context.WithCancel(ctx)
+	stopTransport := context.AfterFunc(lease.ctx, cancel)
+	// A fresh view avoids mutable shared Session.ctx (and copying sync.Once).
+	s := lease.session
+	view := &Session{Client: s.Client, Identity: s.Identity, Root: s.Root, DiscoveryPath: s.DiscoveryPath, ctx: operation, closeTransport: s.Close}
+	err = action(view)
 	if !stop() {
 		<-retired
 	}
+	stopTransport()
+	cancel()
 	if ctx.Err() != nil {
-		err = ctx.Err()
+		return ctx.Err()
 	}
 	if c.ctx.Err() != nil {
-		err = c.ctx.Err()
+		return c.ctx.Err()
 	}
-	if err != nil {
-		c.drop()
+	if cause := context.Cause(lease.ctx); cause != nil {
+		if err == nil || errors.Is(cause, context.Canceled) {
+			return cause
+		}
 	}
+	// Application errors leave the transport usable. Client.Wait observes actual
+	// stream loss; no operation, including an uncertain send, is retried here.
 	return err
 }
