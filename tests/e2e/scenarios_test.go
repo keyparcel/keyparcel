@@ -66,6 +66,10 @@ func TestFileBytesAndKeep(t *testing.T) {
 		}
 		dest := filepath.Join(w.bob.dir, "downloads")
 		os.Mkdir(dest, 0700)
+		// Exact IDs need directory traversal, but not an inbox listing.
+		inbox := filepath.Dir(w.remote(w.bob, item.ID))
+		w.admin("chmod", "u-r", inbox)
+		w.fails(w.bob, nil, "permission denied", "receive", item.ID[:8], "--save-to", dest, "--keep")
 		w.ok(w.bob, nil, "receive", item.ID, "--save-to", dest, "--keep")
 		got, err := os.ReadFile(filepath.Join(dest, filepath.Base(source)))
 		if err != nil {
@@ -91,6 +95,7 @@ func TestFileBytesAndKeep(t *testing.T) {
 		}
 		equalBytes(t, input, got)
 		w.assertExists(w.remote(w.bob, item.ID), false)
+		w.admin("chmod", "u+r", inbox)
 		// Text has no original filename; directory saves and explicit names both work.
 		for _, sendFlag := range []string{"--text", "--stdin"} {
 			text := []byte("  saved 世界\n\n")
@@ -1104,10 +1109,17 @@ func TestInboxTimesAndBatchDeletion(t *testing.T) {
 		blocked := strings.Repeat("b", 32)
 		w.admin("mkdir", w.remote(w.bob, blocked))
 		w.put(w.remote(w.bob, blocked)+"/child", []byte("block directory removal"))
+		inbox := filepath.Dir(w.remote(w.bob, ids[1]))
+		w.admin("chmod", "u-r", inbox)
+		w.fails(w.bob, nil, "permission denied", "delete", ids[1][:8])
+		w.assertExists(w.remote(w.bob, ids[1]), true)
 		out = w.fails(w.bob, nil, "deletion failed", "delete", blocked, ids[1])
 		if string(out) != "Deleted 1 transfer(s)\n" {
 			t.Fatal("deletion did not continue", string(out))
 		}
+		w.assertExists(w.remote(w.bob, ids[1]), false)
+		w.assertExists(w.remote(w.bob, ids[2]), true)
+		w.admin("chmod", "u+r", inbox)
 		w.admin("rm", "-r", w.remote(w.bob, blocked))
 		// Ambiguous prefixes select nothing, while a valid full ID still deletes.
 		other := ids[2][:8] + strings.Repeat("0", 24)

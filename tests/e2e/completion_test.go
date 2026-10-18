@@ -164,6 +164,44 @@ func TestBashCompletionScenario(t *testing.T) {
 		if got = query(w.bob, "delete", "invalid", ""); got != strings.Join(wantIDs, "\n") {
 			t.Fatalf("invalid argument excluded an ID: %s", got)
 		}
+		// Filename suggestions neither approve senders nor open parcel contents.
+		w.ok(w.bob, nil, "untrust", "alice")
+		if got = query(w.bob, "receive", ""); got != strings.Join(wantIDs, "\n") {
+			t.Fatalf("receive completion required sender approval: %q", got)
+		}
+		if out := w.fails(w.bob, nil, "unapproved sender", "receive", item.ID, "--stdout"); len(out) != 0 {
+			t.Fatal("suggested unapproved parcel exposed plaintext", string(out))
+		}
+		w.assertExists(w.remote(w.bob, item.ID), true)
+		w.admin("chmod", "u-r", w.remote(w.bob, item.ID))
+		if got = query(w.bob, "receive", item.ID[:8]); got != item.ID {
+			t.Fatalf("receive completion opened an unreadable parcel or lost prefix filtering: %q", got)
+		}
+		if out := w.fails(w.bob, nil, "permission denied", "receive", item.ID, "--stdout"); len(out) != 0 {
+			t.Fatal("unreadable parcel exposed output", string(out))
+		}
+		w.assertExists(w.remote(w.bob, item.ID), true)
+		w.admin("chmod", "u+r", w.remote(w.bob, item.ID))
+		w.ok(w.bob, nil, "trust", w.alice.fingerprint, "--name", "alice")
+		invalidID := strings.Repeat("c", 32)
+		if invalidID == item.ID || invalidID == secondID {
+			t.Fatal("invalid fixture ID collided with a generated parcel")
+		}
+		w.put(w.remote(w.bob, invalidID), []byte("not an age parcel"))
+		inbox := filepath.Dir(w.remote(w.bob, item.ID))
+		for _, filename := range []string{strings.ToUpper(invalidID) + ".age", "1234567.age", invalidID + ".part", invalidID + ".age.extra"} {
+			w.put(filepath.Join(inbox, filename), []byte("ignored filename"))
+		}
+		withInvalid := append(append([]string{}, wantIDs...), invalidID)
+		sort.Strings(withInvalid)
+		if got = query(w.bob, "receive", ""); got != strings.Join(withInvalid, "\n") {
+			t.Fatalf("receive completion verified contents or accepted an invalid filename: %q", got)
+		}
+		if out := w.fails(w.bob, nil, "decrypt", "receive", invalidID, "--stdout"); len(out) != 0 {
+			t.Fatal("suggested invalid parcel exposed output", string(out))
+		}
+		w.assertExists(w.remote(w.bob, invalidID), true)
+		w.ok(w.bob, nil, "delete", invalidID)
 		w.ok(w.bob, nil, "delete", secondID)
 		w.ok(w.bob, nil, "receive", item.ID, "--stdout")
 		if got = query(w.bob, "receive", ""); got != "" {
@@ -207,7 +245,8 @@ func TestBashCompletionScenario(t *testing.T) {
 		if got = query(w.alice, "trust", ""); got != "" {
 			t.Fatal(got)
 		}
-		if time.Since(started) > 4*time.Second {
+		// Five-second query deadline plus the existing three-second process allowance.
+		if time.Since(started) > 8*time.Second {
 			t.Fatal("completion did not return promptly")
 		}
 		after, _ := os.ReadFile(w.alice.config)

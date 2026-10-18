@@ -156,7 +156,7 @@ func completeWithConnector(ctx context.Context, words []string, out io.Writer, c
 	if err != nil {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	session, err := connect(ctx, target, h, sshConfig, true)
 	if err != nil {
@@ -185,11 +185,11 @@ func completeWithConnector(ctx context.Context, words []string, out io.Writer, c
 		}
 		return emit(values)
 	}
+	ids, e := session.IDs()
+	if e != nil {
+		return nil
+	}
 	if command == "delete" {
-		ids, e := session.IDs()
-		if e != nil {
-			return nil
-		}
 		selected := map[string]bool{}
 		for _, arg := range positionals {
 			if id, e := core.ResolveID(arg, ids); e == nil {
@@ -203,14 +203,6 @@ func completeWithConnector(ctx context.Context, words []string, out io.Writer, c
 			}
 		}
 		return emit(remaining)
-	}
-	items, _, _, e := session.List(cfg)
-	if e != nil {
-		return nil
-	}
-	ids := []string{}
-	for _, item := range items {
-		ids = append(ids, item.ID)
 	}
 	return emit(ids)
 }

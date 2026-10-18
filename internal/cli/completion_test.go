@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"keyparcel/core"
 )
@@ -66,6 +68,51 @@ func TestCompletionValuesCannotInjectLines(t *testing.T) {
 		t.Fatal(out.String())
 	}
 }
+
+func TestRemoteCompletionDeadlineAndSilentFailure(t *testing.T) {
+	config := filepath.Join(t.TempDir(), "config.json")
+	cfg := &core.Config{Hosts: map[string]core.Host{"inbox": {Identity: "missing", Fingerprint: "fp", Root: "root", Discovery: "keys"}}, Peers: map[string]string{}, DefaultHost: "inbox"}
+	if err := cfg.Save(config); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{"trust", "receive", "delete"} {
+		for _, timeout := range []time.Duration{5 * time.Second, 2 * time.Second, 0} {
+			t.Run(command+"/"+timeout.String(), func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					start := time.Now()
+					ctx := context.Background()
+					if timeout < 5*time.Second {
+						var cancel context.CancelFunc
+						ctx, cancel = context.WithTimeout(ctx, timeout)
+						defer cancel()
+					}
+					calls := 0
+					connect := func(ctx context.Context, target string, host core.Host, sshConfig string, completion bool) (*core.Session, error) {
+						calls++
+						if !completion || target != "inbox" || host != cfg.Hosts["inbox"] || sshConfig != "fixture-ssh-config" {
+							t.Fatal("completion changed its selected host or noninteractive transport mode")
+						}
+						deadline, ok := ctx.Deadline()
+						if !ok || !deadline.Equal(start.Add(timeout)) {
+							t.Fatalf("completion deadline = %v, want %v", deadline, start.Add(timeout))
+						}
+						<-ctx.Done() // The bubble advances time without a real five-second wait.
+						return nil, ctx.Err()
+					}
+					var out bytes.Buffer
+					words := []string{command, "--config", config, "--ssh-config", "fixture-ssh-config", ""}
+					if err := completeWithConnector(ctx, words, &out, connect); err != nil || out.Len() != 0 {
+						t.Fatalf("completion timeout must remain silent: %q %v", out.String(), err)
+					}
+					if calls != 1 || time.Since(start) != timeout {
+						t.Fatalf("completion ignored its deadline: calls=%d elapsed=%v want=%v", calls, time.Since(start), timeout)
+					}
+				})
+			})
+		}
+	}
+}
+
 func TestActionableMissingArguments(t *testing.T) {
 	for _, tc := range []struct {
 		args []string
