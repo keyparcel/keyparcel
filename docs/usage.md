@@ -61,6 +61,38 @@ Clients create remote directories as needed, using the account's permissions and
 server umask. Custom `setup --root PATH --discovery PATH` settings must reference the
 same storage and enrolled-key list on all participating clients.
 
+## Remote access method
+
+Profiles store `access_method`: `auto` (the default), `ssh`, or `sftp`.
+`setup --access-method METHOD` saves it; `--access-method METHOD` overrides it for
+one CLI invocation without changing the profile.
+
+Read-only SSH commands batch inbox metadata, read the configured discovery file
+(up to 4 MiB), and stream exact encrypted parcels for receive. GNU and BusyBox
+shell/tool behavior is probed once per authenticated connection; no Python,
+installed helper or server daemon is needed. Local signature, recipient, ID,
+content hash and length checks remain mandatory before delivery. Uploads,
+completion IDs, deletion and all other mutations use SFTP, including CLI cleanup
+after successful receive. Short receive IDs are resolved through SFTP filenames.
+
+CLI `auto` requires commands, just like `ssh`; unsupported servers report an error
+with the `--access-method sftp` alternative. GUI `auto` instead falls back to SFTP
+when the capability is unavailable and reprobes on reconnect. This decision stays
+in memory; it never rewrites the saved Auto choice. Explicit `ssh` requires the
+capability; `sftp` never executes commands. The GUIs expose **Remote access method**
+in Advanced settings. Edits apply only after **Save & connect** (GTK) or **Connect**
+(Android), as the pending-change hint indicates.
+
+Inbox commands retain the existing 1 MiB encrypted-prefix bound per parcel, with
+internal aggregate limits of 64 MiB and 4096 entries. GUI Auto can list larger
+inboxes through ordinary SFTP; explicit SSH reports the limit rather than hiding a
+fallback. Discovery and full receive are independent of that inbox limit. A large
+parcel's batched prefix may use more bandwidth than SFTP's early metadata reads.
+The command path assumes shell and SFTP expose the same absolute filesystem paths;
+use SFTP for custom virtual namespaces. No BSD tool compatibility is claimed.
+Malformed/truncated output, failed exit, timeout or connection loss fail the read
+without delivering partial data or restarting a partially streamed parcel.
+
 ## Receiving and retention
 
 The GTK and Android GUIs keep received transfers until **Remove & close** is

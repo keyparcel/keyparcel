@@ -32,6 +32,7 @@ type Session struct {
 	channel        *sftpChannel
 	openSFTP       func() (*sftpChannel, error)
 	waitTransport  func() error
+	access         *remoteAccess
 	channelMu      sync.Mutex
 	channels       []*sftpChannel
 	channelsClosed bool
@@ -73,6 +74,36 @@ type Device struct {
 }
 
 func (s *Session) Discover(c *Config) ([]Device, error) {
+	use, err := s.commandAvailable(s.ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	if use {
+		return s.DiscoverAccelerated(c)
+	}
+	return s.DiscoverSFTP(c)
+}
+func (s *Session) DiscoverAccelerated(c *Config) ([]Device, error) {
+	ctx, done := s.metadataContext()
+	defer done()
+	if _, err := s.commandAvailable(ctx, true); err != nil {
+		return nil, err
+	}
+	var b []byte
+	err := s.readCommand(ctx, s.DiscoveryPath, true, func(r io.Reader) error {
+		var err error
+		b, err = io.ReadAll(io.LimitReader(r, 4*1024*1024+1))
+		if err == nil && len(b) > 4*1024*1024 {
+			err = errors.New("discovery exceeds 4 MiB")
+		}
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("discovery: %w", err)
+	}
+	return s.parseDiscovery(c, b)
+}
+func (s *Session) DiscoverSFTP(c *Config) ([]Device, error) {
 	f, err := s.Client.Open(s.DiscoveryPath)
 	if err != nil {
 		return nil, fmt.Errorf("discovery: %w", err)
@@ -88,6 +119,9 @@ func (s *Session) Discover(c *Config) ([]Device, error) {
 	if len(b) > 4*1024*1024 {
 		return nil, errors.New("discovery exceeds 4 MiB")
 	}
+	return s.parseDiscovery(c, b)
+}
+func (s *Session) parseDiscovery(c *Config, b []byte) ([]Device, error) {
 	devices := []Device{}
 	seen := map[string]bool{}
 	for _, line := range bytes.Split(b, []byte{'\n'}) {
@@ -316,7 +350,7 @@ func (s *Session) openPackage(id string) (*sftp.File, time.Time, error) {
 	f, err := s.Client.Open(p)
 	return f, info.ModTime().UTC(), err
 }
-func (s *Session) List(c *Config) ([]Item, []Rejected, []string, error) {
+func (s *Session) ListSFTP(c *Config) ([]Item, []Rejected, []string, error) {
 	ids, err := s.IDs()
 	if err != nil {
 		return nil, nil, nil, err
@@ -329,9 +363,9 @@ func (s *Session) List(c *Config) ([]Item, []Rejected, []string, error) {
 		if errors.Is(e, io.EOF) || errors.Is(e, io.ErrUnexpectedEOF) {
 			return nil, nil, nil, fmt.Errorf("open package %s: %w", id, e)
 		}
-		var m Manifest
+		var item Item
 		if e == nil {
-			m, _, e = ReadPackage(s.ctx, io.LimitReader(f, 1024*1024), s.Identity, c.Peers, id)
+			item, e = s.readInboxItem(c, id, uploaded, io.LimitReader(f, inboxPrefixLimit))
 			closeErr := f.Close()
 			if closeErr != nil {
 				return nil, nil, nil, fmt.Errorf("close package %s: %w", id, closeErr)
@@ -347,26 +381,38 @@ func (s *Session) List(c *Config) ([]Item, []Rejected, []string, error) {
 			bad = append(bad, Rejected{id, e.Error()})
 			continue
 		}
-		name := ""
-		for n, pub := range c.Peers {
-			p, _ := ParsePublic(pub)
-			if ssh.FingerprintSHA256(p) == m.Sender {
-				name = n
-				break
-			}
-		}
-		if m.Sender == ssh.FingerprintSHA256(s.Identity.Public) {
-			name = "self"
-		}
-		items = append(items, Item{Manifest: m, From: name, UploadedAt: uploaded})
+		items = append(items, item)
 	}
+	sortInbox(items)
+	return items, bad, ids, nil
+}
+
+func sortInbox(items []Item) {
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].UploadedAt.Equal(items[j].UploadedAt) {
 			return items[i].ID < items[j].ID
 		}
 		return items[i].UploadedAt.After(items[j].UploadedAt)
 	})
-	return items, bad, ids, nil
+}
+
+func (s *Session) readInboxItem(c *Config, id string, uploaded time.Time, r io.Reader) (Item, error) {
+	m, _, err := ReadPackage(s.ctx, r, s.Identity, c.Peers, id)
+	if err != nil {
+		return Item{}, err
+	}
+	name := ""
+	for n, pub := range c.Peers {
+		p, _ := ParsePublic(pub)
+		if ssh.FingerprintSHA256(p) == m.Sender {
+			name = n
+			break
+		}
+	}
+	if m.Sender == ssh.FingerprintSHA256(s.Identity.Public) {
+		name = "self"
+	}
+	return Item{Manifest: m, From: name, UploadedAt: uploaded}, nil
 }
 
 // Transport failures may be local I/O errors or SFTP status responses.
@@ -382,6 +428,15 @@ func connectionFailure(err error) bool {
 		errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET)
 }
 func (s *Session) Receive(c *Config, prefix string, deliver func(Manifest, *os.File) error, keep bool) (Manifest, error) {
+	return s.receive(c, prefix, deliver, keep, "")
+}
+func (s *Session) ReceiveSFTP(c *Config, prefix string, deliver func(Manifest, *os.File) error, keep bool) (Manifest, error) {
+	return s.receive(c, prefix, deliver, keep, "sftp")
+}
+func (s *Session) ReceiveAccelerated(c *Config, prefix string, deliver func(Manifest, *os.File) error, keep bool) (Manifest, error) {
+	return s.receive(c, prefix, deliver, keep, "ssh")
+}
+func (s *Session) receive(c *Config, prefix string, deliver func(Manifest, *os.File) error, keep bool, method string) (Manifest, error) {
 	var m Manifest
 	if len(prefix) < 8 || len(prefix) > 32 || !validHex(prefix, len(prefix)) {
 		return m, errors.New("transfer ID must be 8–32 lowercase hexadecimal characters")
@@ -397,24 +452,48 @@ func (s *Session) Receive(c *Config, prefix string, deliver func(Manifest, *os.F
 			return m, err
 		}
 	}
-	f, _, err := s.openPackage(id)
+	var staging *os.File
+	verify := func(input io.Reader) error {
+		var plain io.Reader
+		var err error
+		m, plain, err = ReadPackage(s.ctx, input, s.Identity, c.Peers, id)
+		if err != nil {
+			return err
+		}
+		staging, err = VerifyContent(plain, m)
+		return err
+	}
+	defer func() {
+		if staging != nil {
+			staging.Close()
+			os.Remove(staging.Name())
+		}
+	}()
+	var err error
+	use := method == "ssh"
+	if method == "" {
+		use, err = s.commandAvailable(s.ctx, false)
+	} else if use {
+		_, err = s.commandAvailable(s.ctx, true)
+	}
 	if err != nil {
 		return m, err
 	}
-	m, plain, err := ReadPackage(s.ctx, f, s.Identity, c.Peers, id)
-	if err != nil {
-		f.Close()
-		return m, err
+	if use {
+		err = s.readCommand(s.ctx, path.Join(s.InboxDir(), id+".age"), false, verify)
+	} else {
+		var f *sftp.File
+		f, _, err = s.openPackage(id)
+		if err == nil {
+			err = verify(f)
+			closeErr := f.Close()
+			if err == nil {
+				err = closeErr
+			}
+		}
 	}
-	staging, err := VerifyContent(plain, m)
-	closeErr := f.Close()
 	if err != nil {
 		return m, err
-	}
-	defer staging.Close()
-	defer os.Remove(staging.Name())
-	if closeErr != nil {
-		return m, closeErr
 	}
 	if err = deliver(m, staging); err != nil {
 		return m, fmt.Errorf("delivery failed; remote package retained: %w", err)

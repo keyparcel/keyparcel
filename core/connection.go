@@ -220,7 +220,7 @@ func (c *Connection) run(ctx context.Context, action func(*Session) error, backg
 	stopTransport := context.AfterFunc(lease.ctx, cancel)
 	// A fresh view avoids mutable shared Session.ctx (and copying sync.Once).
 	s := lease.session
-	view := &Session{Client: s.Client, Identity: s.Identity, Root: s.Root, DiscoveryPath: s.DiscoveryPath, ctx: operation, closeTransport: s.Close}
+	view := &Session{Client: s.Client, Identity: s.Identity, Root: s.Root, DiscoveryPath: s.DiscoveryPath, ctx: operation, closeTransport: s.Close, access: s.access}
 	if s.openSFTP != nil {
 		slot := 0
 		if background {

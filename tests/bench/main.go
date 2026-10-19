@@ -13,6 +13,7 @@ import (
 	"math/rand"
 	"os"
 	"path"
+	"reflect"
 	"sort"
 	"time"
 
@@ -105,7 +106,7 @@ func run() error {
 	}
 	defer s.Close()
 	defer s.Client.RemoveAll(s.Root)
-	discovery, err := s.Discover(cfg)
+	discovery, err := s.DiscoverSFTP(cfg)
 	if err != nil {
 		return err
 	}
@@ -137,8 +138,9 @@ func run() error {
 	}
 	output := "benchmark-output.bin"
 	defer os.Remove(output)
+	receiveMethod := s.ReceiveSFTP
 	receive := func() error {
-		_, e := s.Receive(cfg, id, func(m core.Manifest, f *os.File) error {
+		_, e := receiveMethod(cfg, id, func(m core.Manifest, f *os.File) error {
 			if m.ID != id || m.Size != int64(len(payload)) || m.Type != "file" || m.Filename == nil || *m.Filename != filename {
 				return errors.New("verified metadata differs")
 			}
@@ -160,31 +162,57 @@ func run() error {
 		return e
 	}
 	if *suite == "bulk" {
+		// Capability setup is outside persistent transfer timers. Strict calls
+		// below must never label a fallback as command throughput.
+		if _, err = s.DiscoverAccelerated(cfg); err != nil {
+			return err
+		}
 		var ids []string
 		if err = measure(fmt.Sprintf("upload-%dMiB", payloadBytes/(1024*1024)), count, nil, func() error { return send(false) }, func() error { ids = append(ids, id); return nil }); err != nil {
 			return err
 		}
-		next := 0
-		return measure(fmt.Sprintf("download-%dMiB", payloadBytes/(1024*1024)), count, func() error { id = ids[next]; next++; return nil }, receive, func() error {
-			if e := verify(); e != nil {
-				return e
+		for _, method := range []string{"sftp", "ssh"} {
+			next := 0
+			receiveMethod = s.ReceiveSFTP
+			if method == "ssh" {
+				receiveMethod = s.ReceiveAccelerated
 			}
-			return remove()
-		})
-	}
-	if err = measure("discovery", count, nil, func() error {
-		d, e := s.Discover(cfg)
-		if e == nil && len(d) == 0 {
-			e = errors.New("empty discovery")
+			if err = measure(fmt.Sprintf("download-%s-%dMiB", method, payloadBytes/(1024*1024)), count, func() error { id = ids[next]; next++; return nil }, receive, func() error {
+				if e := verify(); e != nil {
+					return e
+				}
+				if method == "ssh" {
+					return remove()
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
 		}
-		return e
-	}, nil); err != nil {
+		return nil
+	}
+	if err = measure("command-initial-discovery", 1, nil, func() error { _, e := s.DiscoverAccelerated(cfg); return e }, nil); err != nil {
 		return err
 	}
-	// Start with a real empty recipient directory, then add valid signed parcels.
+	for _, method := range []string{"sftp", "ssh"} {
+		if err = measure("discovery-"+method, count, nil, func() error {
+			discover := s.DiscoverSFTP
+			if method == "ssh" {
+				discover = s.DiscoverAccelerated
+			}
+			d, e := discover(cfg)
+			if e == nil && !reflect.DeepEqual(d, discovery) {
+				e = errors.New("discovery paths differ")
+			}
+			return e
+		}, nil); err != nil {
+			return err
+		}
+	}
 	if err = s.Client.MkdirAll(s.InboxDir()); err != nil {
 		return err
 	}
+
 	for _, entries := range []int{0, 1, 10} {
 		if entries > 0 {
 			for i := 0; i < entries; i++ {
@@ -193,15 +221,27 @@ func run() error {
 				}
 			}
 		}
-		if err = measure(fmt.Sprintf("inbox-%d", entries), count, nil, func() error {
-			items, rejected, _, e := s.List(cfg)
-			if e == nil && (len(items) != entries || len(rejected) != 0) {
-				e = errors.New("incorrect verified inbox")
+		var expected []core.Item
+		if err = measure(fmt.Sprintf("inbox-sftp-%d", entries), count, nil, func() error {
+			items, rejected, ids, e := s.ListSFTP(cfg)
+			if e == nil && (len(items) != entries || len(rejected) != 0 || len(ids) != entries) {
+				e = errors.New("incorrect verified SFTP inbox")
+			}
+			expected = items
+			return e
+		}, nil); err != nil {
+			return err
+		}
+		if err = measure(fmt.Sprintf("inbox-accelerated-%d", entries), count, nil, func() error {
+			items, rejected, ids, e := s.ListAccelerated(cfg)
+			if e == nil && (!reflect.DeepEqual(items, expected) || len(rejected) != 0 || len(ids) != entries) {
+				e = errors.New("accelerated inbox differs from verified SFTP inbox")
 			}
 			return e
 		}, nil); err != nil {
 			return err
 		}
+
 		if entries > 0 {
 			if _, rejected, e := s.Delete(nil, true); e != nil || len(rejected) != 0 {
 				return fmt.Errorf("inbox cleanup: %v %v", e, rejected)
@@ -211,8 +251,14 @@ func run() error {
 	if err = send(true); err != nil {
 		return err
 	}
-	if err = measure("receive-full-ID", count, nil, receive, verify); err != nil {
-		return err
+	for _, method := range []string{"sftp", "ssh"} {
+		receiveMethod = s.ReceiveSFTP
+		if method == "ssh" {
+			receiveMethod = s.ReceiveAccelerated
+		}
+		if err = measure("receive-full-ID-"+method, count, nil, receive, verify); err != nil {
+			return err
+		}
 	}
 	if err = remove(); err != nil {
 		return err

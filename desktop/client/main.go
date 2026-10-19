@@ -314,6 +314,7 @@ func (m *model) applyProfile(p profile) {
 	if !m.settingsLoaded {
 		m.settingsFields(p)
 	}
+	m.updateAccessHint()
 	m.set("active-host", "Host: "+p.Target)
 	m.recipient = recipient
 	m.set("ssh-config", m.options.sshConfig)
@@ -429,6 +430,8 @@ func (m *model) event(action, arg, value string) {
 		return
 	}
 	switch action {
+	case "access-method-changed":
+		m.updateAccessHint()
 	case "dismiss-error":
 		m.message("")
 	case "picker-cancel":

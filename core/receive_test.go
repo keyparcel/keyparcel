@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path"
@@ -106,45 +107,64 @@ func TestReceiveFullIDWithoutInboxListing(t *testing.T) {
 }
 
 func TestReceiveAbbreviatedIDsStillResolveFromListing(t *testing.T) {
-	id := testIdentity(t)
-	server := sftptest.New(t)
-	s := &Session{ctx: context.Background(), Client: server.Client, Identity: id, Root: "/parcels"}
-	m, ciphertext := receivePackage(t, id, id, []byte("prefix lookup"))
-	putInboxPackage(t, s, m.ID, ciphertext)
-	collision := m.ID[:8] + "0" + m.ID[9:]
-	if collision == m.ID {
-		collision = m.ID[:8] + "1" + m.ID[9:]
-	}
-	putInboxPackage(t, s, collision, ciphertext)
-	neverDeliver := func(Manifest, *os.File) error { t.Fatal("unresolved prefix reached delivery"); return nil }
-	if _, err := s.Receive(&Config{}, m.ID[:8], neverDeliver, false); err == nil || !strings.Contains(err.Error(), "ambiguous") {
-		t.Fatalf("ambiguous prefix changed semantics: %v", err)
-	}
-	missing := strings.Repeat("f", 8)
-	if missing == m.ID[:8] {
-		missing = strings.Repeat("0", 8)
-	}
-	if _, err := s.Receive(&Config{}, missing, neverDeliver, false); err == nil || err.Error() != "transfer not found" {
-		t.Fatalf("missing prefix changed semantics: %v", err)
-	}
-	if err := s.Client.Remove(path.Join(s.InboxDir(), collision+".age")); err != nil {
-		t.Fatal(err)
-	}
-	for n := 8; n < 32; n++ {
-		got, err := s.Receive(&Config{}, m.ID[:n], func(_ Manifest, f *os.File) error {
-			data, err := io.ReadAll(f)
-			if string(data) != "prefix lookup" {
-				t.Fatalf("%d-character prefix changed bytes: %q", n, data)
+	for _, method := range []string{"sftp", "ssh"} {
+		t.Run(method, func(t *testing.T) {
+			id := testIdentity(t)
+			server := sftptest.New(t)
+			s := &Session{ctx: context.Background(), Client: server.Client, Identity: id, Root: "/parcels"}
+			m, ciphertext := receivePackage(t, id, id, []byte("prefix lookup"))
+			putInboxPackage(t, s, m.ID, ciphertext)
+			calls := 0
+			if method == "ssh" {
+				s.access = &remoteAccess{mode: "ssh", supported: true, run: func(_ context.Context, command string, consume func(io.Reader) error) error {
+					calls++
+					if command != remoteShell(accessRead, path.Join(s.InboxDir(), m.ID+".age"), "parcel") {
+						t.Fatal("command received unresolved prefix")
+					}
+					return consume(io.MultiReader(strings.NewReader(fmt.Sprintf("KP-PARCEL-1 %d\n", len(ciphertext))), bytes.NewReader(ciphertext)))
+				}}
+				s.access.once.Do(func() {})
 			}
-			return err
-		}, true)
-		if err != nil || got.ID != m.ID {
-			t.Fatalf("unique %d-character prefix failed: %+v %v", n, got, err)
-		}
-	}
-	server.Fail("List", s.InboxDir(), sftp.ErrSSHFxPermissionDenied)
-	if _, err := s.Receive(&Config{}, m.ID[:31], neverDeliver, false); !errors.Is(err, os.ErrPermission) {
-		t.Fatalf("abbreviated ID bypassed listing failure: %v", err)
+
+			collision := m.ID[:8] + "0" + m.ID[9:]
+			if collision == m.ID {
+				collision = m.ID[:8] + "1" + m.ID[9:]
+			}
+			putInboxPackage(t, s, collision, ciphertext)
+			neverDeliver := func(Manifest, *os.File) error { t.Fatal("unresolved prefix reached delivery"); return nil }
+			if _, err := s.Receive(&Config{}, m.ID[:8], neverDeliver, false); err == nil || !strings.Contains(err.Error(), "ambiguous") {
+				t.Fatalf("ambiguous prefix changed semantics: %v", err)
+			}
+			missing := strings.Repeat("f", 8)
+			if missing == m.ID[:8] {
+				missing = strings.Repeat("0", 8)
+			}
+			if _, err := s.Receive(&Config{}, missing, neverDeliver, false); err == nil || err.Error() != "transfer not found" {
+				t.Fatalf("missing prefix changed semantics: %v", err)
+			}
+			if calls != 0 {
+				t.Fatal("unresolved prefix opened exec channel")
+			}
+			if err := s.Client.Remove(path.Join(s.InboxDir(), collision+".age")); err != nil {
+				t.Fatal(err)
+			}
+			for n := 8; n < 32; n++ {
+				got, err := s.Receive(&Config{}, m.ID[:n], func(_ Manifest, f *os.File) error {
+					data, err := io.ReadAll(f)
+					if string(data) != "prefix lookup" {
+						t.Fatalf("%d-character prefix changed bytes: %q", n, data)
+					}
+					return err
+				}, true)
+				if err != nil || got.ID != m.ID {
+					t.Fatalf("unique %d-character prefix failed: %+v %v", n, got, err)
+				}
+			}
+			server.Fail("List", s.InboxDir(), sftp.ErrSSHFxPermissionDenied)
+			if _, err := s.Receive(&Config{}, m.ID[:31], neverDeliver, false); !errors.Is(err, os.ErrPermission) {
+				t.Fatalf("abbreviated ID bypassed listing failure: %v", err)
+			}
+		})
 	}
 }
 
@@ -162,100 +182,113 @@ func TestTransferActionsRejectInvalidIDBeforeRemoteAccess(t *testing.T) {
 }
 
 func TestReceiveExactIDStillVerifiesBeforeDelivery(t *testing.T) {
-	sender, recipient, other := testIdentity(t), testIdentity(t), testIdentity(t)
-	content := []byte("fully verified bytes")
-	baseline, _ := receivePackage(t, sender, recipient, content)
-	for _, name := range []string{"unapproved sender", "wrong decryption key", "unlisted recipient", "filename mismatch", "signature", "hash", "short content", "trailing content", "truncated ciphertext", "symlink", "directory"} {
-		t.Run(name, func(t *testing.T) {
-			server := sftptest.New(t)
-			s := &Session{ctx: context.Background(), Client: server.Client, Identity: recipient, Root: "/parcels"}
-			cfg := &Config{Peers: map[string]string{"sender": PublicText(sender.Public)}}
-			m, encryptionKey := baseline, recipient.Public
-			requestedID, want := m.ID, ""
-			switch name {
-			case "unapproved sender":
-				cfg.Peers, want = nil, "unapproved sender"
-			case "wrong decryption key":
-				encryptionKey, want = other.Public, "decrypt"
-			case "unlisted recipient":
-				m.Recipients, want = []string{ssh.FingerprintSHA256(other.Public)}, "not an intended recipient"
-			case "filename mismatch":
-				requestedID, want = "0"+m.ID[1:], "does not match filename"
-				if requestedID == m.ID {
-					requestedID = "1" + m.ID[1:]
-				}
-			case "signature":
-				want = "signature"
-			case "hash":
-				m.SHA256, want = strings.Repeat("0", 64), "size/hash mismatch"
-			case "short content":
-				m.Size++
-				want = "size/hash mismatch"
-			case "trailing content":
-				m.Size--
-				want = "trailing content"
-			case "symlink", "directory":
-				want = "not a regular file"
-			}
-			data, err := json.Marshal(m)
-			if err != nil {
-				t.Fatal(err)
-			}
-			signer := sender
-			if name == "signature" {
-				signer = other
-			}
-			sig, err := sign(context.Background(), signer, data)
-			if err != nil {
-				t.Fatal(err)
-			}
-			key, err := agessh.ParseRecipient(PublicText(encryptionKey))
-			if err != nil {
-				t.Fatal(err)
-			}
-			var ciphertext bytes.Buffer
-			enc, err := age.Encrypt(&ciphertext, key)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := WriteHeader(enc, data, sig); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := enc.Write(content); err != nil {
-				t.Fatal(err)
-			}
-			if err := enc.Close(); err != nil {
-				t.Fatal(err)
-			}
-			wire := ciphertext.Bytes()
-			if name == "truncated ciphertext" {
-				wire = wire[:len(wire)-1]
-			}
-			putInboxPackage(t, s, requestedID, wire)
-			remote := path.Join(s.InboxDir(), requestedID+".age")
-			if name == "symlink" || name == "directory" {
-				if err := s.Client.Rename(remote, remote+".original"); err != nil {
-					t.Fatal(err)
-				}
-				if name == "symlink" {
-					err = s.Client.Symlink(remote+".original", remote)
-				} else {
-					err = s.Client.Mkdir(remote)
-				}
-				if err != nil {
-					t.Fatal(err)
-				}
-			}
-			server.Fail("List", s.InboxDir(), sftp.ErrSSHFxPermissionDenied)
-			_, err = s.Receive(cfg, requestedID, func(Manifest, *os.File) error {
-				t.Fatal("unverified content reached delivery")
-				return nil
-			}, false)
-			if err == nil || !strings.Contains(err.Error(), want) {
-				t.Fatalf("%s was not rejected by verification: %v", name, err)
-			}
-			if _, err := s.Client.Lstat(remote); err != nil {
-				t.Fatal("verification failure removed remote parcel:", err)
+	for _, method := range []string{"sftp", "ssh"} {
+		t.Run(method, func(t *testing.T) {
+			sender, recipient, other := testIdentity(t), testIdentity(t), testIdentity(t)
+			content := []byte("fully verified bytes")
+			baseline, _ := receivePackage(t, sender, recipient, content)
+			for _, name := range []string{"unapproved sender", "wrong decryption key", "unlisted recipient", "filename mismatch", "signature", "hash", "short content", "trailing content", "truncated ciphertext", "symlink", "directory"} {
+				t.Run(name, func(t *testing.T) {
+					server := sftptest.New(t)
+					s := &Session{ctx: context.Background(), Client: server.Client, Identity: recipient, Root: "/parcels"}
+					cfg := &Config{Peers: map[string]string{"sender": PublicText(sender.Public)}}
+					m, encryptionKey := baseline, recipient.Public
+					requestedID, want := m.ID, ""
+					switch name {
+					case "unapproved sender":
+						cfg.Peers, want = nil, "unapproved sender"
+					case "wrong decryption key":
+						encryptionKey, want = other.Public, "decrypt"
+					case "unlisted recipient":
+						m.Recipients, want = []string{ssh.FingerprintSHA256(other.Public)}, "not an intended recipient"
+					case "filename mismatch":
+						requestedID, want = "0"+m.ID[1:], "does not match filename"
+						if requestedID == m.ID {
+							requestedID = "1" + m.ID[1:]
+						}
+					case "signature":
+						want = "signature"
+					case "hash":
+						m.SHA256, want = strings.Repeat("0", 64), "size/hash mismatch"
+					case "short content":
+						m.Size++
+						want = "size/hash mismatch"
+					case "trailing content":
+						m.Size--
+						want = "trailing content"
+					case "symlink", "directory":
+						want = "not a regular file"
+					}
+					data, err := json.Marshal(m)
+					if err != nil {
+						t.Fatal(err)
+					}
+					signer := sender
+					if name == "signature" {
+						signer = other
+					}
+					sig, err := sign(context.Background(), signer, data)
+					if err != nil {
+						t.Fatal(err)
+					}
+					key, err := agessh.ParseRecipient(PublicText(encryptionKey))
+					if err != nil {
+						t.Fatal(err)
+					}
+					var ciphertext bytes.Buffer
+					enc, err := age.Encrypt(&ciphertext, key)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := WriteHeader(enc, data, sig); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := enc.Write(content); err != nil {
+						t.Fatal(err)
+					}
+					if err := enc.Close(); err != nil {
+						t.Fatal(err)
+					}
+					wire := ciphertext.Bytes()
+					if name == "truncated ciphertext" {
+						wire = wire[:len(wire)-1]
+					}
+					putInboxPackage(t, s, requestedID, wire)
+					remote := path.Join(s.InboxDir(), requestedID+".age")
+					if name == "symlink" || name == "directory" {
+						if err := s.Client.Rename(remote, remote+".original"); err != nil {
+							t.Fatal(err)
+						}
+						if name == "symlink" {
+							err = s.Client.Symlink(remote+".original", remote)
+						} else {
+							err = s.Client.Mkdir(remote)
+						}
+						if err != nil {
+							t.Fatal(err)
+						}
+					}
+					if method == "ssh" {
+						s.access = &remoteAccess{mode: "ssh", supported: true, run: func(_ context.Context, _ string, consume func(io.Reader) error) error {
+							if name == "symlink" || name == "directory" {
+								return consume(strings.NewReader("KP-NONREGULAR\n"))
+							}
+							return consume(io.MultiReader(strings.NewReader(fmt.Sprintf("KP-PARCEL-1 %d\n", len(wire))), bytes.NewReader(wire)))
+						}}
+						s.access.once.Do(func() {})
+					}
+					server.Fail("List", s.InboxDir(), sftp.ErrSSHFxPermissionDenied)
+					_, err = s.Receive(cfg, requestedID, func(Manifest, *os.File) error {
+						t.Fatal("unverified content reached delivery")
+						return nil
+					}, false)
+					if err == nil || !strings.Contains(err.Error(), want) {
+						t.Fatalf("%s was not rejected by verification: %v", name, err)
+					}
+					if _, err := s.Client.Lstat(remote); err != nil {
+						t.Fatal("verification failure removed remote parcel:", err)
+					}
+				})
 			}
 		})
 	}

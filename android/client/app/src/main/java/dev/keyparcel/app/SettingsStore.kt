@@ -13,6 +13,7 @@ data class Host(
     val key: String = "",
     val root: String = ".local/share/keyparcel",
     val discovery: String = ".ssh/authorized_keys",
+    val accessMethod: String = "auto",
 ) {
     val trusted get() = key.isNotEmpty()
     fun sameServer(other: Host) = address == other.address && port == other.port
@@ -23,6 +24,7 @@ data class Host(
         }
         require(port in 1..65535) { "Port must be between 1 and 65535" }
         require(user.isNotBlank() && !user.any { it.isWhitespace() || it == '\u0000' }) { "Enter an SSH username" }
+        require(accessMethod == "auto" || accessMethod == "ssh" || accessMethod == "sftp") { "Remote access method must be Automatic, SSH commands or SFTP only" }
         require(root.isNotBlank() && discovery.isNotBlank()) { "Remote paths must not be empty" }
     }
 
@@ -32,12 +34,12 @@ data class Host(
     }
 
     fun json() = JSONObject().put("address", address).put("port", port).put("user", user)
-        .put("key", key).put("root", root).put("discovery", discovery)
+        .put("key", key).put("root", root).put("discovery", discovery).put("access_method", accessMethod)
 
     companion object {
         fun from(json: JSONObject) = Host(
             json.getString("address"), json.getInt("port"), json.getString("user"),
-            json.getString("key"), json.getString("root"), json.getString("discovery"),
+            json.getString("key"), json.getString("root"), json.getString("discovery"), json.optString("access_method", "auto"),
         )
     }
 }
