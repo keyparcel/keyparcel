@@ -22,12 +22,13 @@ type connectionLease struct {
 	cancel     context.CancelFunc
 	fail       context.CancelCauseFunc
 	ready      chan struct{}
+	channels   [2]*sftpChannel
 	session    *Session
 	err        error
 }
 
 // Connection admits one foreground operation and one automatic poll on its
-// single concurrent-safe SFTP client. Cancellation of admitted I/O disconnects
+// separate foreground and background SFTP channels on one SSH owner. Cancellation of admitted I/O disconnects
 // both operations; mutations are never replayed.
 type Connection struct {
 	ctx        context.Context
@@ -166,9 +167,18 @@ func (c *Connection) acquire(ctx context.Context, background, handoff bool) (*co
 	if err == nil {
 		c.status.Store(&connectionStatus{"Connected", lease.ctx})
 		context.AfterFunc(lease.ctx, func() { session.Close() })
-		if session.Client != nil {
+		wait := session.waitTransport
+		if wait == nil && session.Client != nil {
+			wait = session.Client.Wait
+		}
+		slot := 0
+		if background {
+			slot = 1
+		}
+		lease.channels[slot] = session.channel
+		if wait != nil {
 			go func() {
-				err := session.Client.Wait()
+				err := wait()
 				if err == nil {
 					err = io.ErrClosedPipe
 				}
@@ -211,7 +221,37 @@ func (c *Connection) run(ctx context.Context, action func(*Session) error, backg
 	// A fresh view avoids mutable shared Session.ctx (and copying sync.Once).
 	s := lease.session
 	view := &Session{Client: s.Client, Identity: s.Identity, Root: s.Root, DiscoveryPath: s.DiscoveryPath, ctx: operation, closeTransport: s.Close}
-	err = action(view)
+	if s.openSFTP != nil {
+		slot := 0
+		if background {
+			slot = 1
+		}
+		channel := lease.channels[slot]
+		if channel != nil {
+			select {
+			case <-channel.done:
+				channel.close()
+				s.forgetChannel(channel)
+				channel = nil
+			default:
+			}
+		}
+		if channel == nil {
+			channel, err = s.openChannel()
+			if err == nil {
+				lease.channels[slot] = channel
+			}
+		}
+		if err == nil {
+			view.Client = channel.client
+		}
+	}
+	if err == nil && operation.Err() == nil {
+		err = action(view)
+	}
+	if err == nil && operation.Err() != nil {
+		err = operation.Err()
+	}
 	if !stop() {
 		<-retired
 	}
@@ -228,7 +268,7 @@ func (c *Connection) run(ctx context.Context, action func(*Session) error, backg
 			return cause
 		}
 	}
-	// Application errors leave the transport usable. Client.Wait observes actual
-	// stream loss; no operation, including an uncertain send, is retried here.
+	// Application and channel errors leave the owner usable. Its Wait observes
+	// transport loss; no operation, including an uncertain send, is retried here.
 	return err
 }
