@@ -17,6 +17,11 @@ Share text and files between your devices through your own SSH server.
   before reaching the server.
 - **Simple clients:** Android, Linux desktop and CLI.
 
+| Linux desktop | Android |
+| :---: | :---: |
+| [<img src="desktop/client/docs/gallery/inbox.png" alt="Linux Inbox with incoming text and a file" width="500">](desktop/client/docs/gallery/inbox.png) | [<img src="android/client/docs/gallery/send.png" alt="Android Send with a recipient and message" width="230">](android/client/docs/gallery/send.png) |
+| Receive text and files | Choose recipients and compose a message |
+
 ## How it works
 
 - Your devices connect to the **same user account** on your SSH server, using it as an
@@ -60,16 +65,17 @@ removes the recipient's remote copy after successful delivery unless you use
 | [CLI](docs/usage.md) | Scriptable send/receive, multiple hosts, clipboard copying, inbox watch and Bash completion |
 
 The CLI is exercised on Linux; limited native Intel macOS validation also covers
-its clipboard support. Android runtime tests use x86_64 emulators; ARM64 builds
-are checked statically, with physical-device execution still deferred. Linux
-DEB/RPM/archive and unsigned Android candidate builds are available from source;
-signed releases and publication are not yet provided. This is development software.
+its clipboard support. Android runtime tests use hosted x86_64 emulators; ARM64
+builds are checked statically, and the rc.2 candidate has also been manually tested
+on a physical ARM device. Linux DEB/RPM/archive and Android builds can be made from
+source. Signed prerelease artifacts are being prepared for publication; public
+release downloads are not yet available. This is development software.
 
 ## Documentation
 
 - [Installation and enrollment](docs/installation.md)
 - [CLI usage](docs/usage.md), [Android guide](android/client/README.md), [Linux desktop guide](desktop/client/README.md)
-- [Linux screenshots](desktop/client/docs/gallery/README.md)
+- Screenshots: [Linux](desktop/client/docs/gallery/README.md) · [Android](android/client/docs/gallery/README.md)
 - [Security model and identity loss](SECURITY.md)
 - [Development, tests and local smoke environments](docs/development.md)
 - [Package format](PROTOCOL.md)
