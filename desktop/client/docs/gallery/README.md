@@ -1,11 +1,12 @@
 # keyparcel on Linux
 
-Current GTK screens captured from the automated transfer journey on Ubuntu
-24.04 with X11. Names, messages and fingerprints are disposable example data.
+Current GTK screens captured from an isolated native X11 fixture with real
+text and file transfers. Names, messages and fingerprints are disposable example
+data. Images retain the native window frame without the surrounding desktop.
 
 ## Inbox
 
-![Inbox with an incoming transfer](inbox.png)
+![Inbox with incoming text and a file](inbox.png)
 
 ## Received text
 
