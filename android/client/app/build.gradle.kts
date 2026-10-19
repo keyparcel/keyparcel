@@ -4,6 +4,21 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+fun gitOutput(vararg args: String): String? = runCatching {
+    val output = providers.exec {
+        workingDir(rootProject.file("../.."))
+        commandLine("git", *args)
+        isIgnoreExitValue = true
+    }
+    if (output.result.get().exitValue == 0) output.standardOutput.asText.get().trim() else null
+}.getOrNull()
+
+val sourceRevision = providers.gradleProperty("sourceRevision").orNull ?: run {
+    val revision = gitOutput("rev-parse", "HEAD")
+    val status = gitOutput("status", "--porcelain")
+    if (revision == null || status == null) "unknown" else revision + if (status.isEmpty()) "" else "-dirty"
+}
+
 val licenseAssets = tasks.register<Sync>("prepareLicenseAssets") {
     from(rootProject.file("../../")) {
         include("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.txt")
@@ -23,7 +38,8 @@ android {
         versionCode = 1
         versionName = "0.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        manifestPlaceholders["sourceRevision"] = providers.gradleProperty("sourceRevision").getOrElse("development")
+        manifestPlaceholders["sourceRevision"] = sourceRevision
+        buildConfigField("String", "SOURCE_REVISION", "\"$sourceRevision\"")
     }
     flavorDimensions += "use"
     productFlavors {
@@ -43,7 +59,7 @@ android {
     }
     sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/licenseAssets"))
     sourceSets["main"].java.srcDir("../../src/dev/keyparcel/storage")
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

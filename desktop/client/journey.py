@@ -350,6 +350,7 @@ try:
     assert text_contents(control(app, "Identity file", Atspi.Role.TEXT)) == "", "Missing default identity was prefilled"
     assert not find(app, "Copy enrollment key"), "Enrollment controls are visible before explicit disclosure"
     screenshot("settings-fresh.png")
+    assert any(n.get_name().startswith("keyparcel ") for n in walk(app)), "Settings is missing build provenance"
     for info_name, help_text in (
         ("SSH target information", "Enter user@host or an SSH alias. The list contains keyparcel configurations previously saved through the CLI or this GTK app."),
         ("Identity file information", "Choose an unencrypted Ed25519 or RSA private key (RSA: at least 2048 bits), not the .pub file. Passphrase-protected keys aren’t supported yet."),

@@ -879,6 +879,7 @@ func newModel(o options) *model {
 		m.ui = C.ui_new(C.uintptr_t(cgo.NewHandle(m)), v[0])
 	})
 	if m.ui != nil {
+		m.set("build-version", buildinfo.SettingsLabel())
 		m.set("target", o.host)
 		m.set("identity", defaultIdentity())
 		m.set("root", ".local/share/keyparcel")
