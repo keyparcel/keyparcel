@@ -79,7 +79,7 @@ func (s *store) update(change func(*core.Config) error) error {
 	return cfg.Save(s.path)
 }
 
-func (s *store) setup(target, identity, root, discovery string) error {
+func (s *store) setup(target, identity, root, discovery string, mode ...string) error {
 	if err := core.ValidateTarget(target); err != nil {
 		return err
 	}
@@ -91,7 +91,14 @@ func (s *store) setup(target, identity, root, discovery string) error {
 		return err
 	}
 	return s.update(func(c *core.Config) error {
-		c.Hosts[target] = core.Host{Identity: id.Path, Fingerprint: ssh.FingerprintSHA256(id.Public), Root: root, Discovery: discovery}
+		accessMethod := c.Hosts[target].AccessMethod
+		if len(mode) > 0 {
+			accessMethod = mode[0]
+		}
+		if err := core.ValidateAccessMethod(accessMethod); err != nil {
+			return err
+		}
+		c.Hosts[target] = core.Host{Identity: id.Path, Fingerprint: ssh.FingerprintSHA256(id.Public), Root: root, Discovery: discovery, AccessMethod: accessMethod}
 		c.DefaultHost = target
 		return nil
 	})

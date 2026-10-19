@@ -130,6 +130,7 @@ func RunWithConnector(ctx context.Context, args []string, in io.Reader, out, dia
 	host := f.String("host", "", "saved SSH target")
 	sshConfig := f.String("ssh-config", "", "OpenSSH configuration file override")
 	var identity, root, discovery, name, text, file, save *string
+	accessMethod := f.String("access-method", "", "remote reads: auto or ssh require commands; sftp disables commands")
 	var setDefault, stdin, asJSON, watch, stdout, copyClip, keep, overwrite, all *bool
 	var interval *time.Duration
 	var rounds *int
@@ -183,6 +184,11 @@ func RunWithConnector(ctx context.Context, args []string, in io.Reader, out, dia
 	} else if f.NArg() != expected {
 		return fmt.Errorf("%s expects %d positional arguments", command, expected)
 	}
+	if accessMethod != nil {
+		if err = core.ValidateAccessMethod(*accessMethod); err != nil {
+			return err
+		}
+	}
 	cfg, err := core.LoadConfig(*configPath)
 	if err != nil {
 		return err
@@ -198,7 +204,7 @@ func RunWithConnector(ctx context.Context, args []string, in io.Reader, out, dia
 		if e != nil {
 			return e
 		}
-		cfg.Hosts[*host] = core.Host{Identity: id.Path, Fingerprint: ssh.FingerprintSHA256(id.Public), Root: *root, Discovery: *discovery}
+		cfg.Hosts[*host] = core.Host{Identity: id.Path, Fingerprint: ssh.FingerprintSHA256(id.Public), Root: *root, Discovery: *discovery, AccessMethod: *accessMethod}
 		if *setDefault {
 			cfg.DefaultHost = *host
 		}
@@ -319,6 +325,12 @@ func RunWithConnector(ctx context.Context, args []string, in io.Reader, out, dia
 	target, h, err := cfg.Select(*host)
 	if err != nil {
 		return err
+	}
+	if *accessMethod != "" {
+		h.AccessMethod = *accessMethod
+	}
+	if h.AccessMethod == "" || h.AccessMethod == "auto" {
+		h.AccessMethod = "ssh"
 	}
 	if command == "inbox" && *watch {
 		return watchInbox(ctx, target, h, *sshConfig, cfg, *interval, out, diag, connect)

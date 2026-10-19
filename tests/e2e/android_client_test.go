@@ -445,7 +445,7 @@ func TestAndroidTextClient(t *testing.T) {
 	}
 
 	// Every screenshot remains required in the shard that runs its producing phase.
-	screenshots := []string{"setup", "server-approval", "host-key-changed", "inbox", "inbox-details", "settings-simple", "peer-approval", "send-draft", "received", "sent", "send-feedback-details", "status-confirmation", "status-connected", "devices"}
+	screenshots := []string{"setup", "server-approval", "host-key-changed", "inbox", "inbox-details", "settings-simple", "settings-access-method", "peer-approval", "send-draft", "received", "sent", "send-feedback-details", "status-confirmation", "status-connected", "devices"}
 	if shard != "network" {
 		screenshots = append(screenshots, "removal-error", "removed", "send-file", "saved-file")
 	}

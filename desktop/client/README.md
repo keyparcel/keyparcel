@@ -32,6 +32,12 @@ In Devices, compare the peer fingerprint, edit the suggested name if needed and
 peer must approve your fingerprint too. **This device** needs no peer approval,
 but its identity must still be enrolled on the server.
 
+Advanced settings offer **Remote access method**: Automatic, SSH commands or SFTP
+only. Automatic probes once per connection and falls back when commands are
+unsupported; SSH commands requires support. Edits stay in the form until you
+connect. Uploads and deletion always use SFTP; all received content is verified
+locally before delivery. See [remote access methods](../../docs/usage.md#remote-access-method).
+
 ## Send and receive
 
 Send feedback shows a short transfer ID when copies share one ID. Open its

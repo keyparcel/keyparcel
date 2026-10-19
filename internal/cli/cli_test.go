@@ -15,7 +15,7 @@ import (
 )
 
 func TestUnknownArgumentsFailBeforeNetwork(t *testing.T) {
-	for _, args := range [][]string{{"send", "--unexpected"}, {"receive", "12345678"}, {"inbox", "--watch", "--json"}, {"setup", "--host", "-bad"}} {
+	for _, args := range [][]string{{"send", "--unexpected"}, {"receive", "12345678"}, {"inbox", "--watch", "--json"}, {"setup", "--host", "-bad"}, {"inbox", "--access-method", "exec"}, {"setup", "--access-method", "exec"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			args = append(args, "--config", filepath.Join(t.TempDir(), "config"))
 			var out, diag bytes.Buffer
@@ -204,5 +204,45 @@ func TestVersionWithoutConfiguration(t *testing.T) {
 		if got := out.String(); !strings.HasPrefix(got, "keyparcel development (") {
 			t.Fatalf("version should be available without configuration: %q", got)
 		}
+	}
+}
+
+func TestAccessMethodOverrideDoesNotRewriteProfile(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	cfg := &core.Config{Hosts: map[string]core.Host{"server": {Identity: "unused", Fingerprint: "unused", Root: "root", Discovery: "keys", AccessMethod: "sftp"}}, Peers: map[string]string{}, DefaultHost: "server"}
+	if err := cfg.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"", "auto", "ssh", "sftp"} {
+		want := mode
+		if want == "auto" {
+			want = "ssh"
+		}
+		if want == "" {
+			want = "sftp"
+		}
+		called := false
+		connect := func(_ context.Context, _ string, h core.Host, _ string, _ bool) (*core.Session, error) {
+			called = true
+			if h.AccessMethod != want {
+				t.Fatalf("listing policy = %q, want %q", h.AccessMethod, want)
+			}
+			return nil, io.EOF
+		}
+		args := []string{"inbox", "--config", p}
+		if mode != "" {
+			args = append(args, "--access-method", mode)
+		}
+		if err := RunWithConnector(context.Background(), args, strings.NewReader(""), io.Discard, io.Discard, connect); err != io.EOF || !called {
+			t.Fatal("policy did not reach connector:", err)
+		}
+	}
+	after, err := os.ReadFile(p)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("one-shot inbox override rewrote saved settings:", err)
 	}
 }

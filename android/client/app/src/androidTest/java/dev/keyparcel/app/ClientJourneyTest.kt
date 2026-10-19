@@ -462,6 +462,16 @@ class ClientJourneyTest {
         check(value("host-root") == ".local/share/keyparcel") { "Advanced settings changed the storage path" }
         check(value("host-discovery") == ".ssh/authorized_keys") { "Advanced settings changed the discovery path" }
         compose.onNodeWithTag("host-key").assertExists()
+        compose.onNodeWithTag("access-method-auto").assertIsSelected()
+        compose.onNodeWithTag("access-method-hint").assertDoesNotExist()
+        compose.onNodeWithTag("access-method-ssh").performScrollTo().performClick().assertIsSelected()
+        compose.onNodeWithTag("access-method-hint").assertTextEquals("Connect to apply the remote access method")
+        compose.onNodeWithTag("access-method-sftp").performScrollTo().performClick().assertIsSelected()
+        check(liveModel.settings.host?.accessMethod == "auto") { "Editing inbox policy applied unsaved settings" }
+        compose.onNodeWithTag("access-method-hint").performScrollTo().assertIsDisplayed()
+        screenshot("settings-access-method")
+        compose.onNodeWithTag("access-method-auto").performScrollTo().performClick().assertIsSelected()
+        compose.onNodeWithTag("access-method-hint").assertDoesNotExist()
         compose.onNodeWithTag("advanced-settings").performScrollTo().performClick()
         compose.onNodeWithTag("host-key").assertDoesNotExist()
         click("back")

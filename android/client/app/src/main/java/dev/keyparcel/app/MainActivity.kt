@@ -276,6 +276,7 @@ private fun SettingsScreen(model: AppModel) {
     var user by remember(host) { mutableStateOf(host?.user ?: "") }
     var root by remember(host) { mutableStateOf(host?.root ?: ".local/share/keyparcel") }
     var discovery by remember(host) { mutableStateOf(host?.discovery ?: ".ssh/authorized_keys") }
+    var accessMethod by remember(host) { mutableStateOf(host?.accessMethod ?: "auto") }
     var forgetApproval by remember { mutableStateOf(false) }
     var advanced by rememberSaveable { mutableStateOf(false) }
     var formError by remember { mutableStateOf<String?>(null) }
@@ -315,7 +316,7 @@ private fun SettingsScreen(model: AppModel) {
         formError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Button(onClick = {
             try {
-                val candidate = Host(address.trim(), port.toIntOrNull() ?: 0, user.trim(), root = root.trim(), discovery = discovery.trim())
+                val candidate = Host(address.trim(), port.toIntOrNull() ?: 0, user.trim(), root = root.trim(), discovery = discovery.trim(), accessMethod = accessMethod)
                 candidate.validateConnection()
                 formError = null
                 model.connectHost(candidate)
@@ -328,6 +329,18 @@ private fun SettingsScreen(model: AppModel) {
         if (advanced) {
             Field("Storage path", "host-root", root, model.busy) { root = it }
             Field("Discovery path", "host-discovery", discovery, model.busy) { discovery = it }
+            Text("Remote access method", style = MaterialTheme.typography.titleSmall)
+            Row {
+                FilterChip(selected = accessMethod == "auto", onClick = { accessMethod = "auto" }, enabled = !model.busy,
+                    label = { Text("Automatic") }, modifier = Modifier.testTag("access-method-auto"))
+                FilterChip(selected = accessMethod == "ssh", onClick = { accessMethod = "ssh" }, enabled = !model.busy,
+                    label = { Text("SSH commands") }, modifier = Modifier.testTag("access-method-ssh"))
+                FilterChip(selected = accessMethod == "sftp", onClick = { accessMethod = "sftp" }, enabled = !model.busy,
+                    label = { Text("SFTP only") }, modifier = Modifier.testTag("access-method-sftp"))
+            }
+            if (accessMethod != (host?.accessMethod ?: "auto")) {
+                Text("Connect to apply the remote access method", modifier = Modifier.testTag("access-method-hint"), style = MaterialTheme.typography.bodySmall)
+            }
             if (host?.trusted == true) {
                 OutlinedTextField(value = host.key, onValueChange = {}, readOnly = true,
                     label = { Text("Approved server public key") }, modifier = Modifier.fillMaxWidth().testTag("host-key"))

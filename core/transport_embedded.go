@@ -17,14 +17,15 @@ import (
 
 // EmbeddedOptions are explicit connection settings; no SSH configuration is read.
 type EmbeddedOptions struct {
-	Address   string
-	Port      int
-	User      string
-	Identity  *Identity
-	HostKey   ssh.PublicKey
-	Root      string
-	Discovery string
-	Timeout   time.Duration
+	Address      string
+	Port         int
+	User         string
+	Identity     *Identity
+	HostKey      ssh.PublicKey
+	Root         string
+	Discovery    string
+	Timeout      time.Duration
+	AccessMethod string
 }
 
 // ProbeHostKey observes a server key without authentication or a trusted session.
@@ -70,7 +71,7 @@ func ProbeHostKey(ctx context.Context, address string, port int, timeout time.Du
 
 // ConnectEmbedded keeps the connection bound to ctx until Close is called.
 func ConnectEmbedded(ctx context.Context, options EmbeddedOptions) (_ *Session, err error) {
-	if options.Address == "" || options.Port < 1 || options.Port > 65535 || options.User == "" || options.Identity == nil || options.HostKey == nil || options.Root == "" || options.Discovery == "" || options.Timeout < 0 {
+	if !validAccessMethod(options.AccessMethod) || options.Address == "" || options.Port < 1 || options.Port > 65535 || options.User == "" || options.Identity == nil || options.HostKey == nil || options.Root == "" || options.Discovery == "" || options.Timeout < 0 {
 		return nil, errors.New("incomplete or invalid embedded SSH settings (including host-key trust)")
 	}
 	id, err := ParseIdentity(options.Identity.private)
@@ -125,11 +126,17 @@ func ConnectEmbedded(ctx context.Context, options EmbeddedOptions) (_ *Session, 
 		return nil, fmt.Errorf("SSH connection: %w", err)
 	}
 	client := ssh.NewClient(connection, channels, requests)
+	ownerDone := make(chan struct{})
+	var ownerErr error
+	go func() { ownerErr = client.Wait(); close(ownerDone) }()
 	s := &Session{Identity: id, ctx: ctx}
+	s.access = &remoteAccess{mode: options.AccessMethod, run: func(request context.Context, command string, consume func(io.Reader) error) error {
+		return runEmbeddedCommand(request, client, ownerDone, command, consume)
+	}}
 	s.openSFTP = func() (*sftpChannel, error) {
 		return openEmbeddedSFTP(client)
 	}
-	s.waitTransport = client.Wait
+	s.waitTransport = func() error { <-ownerDone; return ownerErr }
 	s.channel, err = s.openChannel()
 	if err != nil {
 		client.Close()

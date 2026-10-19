@@ -27,6 +27,8 @@ func TestLocalCompletion(t *testing.T) {
 		words, want []string
 	}{
 		{"commands", []string{"tr"}, []string{"trust"}},
+		{"inbox policy", []string{"inbox", "--access-method", ""}, []string{"auto", "sftp", "ssh"}},
+		{"setup policy", []string{"setup", "--access-method", "sf"}, []string{"sftp"}},
 		{"next name flag", []string{"trust", "SHA256:test", ""}, []string{"--name"}},
 		{"hosts", []string{"devices", "--host", "in"}, []string{"inbox"}},
 		{"inline hosts", []string{"devices", "--host=in"}, []string{"--host=inbox"}},
@@ -35,9 +37,9 @@ func TestLocalCompletion(t *testing.T) {
 		{"paths delegated to Bash", []string{"send", "--file", dir}, nil},
 		{"no text suggestions", []string{"send", "--text", ""}, nil},
 		{"overwrite flag", []string{"receive", "12345678", "--over"}, []string{"--overwrite"}},
-		{"delete all flag", []string{"delete", "--a"}, []string{"--all"}},
+		{"delete all flag", []string{"delete", "--a"}, []string{"--access-method", "--all"}},
 		{"delete all excludes IDs", []string{"delete", "--all", ""}, nil},
-		{"delete selected excludes all flag", []string{"delete", "12345678", "--a"}, nil},
+		{"delete selected excludes all flag", []string{"delete", "12345678", "--a"}, []string{"--access-method"}},
 		{"malformed config", []string{"trust", "--config", filepath.Join(dir, "absent"), ""}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -89,7 +91,9 @@ func TestRemoteCompletionDeadlineAndSilentFailure(t *testing.T) {
 					calls := 0
 					connect := func(ctx context.Context, target string, host core.Host, sshConfig string, completion bool) (*core.Session, error) {
 						calls++
-						if !completion || target != "inbox" || host != cfg.Hosts["inbox"] || sshConfig != "fixture-ssh-config" {
+						expected := cfg.Hosts["inbox"]
+						expected.AccessMethod = "ssh"
+						if !completion || target != "inbox" || host != expected || sshConfig != "fixture-ssh-config" {
 							t.Fatal("completion changed its selected host or noninteractive transport mode")
 						}
 						deadline, ok := ctx.Deadline()

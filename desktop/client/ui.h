@@ -68,3 +68,7 @@ typedef struct { int x, y, width, height, mapped, focused, open, hovered, presse
 void ui_present(UI *ui);
 void ui_flush(void);
 InfoState ui_info_state(UI *ui, const char *name);
+
+void ui_access_hint(UI *ui,int show);
+
+int ui_access_pending(UI *ui);
