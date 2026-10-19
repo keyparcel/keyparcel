@@ -1,5 +1,6 @@
 """Host cleanup regressions require no GTK, display or Docker access."""
 from pathlib import Path
+import base64
 import json
 import os
 import socket
@@ -51,8 +52,28 @@ class HostCleanupTests(unittest.TestCase):
 
 
 class FixtureRegressionTests(unittest.TestCase):
+    def test_installed_gui_cli_uses_only_owned_external_driver(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = fixtures.Fixture(Path(temporary))
+            fixture.client, fixture.driver = 'gui-with-no-cli', 'owned-cli-driver'
+            fixture.binary = Path('/usr/bin/keyparcel')
+            payload = '  exact 世界\n'.encode()
+            with patch.object(fixtures, 'command', return_value=b'output') as command:
+                self.assertEqual(fixture.cli('peer', 'send', '--stdin', input=payload), b'output')
+                args = command.call_args.args[0]
+                self.assertEqual(args[:len(fixtures.DOCKER)+4], fixtures.DOCKER + ['exec', '-i', 'owned-cli-driver', '/usr/bin/keyparcel'])
+                self.assertEqual(command.call_args.kwargs['input'], payload)
+            encoded = base64.b64encode(payload).decode()
+            line = fixtures.CONTROL + json.dumps(['cli', ['peer', 'send', encoded, '--stdin']])
+            with patch.object(fixture, 'cli', return_value=b'output') as cli:
+                self.assertEqual(run.handle_control(fixture, line), b'output')
+                cli.assert_called_once_with('peer', 'send', '--stdin', input=payload)
+            fixture.driver = None
+            with self.assertRaises(ValueError):
+                run.handle_control(fixture, line)
+
     def test_creation_interruption_removes_every_created_resource(self):
-        cases = [(kind, False) for kind in ("network", "server", "client")] + [("network", True)]
+        cases = [(kind, False) for kind in ("network", "server", "client", "driver")] + [("network", True)]
         for interrupted_kind, retry_cleanup in cases:
             with self.subTest(creation=interrupted_kind, retry=retry_cleanup), tempfile.TemporaryDirectory() as temporary:
                 fixture = fixtures.Fixture(Path(temporary) / "owned")
@@ -91,7 +112,8 @@ class FixtureRegressionTests(unittest.TestCase):
 
                 with patch.object(fixtures, "command", side_effect=docker_command), \
                      patch.object(fixtures.subprocess, "run", side_effect=inspect), \
-                     patch.object(fixtures, "client_args", return_value=[]):
+                     patch.object(fixtures, "client_args", return_value=[]), \
+                     patch.dict(os.environ, {"KEYPARCEL_GTK_DRIVER_IMAGE": "cli-image" if interrupted_kind == "driver" else ""}):
                     if retry_cleanup:
                         with patch.object(fixture, "down", side_effect=RuntimeError("Docker unavailable during cleanup")):
                             with self.assertRaises(RuntimeError):

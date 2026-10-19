@@ -6,7 +6,7 @@ protected Android signing and an unpublished release draft.
 Project code is [Apache-2.0](../LICENSE); linked Go components retain their BSD
 licenses. Linux packages/archives and Android APK assets include the project
 license, copyright notice and [third-party notices](../THIRD_PARTY_NOTICES.txt).
-The RPM declares `Apache-2.0 AND BSD-2-Clause AND BSD-3-Clause` for the combined work.
+The RPM declares `Apache-2.0 AND BSD-2-Clause AND BSD-3-Clause` for each packaged client.
 
 ## Build
 
@@ -52,26 +52,33 @@ versionName/versionCode through package metadata. Default developer builds say
 
 ## Linux layout and supported baselines
 
-Each Linux target produces one combined CLI/GTK package and a matching `.tar.gz`
-install tree. Keeping them together avoids another package dependency/version
-relationship. Files install under `/usr/bin`, `/usr/share/applications`,
-`/usr/share/bash-completion/completions`, and `/usr/share/doc/keyparcel`.
+Each Linux target produces independent `keyparcel-cli` and `keyparcel-gtk`
+packages and matching, separate `.tar.gz` install trees. Neither depends on the
+other. CLI contains the `keyparcel` binary, Bash completion and compressed
+`keyparcel(1)` manual, with no GTK dependencies. GTK contains `keyparcel-gtk`, its
+launcher/icon and desktop dependencies. Each owns its own notices, guide and
+build provenance under `/usr/share/doc/keyparcel-cli` or `keyparcel-gtk`.
 The bundled parcel-and-key SVG installs under `/usr/share/icons/hicolor/scalable/apps`.
 The GTK application ID and icon name are `dev.keyparcel`, matching the launcher
 `dev.keyparcel.desktop` on X11 and Wayland. See [shared artwork](../assets/branding/README.md).
 
 - **DEB:** built on Ubuntu 24.04 x86_64, installed/tested on Ubuntu 24.04 and Debian
-  13. `dpkg-shlibdeps` derives GTK/libc dependencies; OpenSSH client, CA certificates
-  Adwaita icons and the SVG loader are explicit dependencies
+  13. `dpkg-shlibdeps` derives GTK/libc dependencies. Both clients require OpenSSH
+  and CA certificates; Adwaita icons and the SVG loader are GTK-only dependencies
 - **RPM:** built and installed/tested on Fedora 44 x86_64. RPM derives shared-library
-  requirements; OpenSSH clients, CA certificates and Adwaita icons are explicit
+  requirements; OpenSSH clients and CA certificates are common; Adwaita icons and
+  librsvg2 are GTK-only dependencies
 - **Archives:** contain the exact package binaries and install files. The GTK
   binary still needs the matching baseline's shared libraries; it is not a
   universally portable bundle. The CLI is built without cgo; OpenSSH is required
   for its transport. Other distros/baselines are not validated
 
-Install a local candidate with `sudo apt install ./keyparcel_*.deb` or
-`sudo dnf install ./keyparcel-*.rpm`. Uninstall removes system files, not user
+Install the selected client with `sudo apt install ./keyparcel-cli_*.deb` or
+`sudo apt install ./keyparcel-gtk_*.deb`; use the corresponding `keyparcel-cli-*.rpm`
+or `keyparcel-gtk-*.rpm` with `sudo dnf install` on Fedora. Remove the old combined
+`keyparcel` package first. Both new packages explicitly conflict with that name;
+no transitional package or cross-client dependency is used. Package managers may
+propose removing the conflict; inspect that transaction. Uninstall removes system files, not user
 configuration, identities or settings. Candidate packages do not own home paths.
 The included [installed-user guide](INSTALLED.md) covers first setup and provides
 concrete archive installation/removal commands under `/usr/local`, separate from
@@ -82,7 +89,9 @@ source/developer guides are not bundled as broken relative links.
 
 `validate.py` installs the actual packages through apt/dnf in fresh matching
 runtime images (retaining candidate docs despite minimal-image doc filters).
-It checks startup/linking **before** adding test-driver tools,
+It installs each client separately and checks startup/linking **before** adding
+test-driver tools. The CLI image has no GTK libraries/themes; GTK has no CLI
+package or binary. It checks
 then checks archive/package byte equality, paths/modes/ownership, provenance,
 launcher, application icon and completion as the ordinary fixture user. Runtime
 images contain neither Go nor development binaries; selected CLI invocations
@@ -92,12 +101,16 @@ The unchanged CLI text-deletion, file/keep/overwrite and tampered/truncated rece
 scenarios run through the narrow installed-image hook, with their existing SSH
 fixture and assertions. They exercise the production OpenSSH CLI; the ordinary
 source suite still tests both OpenSSH and embedded connectors. A short branch of
-the existing GTK journey reuses enrollment/server and peer approval, verified
+the existing GTK journey uses a separate owned CLI-only driver container and
+reuses enrollment/server and peer approval, verified
 Unicode receive/copy/retention, explicit removal, and GUI-to-CLI peer delivery.
 The full GTK journey, widget checks and smoke lifecycle suite remain the source
 workflow's responsibility. Package checks do not repeat the full suite per format.
-Finally, removal through apt/dnf must leave a generated user identity and config
-byte-identical. Each run owns and cleans its own fixtures.
+Coexistence and removing either client must leave the other working and generated
+user identities, configuration and saved files byte-identical. A test-only old-name
+package with overlapping real binaries must cause explicit package-manager conflicts;
+removing it first permits migration to both clients. This internal fixture has a
+non-package suffix and is never a release asset. Each run cleans only its owned fixtures.
 
 Android's stable production application ID is `dev.keyparcel.app`; smoke/scenario
 retain their suffixes and x86_64 workflow. Candidate production APKs are unsigned and
@@ -169,7 +182,7 @@ Unsigned APKs, AARs, logs and fixture output are not release assets.
 The draft contains the DEB, RPM, their two matching archives, signed APK, three
 per-target build-info files, Android certificate fingerprint and `SHA256SUMS`.
 Release asset filenames use the product's hyphen prerelease (for example,
-`keyparcel_0.1.0-rc.1-1_amd64.deb`); internal DEB/RPM versions still use `~` for
+`keyparcel-cli_0.1.0-rc.1-1_amd64.deb`); internal DEB/RPM versions still use `~` for
 package-manager ordering. This avoids GitHub's normalization of `~` in uploaded
 filenames. Before any upload, checksums must cover exactly the intended final
 asset names and bytes; upload responses must preserve names, sizes and digests.
