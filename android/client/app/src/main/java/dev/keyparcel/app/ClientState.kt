@@ -93,3 +93,18 @@ data class RefreshContext(val settings: Settings, val epoch: Long, val revision:
     fun matches(current: Settings, currentEpoch: Long, currentRevision: Long, foreground: Boolean) =
         foreground && settings == current && epoch == currentEpoch && revision == currentRevision
 }
+
+// Percentages count encrypted transfer bytes for one recipient, never successful
+// delivery. Publication, verification and local delivery have no percentage.
+data class TransferProgress(val text: String, val fraction: Float?)
+fun transferProgress(phase: String, bytes: Long, total: Long, item: Long, items: Long): TransferProgress {
+    if (total <= 0) return TransferProgress(phase, null)
+    val fraction = (bytes.toDouble()/total).coerceIn(0.0,1.0).toFloat()
+    val count = if (items > 1) " $item/$items" else ""
+    return TransferProgress("$phase$count · ${(fraction*100).toInt()}%", fraction)
+}
+
+internal data class TransferProgressContext(val sequence: Long, val settings: Settings, val epoch: Long) {
+    fun matches(currentSequence: Long, current: Settings, currentEpoch: Long, foreground: Boolean, busy: Boolean) =
+        busy && foreground && sequence == currentSequence && settings == current && epoch == currentEpoch
+}

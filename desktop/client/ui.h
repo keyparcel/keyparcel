@@ -15,6 +15,8 @@ void ui_page(UI *ui, const char *page);
 void ui_message(UI *ui, const char *text);
 void ui_confirmation(UI *ui, const char *text);
 void ui_progress(UI *ui, const char *text);
+void ui_transfer_progress(UI *ui, const char *text, double fraction);
+double ui_transfer_fraction(UI *ui);
 void ui_busy(UI *ui, int busy);
 const char *ui_operation_progress(UI *ui);
 int ui_activate_cancel(UI *ui);

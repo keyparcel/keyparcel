@@ -117,6 +117,29 @@ class ClientJourneyTest {
         }
     }
 
+    private fun assertTransferProgress(phase: String) {
+        try {
+            compose.waitUntil(30_000) {
+                compose.onAllNodesWithTag("transfer-progress").fetchSemanticsNodes().isNotEmpty() &&
+                    compose.onAllNodesWithTag("operation-progress").fetchSemanticsNodes().any { node ->
+                        node.config.getOrElse(SemanticsProperties.Text) { emptyList() }.any { it.text.startsWith(phase) }
+                    }
+            }
+            compose.onNodeWithTag("transfer-progress").assertIsDisplayed()
+            compose.onNodeWithTag("operation-progress").assertTextContains("%", substring = true)
+            compose.onNodeWithTag("app-header").assert(hasAnyDescendant(hasTestTag("transfer-progress")).not())
+        } catch (failure: Throwable) {
+            runCatching { screenshot("failure") }.onFailure(failure::addSuppressed)
+            runCatching {
+                val model = ViewModelProvider(compose.activity)[AppModel::class.java]
+                File(compose.activity.filesDir,"failure.log").writeText(
+                    "Expected $phase byte progress; busy=${model.busy}, phase=${model.progress}, fraction=${model.transferFraction}\n" +
+                        compose.onRoot().printToString())
+            }.onFailure(failure::addSuppressed)
+            throw failure
+        }
+    }
+
     private fun finished() {
         compose.waitUntil(120_000) { compose.onAllNodesWithTag("working").fetchSemanticsNodes().isEmpty() }
     }
@@ -193,9 +216,11 @@ class ClientJourneyTest {
         InstrumentationRegistry.getInstrumentation().uiAutomation.rootInActiveWindow
             ?.packageName?.toString() == compose.activity.packageName
 
-    private fun pickerReturned() {
+    private fun pickerReturned(beforeFinished: () -> Unit = {}) {
         compose.waitUntil(30_000) { appHasFocus() }
-        compose.waitForIdle(); finished()
+        compose.waitForIdle()
+        beforeFinished()
+        finished()
     }
 
     private fun pickerCancel() {
@@ -218,7 +243,7 @@ class ClientJourneyTest {
         pickerReturned()
     }
 
-    private fun saveFile(id: String, outputName: String, expectedName: String = "file-世界.bin", fromView: Boolean = false) {
+    private fun saveFile(id: String, outputName: String, expectedName: String = "file-世界.bin", fromView: Boolean = false, beforeFinished: () -> Unit = {}) {
         if (fromView) click("save-view") else {
             compose.onNodeWithTag("inbox-list").performScrollToNode(hasTestTag("save-$id"))
             click("save-$id")
@@ -235,7 +260,7 @@ class ClientJourneyTest {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, outputName)
         }) == true) { "Could not rename destination in system save dialog" }
         pickerClick { it.text?.toString()?.equals("Save", ignoreCase = true) == true }
-        pickerReturned()
+        pickerReturned(beforeFinished)
     }
 
     private fun receive(id: String, expected: String = input) {
@@ -1221,7 +1246,10 @@ class ClientJourneyTest {
         compose.onNodeWithTag("selected-filename").assertTextEquals("payload-世界.bin")
         compose.onNodeWithTag("selected-size").assertTextEquals("Size unknown")
         screenshot("send-file")
-        compose.onNodeWithTag("send-file").performClick(); finished()
+        compose.onNodeWithTag("send-file").performClick()
+        assertTransferProgress("Uploading")
+        screenshot("upload-progress")
+        finished()
         val binaryID = requireNotNull(model.sendReport).deliveries.single().id
         check(model.sendReport?.complete == true) { "File send did not complete" }
         compose.onNodeWithTag("send-feedback-toggle").assertTextEquals("▸ Sent to laptop · ${binaryID.take(8)}")
@@ -1279,7 +1307,10 @@ class ClientJourneyTest {
                 "Stalled destination leaked verified staging files"
             }
         } finally { compose.runOnIdle { model.documentTimeoutMillis = 120_000L } }
-        saveFile(id, "renamed-世界.bin")
+        saveFile(id, "renamed-世界.bin", beforeFinished = {
+            assertTransferProgress("Downloading")
+            screenshot("download-progress")
+        })
         waitFor("saved-file")
         screenshot("saved-file")
         click("back"); refresh()

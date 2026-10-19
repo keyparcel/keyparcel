@@ -555,7 +555,7 @@ try:
     fixture.control("pause")
     try:
         click("Send text")
-        status("Sending…")
+        status("Preparing upload…")
         control(app, "Cancel operation", Atspi.Role.PUSH_BUTTON)
         screenshot("header-working.png")
         print(f"Header geometry idle={header_idle}, working={header_geometry()}", flush=True)
@@ -979,6 +979,11 @@ try:
         wait("selected file becomes sendable",lambda: control(app,"Send file",Atspi.Role.PUSH_BUTTON).get_state_set().contains(Atspi.StateType.SENSITIVE))
         before = ids("desktop")
         click("Send file")
+        if not empty:
+            control(app, "Transfer progress", Atspi.Role.PROGRESS_BAR)
+            assert "%" in text_contents(control(app,"Operation progress")), "Upload has no byte percentage"
+            assert header_geometry() == header_idle, "Determinate progress changed reserved header height"
+            screenshot("upload-progress.png")
         # Completion remains observable after the brief success feedback expires.
         control(app, "No file selected", Atspi.Role.LABEL)
         after = ids("desktop")
@@ -1025,6 +1030,10 @@ try:
                 failed_dir.chmod(0o700)
         target = session / ("gtk-" + source.name)
         choose_save(incoming, target)
+        if not empty:
+            control(app, "Transfer progress", Atspi.Role.PROGRESS_BAR)
+            assert "%" in text_contents(control(app,"Operation progress")), "Download has no byte percentage"
+            screenshot("download-progress.png")
         control(app,"File saved — remote copy retained",Atspi.Role.LABEL)
         assert target.read_bytes() == source.read_bytes(), "GTK destination differs from peer file"
         assert incoming in ids("desktop"), "Successful save deleted remote file"

@@ -113,7 +113,11 @@ private fun ClientScreen(model: AppModel) {
                 Column(Modifier.weight(1f).fillMaxWidth(),verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (model.busy) Row(Modifier.testTag("content-progress"), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        CircularProgressIndicator(Modifier.size(16.dp).testTag("working"), strokeWidth = 2.dp)
+                        Box(Modifier.testTag("working")) {
+                            val fraction = model.transferFraction
+                            if (fraction == null) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                            else LinearProgressIndicator(progress = { fraction }, modifier = Modifier.width(72.dp).testTag("transfer-progress"))
+                        }
                         Text(model.progress ?: "Working…", style = MaterialTheme.typography.labelSmall,
                             modifier = Modifier.testTag("operation-progress"))
                     } else if (model.refreshing && model.page != Page.Inbox && model.page != Page.Devices) {
