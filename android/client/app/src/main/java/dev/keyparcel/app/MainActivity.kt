@@ -28,6 +28,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -279,6 +280,7 @@ private fun SettingsScreen(model: AppModel) {
     var accessMethod by remember(host) { mutableStateOf(host?.accessMethod ?: "auto") }
     var forgetApproval by remember { mutableStateOf(false) }
     var advanced by rememberSaveable { mutableStateOf(false) }
+    var accessMethodHelp by remember { mutableStateOf(false) }
     var formError by remember { mutableStateOf<String?>(null) }
     Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Settings", style = MaterialTheme.typography.titleLarge)
@@ -327,9 +329,13 @@ private fun SettingsScreen(model: AppModel) {
             Text(if (advanced) "Hide advanced settings" else "Advanced settings")
         }
         if (advanced) {
-            Field("Storage path", "host-root", root, model.busy) { root = it }
-            Field("Discovery path", "host-discovery", discovery, model.busy) { discovery = it }
-            Text("Remote access method", style = MaterialTheme.typography.titleSmall)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Remote access method", style = MaterialTheme.typography.titleSmall)
+                IconButton(onClick = { accessMethodHelp = true },
+                    modifier = Modifier.testTag("access-method-info").semantics { contentDescription = "Remote access method information" }) {
+                    Text("ⓘ", style = MaterialTheme.typography.titleMedium, modifier = Modifier.clearAndSetSemantics {})
+                }
+            }
             Row {
                 FilterChip(selected = accessMethod == "auto", onClick = { accessMethod = "auto" }, enabled = !model.busy,
                     label = { Text("Automatic") }, modifier = Modifier.testTag("access-method-auto"))
@@ -341,12 +347,18 @@ private fun SettingsScreen(model: AppModel) {
             if (accessMethod != (host?.accessMethod ?: "auto")) {
                 Text("Connect to apply the remote access method", modifier = Modifier.testTag("access-method-hint"), style = MaterialTheme.typography.bodySmall)
             }
+            Field("Storage path", "host-root", root, model.busy) { root = it }
+            Field("Discovery path", "host-discovery", discovery, model.busy) { discovery = it }
             if (host?.trusted == true) {
                 OutlinedTextField(value = host.key, onValueChange = {}, readOnly = true,
                     label = { Text("Approved server public key") }, modifier = Modifier.fillMaxWidth().testTag("host-key"))
             }
         }
     }
+    if (accessMethodHelp) AlertDialog(onDismissRequest = { accessMethodHelp = false },
+        title = { Text("Remote access method") },
+        text = { Text("SSH commands uses standard Unix commands on the server for faster operations with fewer network round trips. SFTP only uses the SFTP protocol and is more broadly supported. Automatic prefers SSH commands and falls back to SFTP when unsupported.") },
+        confirmButton = { TextButton(onClick = { accessMethodHelp = false }, modifier = Modifier.testTag("close-access-method-help")) { Text("Close") } })
     model.pendingHost?.let { candidate ->
         val fingerprint = Bridge.serverFingerprint(candidate.key)
         AlertDialog(onDismissRequest = model::cancelHostApproval,

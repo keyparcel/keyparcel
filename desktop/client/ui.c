@@ -254,15 +254,16 @@ static gboolean back_key(GtkEventControllerKey *controller, guint key, guint cod
     if (key != GDK_KEY_Escape && !(key == GDK_KEY_Left && (state & GDK_ALT_MASK))) return FALSE;
     if (ui->picker) ui_cancel_picker(ui);
     else {
-        const char *help_names[]={"SSH target information","Identity file information"};
-        for (int i=0;i<2;i++) {
+        const char *help_names[]={"SSH target information","Identity file information","Remote access method information"};
+        for (guint i=0;i<G_N_ELEMENTS(help_names);i++) {
             GtkWidget *help=g_hash_table_lookup(ui->fields,help_names[i]);
             if (help && gtk_widget_get_visible(help)) { gtk_popover_popdown(GTK_POPOVER(help)); return TRUE; }
         }
         GtkExpander *advanced = g_hash_table_lookup(ui->fields, "advanced");
-        if (strcmp(gtk_stack_get_visible_child_name(ui->pages), "settings") == 0 && gtk_expander_get_expanded(advanced))
+        if (strcmp(gtk_stack_get_visible_child_name(ui->pages), "settings") == 0 && gtk_expander_get_expanded(advanced)) {
+            gtk_widget_grab_focus(GTK_WIDGET(advanced));
             gtk_expander_set_expanded(advanced, FALSE);
-        else goEvent(ui->handle, "back", "", "");
+        } else goEvent(ui->handle, "back", "", "");
     }
     return TRUE;
 }
@@ -519,9 +520,7 @@ UI *ui_new(uintptr_t handle, const char *icon) {
     ui_enrollment_reset(ui);
     GtkWidget *advanced = gtk_expander_new("Advanced"); remember(ui, "advanced", advanced);
     GtkWidget *advanced_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-    field(ui, advanced_box, "root", "Remote storage");
-    field(ui, advanced_box, "discovery", "Discovery file");
-    gtk_box_append(GTK_BOX(advanced_box),label("Remote access method"));
+    info_label(ui,advanced_box,"Remote access method","SSH commands uses standard Unix commands on the server for faster operations with fewer network round trips. SFTP only uses the SFTP protocol and is more broadly supported. Automatic prefers SSH commands and falls back to SFTP when unsupported.","Remote access method information");
     GtkWidget *access_method=gtk_combo_box_text_new();
     gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(access_method),"auto","Automatic");
     gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(access_method),"ssh","SSH commands");
@@ -531,9 +530,11 @@ UI *ui_new(uintptr_t handle, const char *icon) {
     GtkWidget *method_hint=label("Save & connect to apply the remote access method");
     remember(ui,"access-method-hint",method_hint);gtk_widget_set_visible(method_hint,FALSE);gtk_box_append(GTK_BOX(advanced_box),method_hint);
     g_signal_connect(access_method,"changed",G_CALLBACK(access_method_changed),ui);
-    gtk_box_append(GTK_BOX(advanced_box), label("OpenSSH configuration override (empty uses OpenSSH defaults)"));
-    GtkWidget *ssh_config = label(""); remember(ui, "ssh-config", ssh_config); gtk_box_append(GTK_BOX(advanced_box), ssh_config);
-    gtk_box_append(GTK_BOX(advanced_box), label("Server keys are managed in OpenSSH known_hosts. Identity and server fingerprints remain visible during trust approval."));
+    field(ui, advanced_box, "root", "Remote storage");
+    field(ui, advanced_box, "discovery", "Discovery file");
+    GtkWidget *ssh_config = label(""); remember(ui, "ssh-config", ssh_config);
+    gtk_widget_add_css_class(ssh_config,"dim-label");gtk_widget_add_css_class(ssh_config,"caption");
+    gtk_widget_set_visible(ssh_config,FALSE);gtk_box_append(GTK_BOX(advanced_box),ssh_config);
     gtk_expander_set_child(GTK_EXPANDER(advanced), advanced_box); gtk_box_append(GTK_BOX(settings), advanced);
 
     GtkWidget *devices = page(ui, "devices", "Devices and approvals");
@@ -670,6 +671,7 @@ void ui_set(UI *ui, const char *name, const char *text) {
     if (GTK_IS_COMBO_BOX(w)) gtk_combo_box_set_active_id(GTK_COMBO_BOX(w),text);
     else if (GTK_IS_EDITABLE(w)) gtk_editable_set_text(GTK_EDITABLE(w), text);
     else if (GTK_IS_LABEL(w)) gtk_label_set_text(GTK_LABEL(w), text);
+    if (strcmp(name,"ssh-config") == 0) gtk_widget_set_visible(w,text[0]!=0);
 }
 char *ui_draft(UI *ui) {
     GtkTextBuffer *b = gtk_text_view_get_buffer(GTK_TEXT_VIEW(g_hash_table_lookup(ui->fields, "draft")));
