@@ -3,10 +3,8 @@ package core
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -23,54 +21,32 @@ import (
 
 type heldListing struct {
 	sftp.FileLister
-	entered chan struct{}
-	release chan struct{}
-	once    sync.Once
+	gate atomic.Pointer[listingGate]
 }
 
+type listingGate struct {
+	entered chan struct{}
+	release chan struct{}
+	unblock sync.Once
+}
+
+func (l *heldListing) hold() *listingGate {
+	gate := &listingGate{entered: make(chan struct{}, 2), release: make(chan struct{})}
+	l.gate.Store(gate)
+	return gate
+}
+func (g *listingGate) close() { g.unblock.Do(func() { close(g.release) }) }
+
 func (l *heldListing) Filelist(r *sftp.Request) (sftp.ListerAt, error) {
-	if r.Method == "List" {
-		l.once.Do(func() { close(l.entered) })
-		<-l.release
+	if gate := l.gate.Load(); r.Method == "List" && gate != nil {
+		gate.entered <- struct{}{}
+		<-gate.release
 	}
 	return l.FileLister.Filelist(r)
 }
 
-// The fixture serializes command replies. Observe the foreground OPEN on the
-// wire while the poll is held, then release it; one SFTP stream cannot promise
-// progress past a server that blocks its own packet processing.
-type observedSFTP struct {
-	ssh.Channel
-	pending *bytes.Reader
-	opened  chan struct{}
-	once    sync.Once
-}
-
-func (c *observedSFTP) Read(p []byte) (int, error) {
-	if c.pending == nil || c.pending.Len() == 0 {
-		var header [4]byte
-		if _, err := io.ReadFull(c.Channel, header[:]); err != nil {
-			return 0, err
-		}
-		size := int(binary.BigEndian.Uint32(header[:]))
-		if size > 1<<20 {
-			return 0, errors.New("unexpected fixture packet size")
-		}
-		packet := make([]byte, 4+size)
-		copy(packet, header[:])
-		if _, err := io.ReadFull(c.Channel, packet[4:]); err != nil {
-			return 0, err
-		}
-		if size > 0 && packet[4] == 3 {
-			c.once.Do(func() { close(c.opened) })
-		}
-		c.pending = bytes.NewReader(packet)
-	}
-	return c.pending.Read(p)
-}
-
 // Exercise actual SFTP packets over both supported SSH backends, not just two
-// callbacks on a fake Session. The server observes both requests before releasing the held poll.
+// callbacks on a fake Session. The foreground transfer must finish before the held poll is released.
 func TestConnectionConcurrentTransport(t *testing.T) {
 	for _, backend := range []string{"embedded", "openssh"} {
 		t.Run(backend, func(t *testing.T) {
@@ -97,12 +73,13 @@ func TestConnectionConcurrentTransport(t *testing.T) {
 			}
 			defer listener.Close()
 			var tcp, authenticated, subsystems atomic.Int32
-			foregroundQueued := make(chan struct{})
+			owners := make(chan *ssh.ServerConn, 20)
+			var rejectChannel atomic.Bool
 			handlers := sftp.InMemHandler()
-			held := &heldListing{FileLister: handlers.FileList, entered: make(chan struct{}), release: make(chan struct{})}
+			held := &heldListing{FileLister: handlers.FileList}
+			gate := held.hold()
 			handlers.FileList = held
-			var release sync.Once
-			unblock := func() { release.Do(func() { close(held.release) }) }
+			unblock := gate.close
 			defer unblock()
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -129,6 +106,7 @@ func TestConnectionConcurrentTransport(t *testing.T) {
 							return
 						}
 						authenticated.Add(1)
+						owners <- server
 						defer server.Close()
 						go ssh.DiscardRequests(requests)
 						for incoming := range channels {
@@ -136,22 +114,29 @@ func TestConnectionConcurrentTransport(t *testing.T) {
 								incoming.Reject(ssh.UnknownChannelType, "session required")
 								continue
 							}
-							channel, requests, err := incoming.Accept()
-							if err != nil {
-								return
-							}
-							for request := range requests {
-								if request.Type != "subsystem" {
-									request.Reply(false, nil)
-									continue
+							go func(incoming ssh.NewChannel) {
+								channel, requests, err := incoming.Accept()
+								if err != nil {
+									return
 								}
-								subsystems.Add(1)
-								request.Reply(true, nil)
-								fs := sftp.NewRequestServer(&observedSFTP{Channel: channel, opened: foregroundQueued}, handlers)
-								fs.Serve()
-								fs.Close()
-								return
-							}
+								defer channel.Close()
+								for request := range requests {
+									if request.Type != "subsystem" {
+										request.Reply(false, nil)
+										continue
+									}
+									if rejectChannel.Swap(false) {
+										request.Reply(false, nil)
+										return
+									}
+									subsystems.Add(1)
+									request.Reply(true, nil)
+									fs := sftp.NewRequestServer(channel, handlers)
+									fs.Serve()
+									fs.Close()
+									return
+								}
+							}(incoming)
 						}
 					}()
 				}
@@ -181,7 +166,7 @@ func TestConnectionConcurrentTransport(t *testing.T) {
 			polled := make(chan error, 1)
 			go func() { polled <- c.Poll(ctx, func(s *Session) error { _, err := s.Client.ReadDir("/"); return err }) }()
 			select {
-			case <-held.entered:
+			case <-gate.entered:
 			case err := <-polled:
 				t.Fatal("poll did not enter server:", err)
 			case <-ctx.Done():
@@ -218,19 +203,17 @@ func TestConnectionConcurrentTransport(t *testing.T) {
 				})
 			}()
 			select {
-			case <-foregroundQueued:
 			case err := <-transferred:
-				t.Fatal("foreground request did not reach wire:", err)
+				if err != nil {
+					t.Fatal("foreground transfer while poll held:", err)
+				}
 			case <-ctx.Done():
-				t.Fatal("foreground queued behind poll instead of sharing client", ctx.Err())
+				t.Fatal("foreground blocked by background SFTP channel", ctx.Err())
 			}
-			unblock()
-			if err := <-transferred; err != nil {
-				t.Fatal("concurrent foreground bytes:", err)
+			if tcp.Load() != 1 || authenticated.Load() != 1 || subsystems.Load() != 2 {
+				t.Fatalf("expected one TCP/auth and two SFTP subsystems, got %d/%d/%d", tcp.Load(), authenticated.Load(), subsystems.Load())
 			}
-			if tcp.Load() != 1 || authenticated.Load() != 1 || subsystems.Load() != 1 {
-				t.Fatalf("expected one TCP/auth/SFTP subsystem, got %d/%d/%d", tcp.Load(), authenticated.Load(), subsystems.Load())
-			}
+			t.Logf("held poll foreground transfer: TCP=%d auth=%d SFTP=%d", tcp.Load(), authenticated.Load(), subsystems.Load())
 			unblock()
 			if err := <-polled; err != nil {
 				t.Fatal("poll failed after concurrent transfer:", err)
@@ -245,6 +228,131 @@ func TestConnectionConcurrentTransport(t *testing.T) {
 			if tcp.Load() != 1 || authenticated.Load() != 1 {
 				t.Fatal("file error retired transport")
 			}
+			// Closing only the poll's SFTP channel must preserve the foreground channel
+			// and authentication. Its next request gets a fresh channel, not a replay.
+			var failedChannel *sftp.Client
+			if err := c.Poll(ctx, func(s *Session) error { failedChannel = s.Client; return s.Client.Close() }); err != nil {
+				t.Fatal(err)
+			}
+			if err := c.Do(ctx, func(s *Session) error { _, err := s.Client.Stat("/parcel"); return err }); err != nil {
+				t.Fatal("poll channel failure killed foreground:", err)
+			}
+			if c.State() != "Connected" {
+				t.Fatal("channel failure reported owner disconnected")
+			}
+			c.mu.Lock()
+			failed := c.lease.channels[1]
+			c.mu.Unlock()
+			select {
+			case <-failed.done:
+			case <-ctx.Done():
+				t.Fatal("closed channel not observed")
+			}
+			rejectChannel.Store(true)
+			if err := c.Poll(ctx, func(s *Session) error { t.Error("failed channel setup ran action"); return nil }); err == nil {
+				t.Fatal("rejected subsystem setup succeeded")
+			}
+			if c.State() != "Connected" {
+				t.Fatal("subsystem rejection retired owner")
+			}
+			if err := c.Do(ctx, func(s *Session) error { _, err := s.Client.Stat("/parcel"); return err }); err != nil {
+				t.Fatal("subsystem rejection killed foreground:", err)
+			}
+			if err := c.Poll(ctx, func(s *Session) error {
+				if s.Client == failedChannel {
+					return errors.New("dead poll channel reused")
+				}
+				_, err := s.Client.Stat("/parcel")
+				return err
+			}); err != nil {
+				t.Fatal("replacement poll channel:", err)
+			}
+			if tcp.Load() != 1 || authenticated.Load() != 1 || subsystems.Load() != 3 {
+				t.Fatalf("channel repair changed ownership: %d/%d/%d", tcp.Load(), authenticated.Load(), subsystems.Load())
+			}
+
+			// An admitted cancellation still retires both channels. No foreground
+			// mutation is replayed, and a later request may establish a new owner.
+			gate = held.hold()
+			defer gate.close()
+			go func() { polled <- c.Poll(ctx, func(s *Session) error { _, err := s.Client.ReadDir("/"); return err }) }()
+			select {
+			case <-gate.entered:
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+			admitted, cancelAdmitted := context.WithCancel(ctx)
+			var actions atomic.Int32
+			err = c.Do(admitted, func(s *Session) error {
+				actions.Add(1)
+				cancelAdmitted()
+				<-s.ctx.Done()
+				_, err := s.Client.Stat("/parcel")
+				return err
+			})
+			if !errors.Is(err, context.Canceled) {
+				t.Fatal("admitted cancellation:", err)
+			}
+			select {
+			case err := <-polled:
+				if err == nil {
+					t.Fatal("poll survived global cancellation")
+				}
+			case <-ctx.Done():
+				t.Fatal("cancel did not release background I/O")
+			}
+			gate.close()
+			if actions.Load() != 1 || c.State() != "Disconnected" {
+				t.Fatal("cancel replayed action or retained owner", actions.Load(), c.State())
+			}
+			if err := c.Do(ctx, func(s *Session) error { _, err := s.Client.Stat("/parcel"); return err }); err != nil {
+				t.Fatal("reconnect after explicit cancel:", err)
+			}
+			if tcp.Load() != 2 || authenticated.Load() != 2 {
+				t.Fatal("later request did not reconnect exactly once")
+			}
+			<-owners // Retired first owner.
+			owner := <-owners
+			gate = held.hold()
+			defer gate.close()
+			go func() { polled <- c.Poll(ctx, func(s *Session) error { _, err := s.Client.ReadDir("/"); return err }) }()
+			select {
+			case <-gate.entered:
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+			go func() {
+				transferred <- c.Do(ctx, func(s *Session) error { _, err := s.Client.ReadDir("/"); return err })
+			}()
+			select {
+			case <-gate.entered:
+			case <-ctx.Done():
+				t.Fatal("foreground did not reach separate server handler")
+			}
+			owner.Close()
+			for _, done := range []chan error{polled, transferred} {
+				select {
+				case err := <-done:
+					if err == nil {
+						t.Fatal("owner death left operation successful")
+					}
+				case <-ctx.Done():
+					t.Fatal("owner death left blocked operation")
+				}
+			}
+			gate.close()
+			c.mu.Lock()
+			lease := c.lease
+			c.mu.Unlock()
+			select {
+			case <-lease.ctx.Done():
+			case <-ctx.Done():
+				t.Fatal("owner death not observed")
+			}
+			if c.State() != "Disconnected" {
+				t.Fatal("owner death reported connected")
+			}
+
 			if backend == "openssh" {
 				c.Close()
 				checkOpenSSHMasterLifecycle(t, ctx, identity, config, &tcp, &authenticated, &subsystems)

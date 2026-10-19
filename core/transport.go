@@ -29,6 +29,12 @@ type Session struct {
 	DiscoveryPath  string
 	ctx            context.Context
 	closeTransport func() error
+	channel        *sftpChannel
+	openSFTP       func() (*sftpChannel, error)
+	waitTransport  func() error
+	channelMu      sync.Mutex
+	channels       []*sftpChannel
+	channelsClosed bool
 	closeOnce      sync.Once
 	closeErr       error
 }
@@ -40,7 +46,17 @@ func remotePath(cwd, p string) string {
 	return path.Join(cwd, p)
 }
 func (s *Session) Close() error {
-	s.closeOnce.Do(func() { s.closeErr = s.closeTransport() })
+	s.closeOnce.Do(func() {
+		s.channelMu.Lock()
+		s.channelsClosed = true
+		channels := s.channels
+		s.channels = nil
+		s.channelMu.Unlock()
+		s.closeErr = s.closeTransport()
+		for _, channel := range channels {
+			channel.close()
+		}
+	})
 	return s.closeErr
 }
 func (s *Session) InboxDir() string { return path.Join(s.Root, "inbox", DeviceID(s.Identity.Public)) }
