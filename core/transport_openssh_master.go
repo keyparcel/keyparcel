@@ -124,7 +124,7 @@ func (m *opensshMaster) openSFTP() (*sftp.Client, func() error, error) {
 		in.Close()
 		return nil, nil, err
 	}
-	client, err := sftp.NewClientPipe(out, in, sftp.UseConcurrentReads(false), sftp.UseConcurrentWrites(false))
+	client, err := sftp.NewClientPipe(out, in, sftp.UseConcurrentReads(true), sftp.UseConcurrentWrites(true))
 	if err != nil {
 		cmd.Process.Kill()
 		cmd.Wait()

@@ -197,7 +197,7 @@ func openEmbeddedSFTP(owner *ssh.Client) (_ *sftpChannel, err error) {
 	if err = session.RequestSubsystem("sftp"); err != nil {
 		return nil, err
 	}
-	client, err := sftp.NewClientPipe(out, in, sftp.UseConcurrentReads(false), sftp.UseConcurrentWrites(false))
+	client, err := sftp.NewClientPipe(out, in, sftp.UseConcurrentReads(true), sftp.UseConcurrentWrites(true))
 	if err != nil {
 		return nil, err
 	}

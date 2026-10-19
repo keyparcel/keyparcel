@@ -16,13 +16,32 @@ type failure struct {
 	err          error
 }
 
+type ioHook func(method, path string, offset int64) error
+
 type Server struct {
 	Client   *sftp.Client
 	wire     net.Conn
 	handlers sftp.Handlers
 	fault    atomic.Pointer[failure]
+	ioHook   atomic.Pointer[ioHook]
 	mu       sync.Mutex
 	calls    map[string]int
+}
+
+// OnIO installs a concurrent read/write hook for deterministic transfer tests.
+func (s *Server) OnIO(fn func(method, path string, offset int64) error) {
+	hook := ioHook(fn)
+	s.ioHook.Store(&hook)
+}
+
+func (s *Server) checkIO(method, path string, offset int64) error {
+	if err := s.check(method, path); err != nil {
+		return err
+	}
+	if hook := s.ioHook.Load(); hook != nil {
+		return (*hook)(method, path, offset)
+	}
+	return nil
 }
 
 func (s *Server) Calls(method string) int {
@@ -49,7 +68,7 @@ func (s *Server) check(method, path string) error {
 	return nil
 }
 
-func New(t testing.TB) *Server {
+func New(t testing.TB, options ...sftp.ClientOption) *Server {
 	t.Helper()
 	clientWire, serverWire := net.Pipe()
 	s := &Server{wire: serverWire, handlers: sftp.InMemHandler(), calls: map[string]int{}}
@@ -59,7 +78,7 @@ func New(t testing.TB) *Server {
 	server := sftp.NewRequestServer(serverWire, handlers)
 	done := make(chan struct{})
 	go func() { defer close(done); server.Serve(); server.Close() }()
-	client, err := sftp.NewClientPipe(clientWire, &requestWriter{Conn: clientWire, server: s})
+	client, err := sftp.NewClientPipe(clientWire, &requestWriter{Conn: clientWire, server: s}, options...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +131,31 @@ func (s *Server) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 	if err := s.check("Create", r.Filepath); err != nil {
 		return nil, err
 	}
-	return s.handlers.FilePut.Filewrite(r)
+	w, err := s.handlers.FilePut.Filewrite(r)
+	if err != nil {
+		return nil, err
+	}
+	return &writer{WriterAt: w, server: s, path: r.Filepath}, nil
+}
+
+type writer struct {
+	io.WriterAt
+	server *Server
+	path   string
+}
+
+func (w *writer) WriteAt(p []byte, off int64) (int, error) {
+	if err := w.server.checkIO("Write", w.path, off); err != nil {
+		return 0, err
+	}
+	return w.WriterAt.WriteAt(p, off)
+}
+
+func (w *writer) Close() error {
+	if closer, ok := w.WriterAt.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
 }
 
 type reader struct {
@@ -122,7 +165,7 @@ type reader struct {
 }
 
 func (r *reader) ReadAt(p []byte, off int64) (int, error) {
-	if err := r.server.check("Read", r.path); err != nil {
+	if err := r.server.checkIO("Read", r.path, off); err != nil {
 		return 0, err
 	}
 	return r.ReaderAt.ReadAt(p, off)

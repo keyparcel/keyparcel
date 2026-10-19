@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -256,7 +257,11 @@ func (s *Session) SendWithDiscovery(c *Config, names []string, kind string, file
 				_, err = f.Seek(0, 0)
 				if err == nil {
 					writer := newProgressWriter(s.ctx, remote, Progress{Phase: "Uploading", Total: info.Size(), Item: i + 1, Items: len(keys)})
-					_, err = io.Copy(writer, f)
+					// Hide os.File.WriteTo so the copy uses our multi-packet buffer.
+					_, err = io.CopyBuffer(writer, struct{ io.Reader }{f}, make([]byte, sftpTransferBufferSize(info.Size())))
+				}
+				if err == nil && s.ctx != nil {
+					err = s.ctx.Err()
 				}
 				if err == nil {
 					phase(s.ctx, "Publishing…")
@@ -504,7 +509,8 @@ func (s *Session) receive(c *Config, prefix string, deliver func(Manifest, *os.F
 		var info os.FileInfo
 		f, info, err = s.openPackageInfo(id)
 		if err == nil {
-			err = verify(newProgressReader(s.ctx, f, Progress{Phase: "Downloading", Total: info.Size()}))
+			input := bufio.NewReaderSize(f, sftpTransferBufferSize(info.Size()))
+			err = verify(newProgressReader(s.ctx, input, Progress{Phase: "Downloading", Total: info.Size()}))
 			closeErr := f.Close()
 			if err == nil {
 				err = closeErr
@@ -513,6 +519,9 @@ func (s *Session) receive(c *Config, prefix string, deliver func(Manifest, *os.F
 	}
 	if err != nil {
 		return m, err
+	}
+	if s.ctx != nil && s.ctx.Err() != nil {
+		return m, s.ctx.Err()
 	}
 	phase(s.ctx, "Delivering…")
 	if err = deliver(m, staging); err != nil {
