@@ -358,6 +358,9 @@ private fun SettingsScreen(model: AppModel) {
                     label = { Text("Approved server public key") }, modifier = Modifier.fillMaxWidth().testTag("host-key"))
             }
         }
+        Text(Bridge.versionLabel(if (BuildConfig.FLAVOR == "production") BuildConfig.VERSION_NAME else "development", BuildConfig.SOURCE_REVISION),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 16.dp).testTag("build-version"))
     }
     if (accessMethodHelp) AlertDialog(onDismissRequest = { accessMethodHelp = false },
         title = { Text("Remote access method") },

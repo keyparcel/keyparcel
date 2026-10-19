@@ -408,6 +408,7 @@ UI *ui_new(uintptr_t handle, const char *icon) {
         ".keyparcel .key-material { font-family: monospace; font-size: 0.9em; }"
         ".keyparcel .confirmation { padding: 10px 16px; border-radius: 8px; }"
         ".keyparcel .connection-status { font-size: 1.2em; }"
+        ".keyparcel .build-version { font-size: 0.85em; }"
         ".keyparcel .connection-status.success { color: #287d38; }"
         ".keyparcel .connection-status.warning { color: #947000; }"
         ".keyparcel .connection-status.error { color: #c01c28; }"
@@ -544,6 +545,11 @@ UI *ui_new(uintptr_t handle, const char *icon) {
     gtk_widget_add_css_class(ssh_config,"dim-label");gtk_widget_add_css_class(ssh_config,"caption");
     gtk_widget_set_visible(ssh_config,FALSE);gtk_box_append(GTK_BOX(advanced_box),ssh_config);
     gtk_expander_set_child(GTK_EXPANDER(advanced), advanced_box); gtk_box_append(GTK_BOX(settings), advanced);
+    GtkWidget *version = label(""); remember(ui,"build-version",version);
+    gtk_label_set_selectable(GTK_LABEL(version),FALSE);
+    gtk_widget_add_css_class(version,"dim-label");gtk_widget_add_css_class(version,"build-version");
+    gtk_widget_set_vexpand(version,TRUE);gtk_widget_set_valign(version,GTK_ALIGN_END);
+    gtk_widget_set_margin_top(version,16);gtk_box_append(GTK_BOX(settings),version);
 
     GtkWidget *devices = page(ui, "devices", "Devices and approvals");
     GtkWidget *list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14); remember(ui, "device-list", list);

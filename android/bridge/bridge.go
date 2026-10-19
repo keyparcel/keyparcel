@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 	"keyparcel/core"
+	"keyparcel/internal/buildinfo"
 	"keyparcel/internal/display"
 )
 
@@ -33,6 +34,8 @@ func Initialize(cacheDir string) error {
 func GenerateIdentity() ([]byte, error) { return core.GenerateIdentity() }
 
 func FormatSize(bytes int64) string { return display.Size(bytes) }
+
+func VersionLabel(version, revision string) string { return buildinfo.Label(version, revision) }
 
 func PublicKey(privateKey []byte) (string, error) {
 	id, err := core.ParseIdentity(privateKey)

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"keyparcel/core"
+	"keyparcel/internal/buildinfo"
 )
 
 func identity(t *testing.T, dir string) string {
@@ -156,6 +157,9 @@ func TestGTKLifecycleAndImmediateCancellation(t *testing.T) {
 		t.Fatal("GTK initialization failed")
 	}
 	defer m.destroy()
+	if got := m.get("build-version"); got != buildinfo.SettingsLabel() {
+		t.Fatalf("native Settings version %q does not match build metadata", got)
+	}
 	checkGTKInformationPointerAndKeyboard(t, m)
 	testGTKStaleManualRefreshKeepsForegroundProgressAndCancel(t, m)
 	checkGTKTransferProgressOwnership(t, m)

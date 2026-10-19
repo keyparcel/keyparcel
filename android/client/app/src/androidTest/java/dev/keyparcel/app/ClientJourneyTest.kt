@@ -483,6 +483,10 @@ class ClientJourneyTest {
         compose.onNodeWithTag("host-discovery").assertDoesNotExist()
         compose.onNodeWithTag("host-key").assertDoesNotExist()
         screenshot("settings-simple")
+        check(BuildConfig.SOURCE_REVISION.matches(Regex("[0-9a-f]{40}(-dirty)?"))) { "Manual APK has no Git provenance" }
+        compose.onNodeWithTag("build-version").performScrollTo().assertIsDisplayed()
+            .assertTextEquals(Bridge.versionLabel("development", BuildConfig.SOURCE_REVISION))
+        screenshot("settings-version")
         compose.onNodeWithTag("advanced-settings").performScrollTo().performClick()
         check(value("host-root") == ".local/share/keyparcel") { "Advanced settings changed the storage path" }
         check(value("host-discovery") == ".ssh/authorized_keys") { "Advanced settings changed the discovery path" }
