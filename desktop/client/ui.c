@@ -9,7 +9,7 @@ struct UI {
     GtkApplication *app;
     GtkWindow *window;
     GtkStack *pages;
-    GtkWidget *body, *status, *spinner, *cancel, *picker, *progress, *confirmation;
+    GtkWidget *body, *status, *spinner, *transfer_bar, *cancel, *picker, *progress, *confirmation;
     GHashTable *fields, *inbox_rows, *device_rows, **current_rows, *next_rows;
     GtkWidget *row_box, *last_row;
     gboolean closed, destroyed, has_file, send_locked, updating_settings, resetting_enrollment;
@@ -395,6 +395,7 @@ UI *ui_new(uintptr_t handle, const char *icon) {
         ".keyparcel .page-title { font-size: 1.7em; font-weight: 700; margin-bottom: 2px; }"
         ".keyparcel .page { padding: 24px; }"
         ".keyparcel .header { padding: 20px 24px 16px; }"
+        ".keyparcel progressbar.transfer-progress trough { min-width: 72px; }"
         ".keyparcel .navigation { padding: 0 24px 16px; border-bottom: 1px solid alpha(@theme_fg_color, 0.12); }"
         ".keyparcel .navigation button { border-radius: 18px; padding: 7px 18px; }"
         ".keyparcel .navigation button:checked:not(:disabled), .keyparcel button.suggested-action:not(:disabled) { background-image: none; background-color: #103F4D; color: #F7F5F0; border-color: alpha(@theme_fg_color, 0.35); box-shadow: none; }"
@@ -454,10 +455,17 @@ UI *ui_new(uintptr_t handle, const char *icon) {
     gtk_stack_set_hhomogeneous(GTK_STACK(ui->progress), FALSE);
     GtkWidget *work = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     ui->spinner = gtk_spinner_new(); ui->status = label("");
+    gtk_label_set_wrap(GTK_LABEL(ui->status),FALSE);
+    ui->transfer_bar = gtk_progress_bar_new();
+    accessible(ui->transfer_bar,"Transfer progress");
+    gtk_widget_add_css_class(ui->transfer_bar,"transfer-progress");
+    gtk_widget_set_valign(ui->transfer_bar,GTK_ALIGN_CENTER);
+    gtk_widget_set_size_request(ui->transfer_bar,72,-1);
+    gtk_widget_set_visible(ui->transfer_bar,FALSE);
     accessible(ui->status,"Operation progress");
     ui->cancel = button(ui, "Cancel operation", "cancel", "");
     gtk_widget_add_css_class(ui->cancel, "flat");
-    gtk_box_append(GTK_BOX(work), ui->spinner); gtk_box_append(GTK_BOX(work), ui->status);
+    gtk_box_append(GTK_BOX(work), ui->transfer_bar); gtk_box_append(GTK_BOX(work), ui->spinner); gtk_box_append(GTK_BOX(work), ui->status);
     gtk_box_append(GTK_BOX(work), ui->cancel);
     gtk_stack_add_named(GTK_STACK(ui->progress), gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0), "idle");
     gtk_stack_add_named(GTK_STACK(ui->progress), work, "active");
@@ -638,18 +646,27 @@ void ui_confirmation(UI *ui,const char *text) {
     accessible(ui->confirmation,text);
     gtk_widget_set_visible(ui->confirmation,text[0]!=0);
 }
-void ui_progress(UI *ui,const char *text) {
+void ui_transfer_progress(UI *ui,const char *text,double fraction) {
     gtk_label_set_text(GTK_LABEL(ui->status),text);
     accessible(ui->status,"Operation progress");
     gtk_stack_set_visible_child_name(GTK_STACK(ui->progress),text[0] ? "active" : "idle");
-    if (text[0]) gtk_spinner_start(GTK_SPINNER(ui->spinner)); else gtk_spinner_stop(GTK_SPINNER(ui->spinner));
+    gboolean determinate = text[0] && fraction >= 0;
+    gtk_widget_set_visible(ui->transfer_bar,determinate);
+    gtk_widget_set_visible(ui->spinner,!determinate);
+    if (determinate) gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(ui->transfer_bar),fraction);
+    if (text[0] && !determinate) gtk_spinner_start(GTK_SPINNER(ui->spinner)); else gtk_spinner_stop(GTK_SPINNER(ui->spinner));
+}
+void ui_progress(UI *ui,const char *text) { ui_transfer_progress(ui,text,-1); }
+
+double ui_transfer_fraction(UI *ui) {
+    return gtk_widget_get_visible(ui->transfer_bar) ? gtk_progress_bar_get_fraction(GTK_PROGRESS_BAR(ui->transfer_bar)) : -1;
 }
 void ui_busy(UI *ui, int busy) {
     gtk_widget_set_sensitive(ui->body, !busy); gtk_widget_set_sensitive(ui->cancel, busy);
     if (!busy) ui_progress(ui,"");
 }
 const char *ui_operation_progress(UI *ui) {
-    if (!gtk_spinner_get_spinning(GTK_SPINNER(ui->spinner)) ||
+    if ((!gtk_spinner_get_spinning(GTK_SPINNER(ui->spinner)) && !gtk_widget_get_visible(ui->transfer_bar)) ||
         !gtk_widget_is_sensitive(ui->cancel) ||
         strcmp(gtk_stack_get_visible_child_name(GTK_STACK(ui->progress)), "active") != 0) return "";
     return gtk_label_get_text(GTK_LABEL(ui->status));

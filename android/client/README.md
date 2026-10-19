@@ -33,6 +33,11 @@ locally before delivery. See [remote access methods](../../docs/usage.md#remote-
 
 ## Send, receive and save
 
+Upload and download bars show encrypted parcel bytes. For multiple recipients,
+`1/3` identifies the current recipient; its percentage restarts for the next copy.
+100% transferred does not confirm delivery: publication, verification and saving
+continue with an indeterminate spinner until the existing result appears.
+
 Send feedback shows a short transfer ID when copies share one ID. Open its
 chevron for recipient outcomes, full IDs and Copy ID actions. Successful feedback
 closes after five seconds; opening details pauses dismissal. Incomplete or

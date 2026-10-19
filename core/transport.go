@@ -223,15 +223,21 @@ func (s *Session) SendWithDiscovery(c *Config, names []string, kind string, file
 		}
 		keys = append(keys, p)
 	}
+	phase(s.ctx, "Encrypting…")
 	f, m, err := NewPackage(s.ctx, s.Identity, keys, kind, filename, input)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
 	defer os.Remove(f.Name())
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
 	result := []Delivery{}
 	failed := false
 	for i, p := range keys {
+		phase(s.ctx, "Preparing upload…")
 		d := Delivery{Recipient: names[i], ID: m.ID}
 		dir := path.Join(s.Root, "inbox", DeviceID(p))
 		var attempt [8]byte
@@ -249,7 +255,11 @@ func (s *Session) SendWithDiscovery(c *Config, names []string, kind string, file
 			if err == nil {
 				_, err = f.Seek(0, 0)
 				if err == nil {
-					_, err = io.Copy(remote, f)
+					writer := newProgressWriter(s.ctx, remote, Progress{Phase: "Uploading", Total: info.Size(), Item: i + 1, Items: len(keys)})
+					_, err = io.Copy(writer, f)
+				}
+				if err == nil {
+					phase(s.ctx, "Publishing…")
 				}
 				closeErr := remote.Close()
 				if err == nil {
@@ -339,16 +349,23 @@ type Rejected struct {
 }
 
 func (s *Session) openPackage(id string) (*sftp.File, time.Time, error) {
-	p := path.Join(s.InboxDir(), id+".age")
-	info, err := s.Client.Lstat(p)
+	f, info, err := s.openPackageInfo(id)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
+	return f, info.ModTime().UTC(), nil
+}
+func (s *Session) openPackageInfo(id string) (*sftp.File, os.FileInfo, error) {
+	p := path.Join(s.InboxDir(), id+".age")
+	info, err := s.Client.Lstat(p)
+	if err != nil {
+		return nil, nil, err
+	}
 	if !info.Mode().IsRegular() {
-		return nil, time.Time{}, errors.New("package is not a regular file")
+		return nil, nil, errors.New("package is not a regular file")
 	}
 	f, err := s.Client.Open(p)
-	return f, info.ModTime().UTC(), err
+	return f, info, err
 }
 func (s *Session) ListSFTP(c *Config) ([]Item, []Rejected, []string, error) {
 	ids, err := s.IDs()
@@ -461,6 +478,7 @@ func (s *Session) receive(c *Config, prefix string, deliver func(Manifest, *os.F
 			return err
 		}
 		staging, err = VerifyContent(plain, m)
+		phase(s.ctx, "Verifying…")
 		return err
 	}
 	defer func() {
@@ -483,9 +501,10 @@ func (s *Session) receive(c *Config, prefix string, deliver func(Manifest, *os.F
 		err = s.readCommand(s.ctx, path.Join(s.InboxDir(), id+".age"), false, verify)
 	} else {
 		var f *sftp.File
-		f, _, err = s.openPackage(id)
+		var info os.FileInfo
+		f, info, err = s.openPackageInfo(id)
 		if err == nil {
-			err = verify(f)
+			err = verify(newProgressReader(s.ctx, f, Progress{Phase: "Downloading", Total: info.Size()}))
 			closeErr := f.Close()
 			if err == nil {
 				err = closeErr
@@ -495,6 +514,7 @@ func (s *Session) receive(c *Config, prefix string, deliver func(Manifest, *os.F
 	if err != nil {
 		return m, err
 	}
+	phase(s.ctx, "Delivering…")
 	if err = deliver(m, staging); err != nil {
 		return m, fmt.Errorf("delivery failed; remote package retained: %w", err)
 	}

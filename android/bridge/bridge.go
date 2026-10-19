@@ -183,6 +183,16 @@ func NewPersistentClientWithAccessMethod(privateKey []byte, address string, port
 // Request settings cannot be changed; construct another snapshot instead.
 // Call CancelRequest when finished to release its context.
 func (c *Client) NewRequest(peersJSON string, timeoutMillis int, background bool) (*Client, error) {
+	return c.NewRequestWithProgress(peersJSON, timeoutMillis, background, nil)
+}
+
+// ProgressObserver receives bounded encrypted-byte updates on the request thread.
+type ProgressObserver interface {
+	Update(phase string, transferred, total int64, item, items int)
+}
+
+// NewRequestWithProgress binds the observer once to this immutable request.
+func (c *Client) NewRequestWithProgress(peersJSON string, timeoutMillis int, background bool, observer ProgressObserver) (*Client, error) {
 	if c.connection == nil {
 		return nil, errors.New("request snapshots require a persistent client")
 	}
@@ -194,6 +204,9 @@ func (c *Client) NewRequest(peersJSON string, timeoutMillis int, background bool
 		return nil, err
 	}
 	request.ctx, request.cancel = context.WithCancel(c.ctx)
+	if observer != nil {
+		request.ctx = core.WithProgress(request.ctx, func(p core.Progress) { observer.Update(p.Phase, p.Bytes, p.Total, p.Item, p.Items) })
+	}
 	request.immutable = true
 	return request, nil
 }

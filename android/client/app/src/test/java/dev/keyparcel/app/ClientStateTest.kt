@@ -4,6 +4,25 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ClientStateTest {
+    @Test fun queuedTransferProgressRejectsFinishedNewerAndChangedContexts() {
+        val settings = Settings(Host("server",22,"user","pin"),mapOf("peer" to "key"))
+        val owner = TransferProgressContext(7,settings,3)
+        assertTrue(owner.matches(7,settings,3,true,true))
+        assertFalse(owner.matches(8,settings,3,true,true))
+        assertFalse(owner.matches(7,settings,4,true,true))
+        assertFalse(owner.matches(7,settings.copy(peers=emptyMap()),3,true,true))
+        assertFalse(owner.matches(7,settings,3,false,true))
+        assertFalse(owner.matches(7,settings,3,true,false))
+    }
+
+    @Test fun transferBytesAreNotDeliveryAndBatchPercentagesArePerRecipient() {
+        assertEquals(TransferProgress("Uploading 1/3 · 25%", 0.25f), transferProgress("Uploading",25,100,1,3))
+        assertEquals(TransferProgress("Uploading 2/3 · 0%", 0f), transferProgress("Uploading",0,100,2,3))
+        assertEquals(TransferProgress("Downloading · 100%", 1f), transferProgress("Downloading",110,100,0,0))
+        assertEquals(TransferProgress("Verifying…", null), transferProgress("Verifying…",0,0,0,0))
+        assertEquals(TransferProgress("Downloading", null), transferProgress("Downloading",20,-1,0,0))
+    }
+
     @Test fun refreshCannotRestoreRowsAfterDeleteOrTrustChanges() {
         val original = Settings(Host("server", 22, "user", "pin"), mapOf("bob" to "approved"))
         val poll = RefreshContext(original, 4, 10)

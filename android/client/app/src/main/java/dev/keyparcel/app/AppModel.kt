@@ -12,10 +12,13 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.keyparcel.bridge.Bridge
 import dev.keyparcel.bridge.Client
+import dev.keyparcel.bridge.ProgressObserver
 import dev.keyparcel.bridge.Delivery
 import dev.keyparcel.storage.IdentityStore
 import java.io.File
 import java.nio.channels.Channels
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -45,6 +48,10 @@ data class FileSaveRequest(val item: InboxItem, val settings: Settings, val iden
 }
 data class SavedFile(val request: FileSaveRequest, val name: String) {
     val id get() = request.item.id
+}
+
+private class ProgressOwner(val sequence: Long) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<ProgressOwner>
 }
 
 class AppModel(application: Application) : AndroidViewModel(application) {
@@ -92,6 +99,8 @@ class AppModel(application: Application) : AndroidViewModel(application) {
     var savedFile by mutableStateOf<SavedFile?>(null); private set
     var pendingDelete by mutableStateOf<InboxDeleteRequest?>(null); private set
     var progress by mutableStateOf<String?>(null); private set
+    var transferFraction by mutableStateOf<Float?>(null); private set
+    private var operationSequence = 0L
     private data class PendingSend(val context: SendContext, val text: String, val file: File?, val filename: String, val report: SendReport)
     private var pendingSend by mutableStateOf<PendingSend?>(null)
     var sendFeedback by mutableStateOf<SendFeedback?>(null); private set
@@ -425,10 +434,11 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         work("Saving…", {
             require(request.matches(settings, publicKey)) { "The server or approvals changed; save the parcel again" }
             val operation = currentCoroutineContext()
+            val owner = operation[ProgressOwner]?.sequence
             val resolver = getApplication<Application>().contentResolver
             var name = request.filename
             fun write(input: java.io.InputStream, size: Long) {
-                reportProgress("Saving file…")
+                postProgress("Saving file…", null, owner) { operation.isActive && request.matches(settings, publicKey) }
                 try {
                     runBlocking(operation) {
                         withDocumentAccess(documentTimeoutMillis) { access ->
@@ -571,7 +581,15 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         draft = draft.copy(recipient = "", additionalRecipients = emptyList())
     }
 
-    private fun reportProgress(message: String) { mainHandler.post { if (busy) progress = message } }
+    private suspend fun reportProgress(message: String) {
+        val context = currentCoroutineContext()
+        postProgress(message, null, context[ProgressOwner]?.sequence) { context.isActive }
+    }
+    private fun postProgress(message: String, fraction: Float?, owner: Long?, valid: () -> Boolean = { true }) {
+        mainHandler.post {
+            if (busy && foreground && owner == operationSequence && valid()) { progress = message; transferFraction = fraction }
+        }
+    }
 
     fun beginInboxDelete(item: InboxItem) {
         if (busy || pendingDelete != null) return
@@ -669,11 +687,24 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         currentCoroutineContext().ensureActive()
         val peers = JSONObject(snapshot.peers.toMap()).toString()
         val timeout = requestTimeoutMillis
+        val owner = currentCoroutineContext()[ProgressOwner]?.sequence
+        val requestContext = currentCoroutineContext()
+
         val client = synchronized(sessionLock) {
             require(foreground) { "Connection suspended while the app is in the background" }
             // A request captured before a profile change must not resurrect it.
             require(settings == snapshot && settings.host == host) { "The server changed; try the operation again" }
             val epoch = sessionEpoch
+            val progressContext = owner?.let { TransferProgressContext(it, snapshot, epoch) }
+            val observer = if (background || owner == null) null else object : ProgressObserver {
+                override fun update(phase: String, transferred: Long, total: Long, item: Long, items: Long) {
+                    if (!requestContext.isActive) return
+                    val update = transferProgress(phase, transferred, total, item, items)
+                    postProgress(update.text, update.fraction, owner) {
+                        requestContext.isActive && progressContext?.matches(operationSequence, settings, sessionEpoch, foreground, busy) == true
+                    }
+                }
+            }
             var connection = connected
             if (connection == null || connection.host != host || connection.epoch != epoch) {
                 connection?.client?.close()
@@ -684,7 +715,7 @@ class AppModel(application: Application) : AndroidViewModel(application) {
                 connection = Connected(host, owner, epoch)
                 connected = connection
             }
-            connection.client.newRequest(peers, timeout, background)
+            connection.client.newRequestWithProgress(peers, timeout, background, observer)
         }
         try {
             currentCoroutineContext().ensureActive()
@@ -702,12 +733,13 @@ class AppModel(application: Application) : AndroidViewModel(application) {
         pendingRefresh = false
         dataRevision++
         confirmationJob?.cancel(); confirmation = null
-        busy = true; error = null; progress = label
+        val sequence = ++operationSequence
+        busy = true; error = null; progress = label; transferFraction = null
         viewModelScope.launch {
-            try { success(withContext(Dispatchers.IO) { task() }) }
+            try { success(withContext(Dispatchers.IO + ProgressOwner(sequence)) { task() }) }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { error = failure.message ?: failure.toString() }
-            finally { busy = false; progress = null; retry = RefreshRetry(); startRefresh() }
+            finally { busy = false; progress = null; transferFraction = null; retry = RefreshRetry(); startRefresh() }
         }
     }
 

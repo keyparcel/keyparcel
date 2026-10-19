@@ -88,7 +88,7 @@ func (s *Session) readCommand(ctx context.Context, path string, discovery bool, 
 			return errors.New("invalid encrypted parcel length")
 		}
 		bounded := &io.LimitedReader{R: r, N: n}
-		if err = consume(bounded); err != nil {
+		if err = consume(newProgressReader(ctx, bounded, Progress{Phase: "Downloading", Total: n})); err != nil {
 			return err
 		}
 		if bounded.N != 0 {

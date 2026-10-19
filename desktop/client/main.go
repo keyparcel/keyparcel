@@ -183,6 +183,8 @@ func (m *model) run(notice string, work func(context.Context) (any, error), done
 	sequence := m.sequence
 	ctx, cancel := context.WithTimeout(m.ctx, m.options.timeout)
 	m.active = cancel
+	version := m.profileVersion
+	ctx = core.WithProgress(ctx, func(p core.Progress) { m.queueProgress(ctx, sequence, version, p) })
 	C.ui_busy(m.ui, 1)
 	m.confirm("")
 	m.message("")
@@ -193,7 +195,14 @@ func (m *model) run(notice string, work func(context.Context) (any, error), done
 		err   error
 	}
 	results := make(chan result, 1)
-	go func() { defer func() { <-m.workers }(); value, err := work(ctx); results <- result{value, err} }()
+	// Keep the native UI alive while a worker can still enqueue progress after
+	// timeout/shutdown. Release on the GTK thread, just like result callbacks.
+	C.ui_ref(m.ui)
+	go func() {
+		defer func() { C.ui_post(m.ui, C.uintptr_t(cgo.NewHandle(func() {}))); <-m.workers }()
+		value, err := work(ctx)
+		results <- result{value, err}
+	}()
 	go func() {
 		var outcome result
 		select {
