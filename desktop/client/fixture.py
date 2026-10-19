@@ -45,16 +45,20 @@ class Fixture:
         self.directory = Path(directory).resolve()
         self.state = self.directory / "fixture.json"
         self.binary = Path("/usr/bin/keyparcel") if os.environ.get("KEYPARCEL_INSTALLED_IMAGE") else CLIENT / "build/keyparcel"
-        self.container = self.client = self.network = None
+        self.container = self.client = self.network = self.driver = None
         self.hostname, self.port = "inbox", "22"
         self.attached = os.environ.get("KEYPARCEL_GTK_ATTACHED") == str(self.directory)
 
     def load(self):
         state = json.loads(self.state.read_text())
         self.container, self.client, self.network = (state[k] for k in ("container", "client", "network"))
+        self.driver = state.get("driver")
 
     def save(self):
-        self.state.write_text(json.dumps({"container": self.container, "client": self.client, "network": self.network}))
+        state = {"container": self.container, "client": self.client, "network": self.network}
+        if self.driver:
+            state["driver"] = self.driver
+        self.state.write_text(json.dumps(state))
 
     def start(self, fresh=False):
         if self.attached:
@@ -64,12 +68,15 @@ class Fixture:
         if self.state.exists():
             self.load()
             self.check_owner()
-            command(DOCKER + ["start", self.container, self.client])
+            command(DOCKER + ["start", self.container, self.client, *([self.driver] if self.driver else [])])
         else:
             stem = f"keyparcel-gtk-{os.getpid()}-{time.time_ns()}"
             label = "dev.keyparcel.gtk-owner=" + str(self.directory)
             # Docker may create a resource before its interrupted command returns.
             self.network, self.container, self.client = stem, stem + "-server", stem + "-client"
+            driver_image = os.environ.get("KEYPARCEL_GTK_DRIVER_IMAGE")
+            if driver_image:
+                self.driver = stem + "-driver"
             self.save()
             try:
                 command(DOCKER + ["network", "create", "--internal", "--label", label, self.network])
@@ -79,6 +86,9 @@ class Fixture:
                     "syslogd -O /var/log/sftp.log && { test -f /etc/ssh/ssh_host_ed25519_key || ssh-keygen -q -t ed25519 -N '' -f /etc/ssh/ssh_host_ed25519_key; } && exec /usr/sbin/sshd -D -e"])
                 command(DOCKER + ["run", "-d", "--init", "--name", self.client,
                     "--label", label, "--network", stem, *client_args(self.directory), *getattr(self, "extra_mounts", []), IMAGE])
+                if self.driver:
+                    command(DOCKER + ["run", "-d", "--init", "--name", self.driver,
+                        "--label", label, "--network", stem, *client_args(self.directory), driver_image])
             except BaseException:
                 self.down()
                 raise
@@ -126,7 +136,7 @@ class Fixture:
 
     def check_owner(self, missing=False):
         owned = set()
-        for kind, resource in (("container", self.client), ("container", self.container), ("network", self.network)):
+        for kind, resource in (("container", self.driver), ("container", self.client), ("container", self.container), ("network", self.network)):
             if not resource:
                 continue
             label = '.Labels' if kind == "network" else '.Config.Labels'
@@ -143,7 +153,7 @@ class Fixture:
             return
         self.load()
         owned = self.check_owner(missing=True)
-        for resource in (self.client, self.container):
+        for resource in (self.driver, self.client, self.container):
             if resource in owned:
                 command(DOCKER + ["rm", "-f", resource])
         if self.network in owned:
@@ -159,7 +169,12 @@ class Fixture:
 
     def cli(self, name, action, *args, **kwargs):
         path = self.directory / name
-        return self.local([self.binary, action, "--config", path / "config.json", "--ssh-config", path / "ssh_config", *args], **kwargs)
+        command_args = [self.binary, action, "--config", path / "config.json", "--ssh-config", path / "ssh_config", *args]
+        if self.driver:
+            if self.attached:
+                return self.control("cli", [name, action, base64.b64encode(kwargs.get("input", b"")).decode(), *args])
+            return command(DOCKER + ["exec", "-i", self.driver, *map(str, command_args)], **kwargs)
+        return self.local(command_args, **kwargs)
 
     def public(self, name):
         return (self.directory / name / "id_ed25519.pub").read_text().strip()
@@ -172,10 +187,10 @@ class Fixture:
         return "/home/parcel/.local/share/keyparcel/inbox/" + hashlib.sha256(key).hexdigest()
 
     def control(self, action, args=()):
-        if action not in ("exec", "pause", "unpause"):
+        if action not in ("exec", "pause", "unpause", "cli"):
             raise ValueError("Unknown fixture operation")
         if self.attached:
-            # Only owned-server administration crosses the host runner's stdio.
+            # Only owned-server administration and the independent CLI driver cross stdio.
             print(CONTROL + json.dumps([action, list(map(str, args))]), flush=True)
             response = json.loads(sys.stdin.readline())
             if "error" in response:

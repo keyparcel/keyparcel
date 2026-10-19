@@ -477,6 +477,8 @@ try:
     assert state["peers"]["bob"].split()[:2] == fixture.public("peer").split()[:2], "GUI peer approval differs from CLI config"
     message = "hello 世界 — café\n\tline two\n"
     if os.environ.get("KEYPARCEL_INSTALLED_IMAGE"):
+        assert not Path("/usr/bin/keyparcel").exists(), "GTK-only journey contains the CLI binary"
+        assert fixture.driver, "GTK-only journey lacks its independent CLI driver"
         id = peer_send(message)
         verify_received_text(id, message)
         click("Remove & close")

@@ -43,6 +43,11 @@ def prepare():
 
 def handle_control(fixture, line):
     action, args = json.loads(line[len(CONTROL):])
+    if action == "cli" and isinstance(args, list) and len(args) >= 3 and all(isinstance(a, str) for a in args):
+        name, command_name, stdin, *flags = args
+        if not fixture.driver or name not in ("desktop", "peer"):
+            raise ValueError("Unknown independent CLI fixture")
+        return fixture.cli(name, command_name, *flags, input=base64.b64decode(stdin, validate=True))
     if action not in ("exec", "pause", "unpause") or not isinstance(args, list) or not all(isinstance(a, str) for a in args):
         raise ValueError("Invalid owned-server test operation")
     if action != "exec" and args:

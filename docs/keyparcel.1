@@ -1,0 +1,177 @@
+.TH KEYPARCEL 1 "2026-10-19" "keyparcel" "User Commands"
+.SH NAME
+keyparcel \- explicitly share encrypted text and files through your SSH server
+.SH SYNOPSIS
+.B keyparcel
+.I command
+.RI [ options ]
+.br
+.B keyparcel help
+.br
+.B keyparcel version
+.SH DESCRIPTION
+Devices use the same SSH account as an inbox for encrypted, signed parcels.
+Only the clients need keyparcel installed; the server needs SSH/SFTP.
+There is no continuous clipboard monitoring or synchronization.
+The server can observe encrypted sizes, timing and recipient inboxes.
+.PP
+Each device needs its own readable, unencrypted Ed25519 or RSA private key
+(RSA at least 2048 bits). Passphrase-protected keys, certificates and
+hardware/agent-only identities are not supported.
+Enroll the public key on the server separately; setup does not upload it.
+Compare the server fingerprint and each peer fingerprint through a trusted
+channel before approval. SSH key comments are not proof of identity.
+.SH COMMANDS
+.TP
+.B version
+Print build version and source revision. Also available as \fB\-\-version\fR.
+.TP
+.B help
+Print command usage. Also available as \fB\-\-help\fR or with no arguments.
+.TP
+.B setup \-\-host TARGET [\-\-identity PATH] [\-\-default] [\-\-root PATH] [\-\-discovery PATH]
+Save a profile for user@host or an OpenSSH alias. The identity defaults to
+\fI~/.ssh/id_ed25519\fR; it is not generated. \fB\-\-default\fR selects the
+profile for commands without \fB\-\-host\fR. Remote paths default to
+\fI.local/share/keyparcel\fR and \fI.ssh/authorized_keys\fR, relative to the
+server account's home. All devices must use the same paths.
+.TP
+.B devices [\-\-json]
+Discover enrolled devices and show their fingerprints and local approval state.
+Discovery alone does not approve a peer.
+.TP
+.B trust FINGERPRINT \-\-name NAME
+Approve a currently discovered key under a unique local name after independently
+checking its fingerprint. Explicitly untrust an old name before replacing it.
+.TP
+.B untrust NAME
+Remove the local peer approval. This does not revoke the key on the SSH server.
+.TP
+.B send \-\-to NAME [\-\-to NAME ...] (\-\-text TEXT | \-\-stdin | \-\-file PATH)
+Send one parcel to each approved recipient. Select exactly one input:
+literal text, standard input as text, or a regular file. Whitespace and empty
+input are preserved. Files retain their original basename in encrypted metadata.
+Partial delivery can succeed for some recipients while the command fails.
+Check recipient outcomes; an unconfirmed delivery must be checked before resending.
+.TP
+.B inbox [\-\-json | \-\-watch [\-\-interval DURATION]]
+List parcels whose metadata verifies for the current identity and approvals.
+Rejected packages are reported as errors. Uploaded times are approximate,
+unverified server file times, displayed newest first in the local timezone.
+\fB\-\-watch\fR polls using a persistent connection; the positive interval
+defaults to \fB2s\fR. Watch and JSON output cannot be combined.
+.TP
+.B receive ID (\-\-stdout | \-\-copy | \-\-save\-to PATH) [\-\-keep] [\-\-overwrite]
+Verify the sender signature, recipient, transfer ID, complete content hash and
+length before delivering any content. IDs are 32 lowercase hexadecimal characters;
+a unique prefix of 8 through 31 characters is also accepted.
+Choose exactly one output action, described below.
+.TP
+.B delete ID [ID ...]
+Delete this identity's remote inbox copies without downloading or decrypting them.
+Unique ID prefixes are accepted. Other recipients' copies and local saved files
+are unaffected. The command continues past individual failures and reports a count.
+.TP
+.B delete \-\-all
+Delete all completed parcel filenames in the current identity's inbox on the
+selected host. Cannot be combined with IDs; this is not a sender-trust filter.
+.TP
+.B bench [\-\-rounds N]
+Run diagnostic transfer measurements against the selected server, including
+a temporary self-addressed parcel that is removed after successful receipt.
+The default is 20 rounds; the supported range is 1 through 1000.
+.SH COMMON OPTIONS
+Operational commands accept the following options; setup saves its profile values.
+.TP
+.B \-\-config PATH
+Use a different local JSON configuration file.
+.TP
+.B \-\-host TARGET
+Select a saved SSH profile, or the target to save with setup.
+.TP
+.B \-\-ssh\-config PATH
+Use an explicit OpenSSH configuration file for remote operations.
+Otherwise normal OpenSSH configuration is used. Interactive first connections
+use OpenSSH's host-key prompt and known_hosts; changed keys are rejected.
+Unattended commands and completion require an already trusted server key.
+.TP
+.B \-\-access\-method auto|ssh|sftp
+Override remote read access for this invocation, or save the choice with setup.
+The default/saved \fBauto\fR and explicit \fBssh\fR require supported Unix
+commands in the CLI. If unavailable, use \fB\-\-access\-method sftp\fR.
+\fBsftp\fR uses only SFTP. GUI Automatic instead probes once per connection
+and falls back to SFTP when command access is unsupported.
+Uploads and mutations remain on SFTP for every choice; there is no retry of a
+partially started read through another method.
+.SH RECEIVE OUTPUT AND RETENTION
+.TP
+.B \-\-stdout
+Write the full verified original bytes to standard output, including file parcels
+and binary data. There is no GUI preview or clipboard size limit on this action.
+.TP
+.B \-\-copy
+Copy full verified UTF-8 text without NUL bytes, including eligible file parcels,
+up to and including 16 MiB (16,777,216 bytes). Linux requires \fBwl-copy\fR
+or \fBxclip\fR; macOS uses its system clipboard runtime. Validation or clipboard
+failure retains the remote parcel. Rich-text formats are not interpreted.
+.TP
+.B \-\-save\-to PATH
+Save complete verified bytes to an exact filename or an existing directory.
+Directory saves use the original filename for files or \fITRANSFER-ID.txt\fR
+for text. Parent directories must exist. There is no clipboard or preview size cap.
+.TP
+.B \-\-overwrite
+With \fB\-\-save\-to\fR, replace an existing regular output file atomically.
+Symlink and nonregular outputs are rejected. Without this option an existing
+output file is not replaced.
+.TP
+.B \-\-keep
+Retain the remote copy after successful receipt. Otherwise CLI receive removes it
+only after successful output. Verification/output failure retains it; a failure
+removing the remote copy can occur after local output has already succeeded.
+GUI receive/save retains the remote copy until explicit removal.
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/keyparcel/config.json
+Linux configuration when XDG_CONFIG_HOME is set; otherwise
+\fI~/.config/keyparcel/config.json\fR. The CLI and Linux GTK client share profiles
+and local peer approvals.
+.TP
+.I ~/Library/Application Support/keyparcel/config.json
+macOS default CLI configuration location.
+.TP
+.I ~/.ssh/config, ~/.ssh/known_hosts
+Normal OpenSSH configuration and server trust stores, subject to OpenSSH options.
+.PP
+Private identity files are user-managed, not package-owned. Losing an identity can
+make existing parcels permanently unreadable; there is no identity recovery.
+Removing packages does not remove user configuration, identities or saved files.
+.SH EXAMPLES
+Create a dedicated identity; enroll its .pub file separately on the server:
+.PP
+.nf
+ssh-keygen -t ed25519 -N '' -f ~/.ssh/keyparcel -C laptop
+keyparcel setup --host parcel-vps --identity ~/.ssh/keyparcel --default
+keyparcel devices
+keyparcel trust SHA256:FINGERPRINT --name phone
+keyparcel send --to phone --text 'hello'
+keyparcel send --to phone --file ./report.pdf
+keyparcel inbox
+keyparcel receive TRANSFER-ID --save-to ~/Downloads --keep
+keyparcel receive TRANSFER-ID --stdout > parcel.bin
+keyparcel receive TRANSFER-ID --copy
+keyparcel delete TRANSFER-ID
+.fi
+.SH EXIT STATUS
+Zero indicates success (including help and version output).
+One indicates an application, validation or operational error. The command can
+have produced output or completed some recipient operations before an error;
+inspect its diagnostics before retrying. No finer application exit-code scheme
+is defined. Signal termination may have the shell's normal signal status.
+.SH SEE ALSO
+.BR ssh (1),
+.BR ssh-keygen (1),
+.BR sftp (1)
+.PP
+Installation, enrollment and security documentation:
+https://github.com/keyparcel/keyparcel

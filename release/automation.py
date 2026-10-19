@@ -44,8 +44,10 @@ def digest(path):
 def target_files(version):
     pkg = package_version(version)
     return {
-        'ubuntu24.04-amd64': [f'keyparcel_{pkg}-1_amd64.deb', f'keyparcel-{version}-ubuntu24.04-amd64.tar.gz'],
-        'fedora44-x86_64': [f'keyparcel-{pkg}-1.x86_64.rpm', f'keyparcel-{version}-fedora44-x86_64.tar.gz'],
+        'ubuntu24.04-amd64': [name for client in ('cli', 'gtk') for name in
+                              (f'keyparcel-{client}_{pkg}-1_amd64.deb', f'keyparcel-{client}-{version}-ubuntu24.04-amd64.tar.gz')],
+        'fedora44-x86_64': [name for client in ('cli', 'gtk') for name in
+                            (f'keyparcel-{client}-{pkg}-1.x86_64.rpm', f'keyparcel-{client}-{version}-fedora44-x86_64.tar.gz')],
         'android-arm64': [f'keyparcel-{version}-arm64.apk', 'android-signing-certificate.txt'],
     }
 
@@ -141,10 +143,10 @@ def publish(api, tag, revision, assets):
             break
         page += 1
     if release is None:
-        body = f'''Linux amd64 CLI + GTK: DEB for Ubuntu 24.04 / Debian 13; RPM for Fedora 44. Archives need the matching baseline libraries.
+        body = f'''Linux amd64: independent keyparcel-cli and keyparcel-gtk packages and archives. DEB for Ubuntu 24.04 / Debian 13; RPM for Fedora 44. CLI is headless; GTK does not require the CLI package. GTK archives need the matching baseline libraries.
 Android ARM64 APK: Android 8 or newer; first physical ARM installation still requires manual validation.
 
-Install with `sudo apt install ./keyparcel_*.deb`, `sudo dnf install ./keyparcel-*.rpm`, or open the APK on Android. Archive installation and enrollment: https://github.com/keyparcel/keyparcel/blob/{tag}/release/INSTALLED.md
+Remove an older combined `keyparcel` package first. Install your chosen client with `sudo apt install ./keyparcel-cli_*.deb` or `./keyparcel-gtk_*.deb`, `sudo dnf install ./keyparcel-cli-*.rpm` or `./keyparcel-gtk-*.rpm`, or open the APK on Android. Archive installation and enrollment: https://github.com/keyparcel/keyparcel/blob/{tag}/release/INSTALLED.md
 Verify downloaded files with `sha256sum -c SHA256SUMS`. The Android certificate fingerprint is included.
 
 Source: `{revision}`. Draft only: inspect artifacts and test a physical ARM device before manually publishing. No ARM runtime or additional distro support is implied.'''

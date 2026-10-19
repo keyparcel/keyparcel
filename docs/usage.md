@@ -171,3 +171,6 @@ without reading or verifying their contents. A suggestion can be invalid or from
 unapproved sender; actual receive still fully verifies it before delivery. Remote
 completion has a five-second query deadline, does not prompt, and returns no
 suggestions when discovery or SSH fails. It uses no cache.
+
+The CLI package also installs the handwritten [`keyparcel(1)` manual](keyparcel.1);
+run `man keyparcel` for commands, options, files and retention behavior.

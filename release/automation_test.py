@@ -46,16 +46,24 @@ def draft(**changes):
 
 
 def release_assets(root, version='1.2.3-rc.1'):
-    names = [f'keyparcel_{version}-1_amd64.deb', f'keyparcel-{version}-1.x86_64.rpm',
-             f'keyparcel-{version}-ubuntu24.04-amd64.tar.gz', f'keyparcel-{version}-fedora44-x86_64.tar.gz',
-             f'keyparcel-{version}-arm64.apk', 'android-signing-certificate.txt',
-             'build-info-android-arm64.json', 'build-info-ubuntu24.04-amd64.json', 'build-info-fedora44-x86_64.json']
+    names = [name.replace('~', '-') for files in automation.target_files(version).values() for name in files]
+    names += ['build-info-' + target + '.json' for target in automation.target_files(version)]
     for name in names:
         (root / name).write_bytes(name.encode())
     (root / 'SHA256SUMS').write_text(''.join(f'{automation.digest(root / name)}  {name}\n' for name in sorted(names)))
 
 
 class Automation(unittest.TestCase):
+    def test_split_linux_asset_names_are_explicit(self):
+        names = {name for files in automation.target_files('1.2.3-rc.1').values() for name in files}
+        self.assertEqual(names, {
+            'keyparcel-cli_1.2.3~rc.1-1_amd64.deb', 'keyparcel-gtk_1.2.3~rc.1-1_amd64.deb',
+            'keyparcel-cli-1.2.3~rc.1-1.x86_64.rpm', 'keyparcel-gtk-1.2.3~rc.1-1.x86_64.rpm',
+            'keyparcel-cli-1.2.3-rc.1-ubuntu24.04-amd64.tar.gz', 'keyparcel-gtk-1.2.3-rc.1-ubuntu24.04-amd64.tar.gz',
+            'keyparcel-cli-1.2.3-rc.1-fedora44-x86_64.tar.gz', 'keyparcel-gtk-1.2.3-rc.1-fedora44-x86_64.tar.gz',
+            'keyparcel-1.2.3-rc.1-arm64.apk', 'android-signing-certificate.txt',
+        })
+
     def test_tags_match_exact_checked_out_version_and_source(self):
         for tag in ('1.2.3', 'v01.2.3', 'v1.2.3-rc', 'v1.2.3+build', 'v1.2.3\n', 'v1.2.3;echo'):
             with self.assertRaises(ValueError, msg=tag):
@@ -86,27 +94,23 @@ class Automation(unittest.TestCase):
     def test_asset_allowlist_checksums_and_provenance(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            for target, names in {
-                'ubuntu24.04-amd64': ['keyparcel_1.2.3~rc.1-1_amd64.deb', 'keyparcel-1.2.3-rc.1-ubuntu24.04-amd64.tar.gz'],
-                'fedora44-x86_64': ['keyparcel-1.2.3~rc.1-1.x86_64.rpm', 'keyparcel-1.2.3-rc.1-fedora44-x86_64.tar.gz'],
-                'android-arm64': ['keyparcel-1.2.3-rc.1-arm64.apk', 'android-signing-certificate.txt'],
-            }.items():
+            for target, names in automation.target_files('1.2.3-rc.1').items():
                 directory = root / target
                 directory.mkdir()
                 info = dict(version='1.2.3-rc.1', revision=SHA, target=target)
                 if target == 'android-arm64':
                     info.update(versionCode=42, applicationId='dev.keyparcel.app')
                 (directory / 'build-info.json').write_text(json.dumps(info))
-                for name in names + ['diagnostic.log', 'unsigned.apk']:
+                for name in names + ['diagnostic.log', 'unsigned.apk', 'legacy-package.fixture']:
                     (directory / name).write_text(name)
             output = root / 'assets'
             automation.assemble(root, output, '1.2.3-rc.1', SHA, 42)
-            self.assertEqual(len(list(output.iterdir())), 10)
+            self.assertEqual(len(list(output.iterdir())), 14)
             lines = (output / 'SHA256SUMS').read_text().splitlines()
-            self.assertEqual(len(lines), 9)
+            self.assertEqual(len(lines), 13)
             for original, final, target in [
-                ('keyparcel_1.2.3~rc.1-1_amd64.deb', 'keyparcel_1.2.3-rc.1-1_amd64.deb', 'ubuntu24.04-amd64'),
-                ('keyparcel-1.2.3~rc.1-1.x86_64.rpm', 'keyparcel-1.2.3-rc.1-1.x86_64.rpm', 'fedora44-x86_64'),
+                ('keyparcel-cli_1.2.3~rc.1-1_amd64.deb', 'keyparcel-cli_1.2.3-rc.1-1_amd64.deb', 'ubuntu24.04-amd64'),
+                ('keyparcel-gtk-1.2.3~rc.1-1.x86_64.rpm', 'keyparcel-gtk-1.2.3-rc.1-1.x86_64.rpm', 'fedora44-x86_64'),
             ]:
                 self.assertEqual((output / final).read_bytes(), (root / target / original).read_bytes())
                 self.assertFalse((output / original).exists(), 'Unsafe package filename staged for GitHub')
@@ -114,7 +118,7 @@ class Automation(unittest.TestCase):
             for line in lines:
                 digest, name = line.split('  ')
                 self.assertEqual(digest, automation.digest(output / name))
-                self.assertNotIn(name, ('diagnostic.log', 'unsigned.apk'))
+                self.assertNotIn(name, ('diagnostic.log', 'unsigned.apk', 'legacy-package.fixture'))
             automation.publish(API(), 'v1.2.3-rc.1', SHA, output)
             with self.assertRaises(ValueError):
                 automation.assemble(root, root / 'wrong-sha', '1.2.3-rc.1', 'b'*40, 42)
@@ -182,7 +186,7 @@ class Automation(unittest.TestCase):
                 elif defect == 'extra-asset':
                     (root / 'diagnostic.log').write_text('must not upload')
                 elif defect == 'unsafe-name':
-                    original = root / 'keyparcel_1.2.3-rc.1-1_amd64.deb'
+                    original = root / 'keyparcel-cli_1.2.3-rc.1-1_amd64.deb'
                     original.rename(root / original.name.replace('-rc', '~rc'))
                     lines = [line.replace('1.2.3-rc.1-1_amd64.deb', '1.2.3~rc.1-1_amd64.deb') for line in lines]
                 manifest.write_text(''.join(lines))
