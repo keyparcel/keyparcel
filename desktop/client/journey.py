@@ -505,9 +505,27 @@ try:
     screenshot("settings.png")
     activate(control(app, "Advanced"))
     control(app, "Remote storage", Atspi.Role.TEXT)
+    control(app, "Remote access method", Atspi.Role.COMBO_BOX)
+    fields = [(node.get_name(), node.get_role()) for node in walk(app)]
+    assert fields.index(("Remote access method", Atspi.Role.COMBO_BOX)) < fields.index(("Remote storage", Atspi.Role.TEXT)), "Remote access method is below storage paths"
+    assert ("Custom SSH config: " + str(fixture.directory / "desktop/ssh_config"), Atspi.Role.LABEL) in fields, "Explicit SSH configuration is missing"
+    assert not any(name == "OpenSSH configuration override (empty uses OpenSSH defaults)" for name, _ in fields), "Obsolete SSH configuration paragraph remains"
     screenshot("settings-advanced.png")
+    info = control(app, "Remote access method information", Atspi.Role.TOGGLE_BUTTON)
+    assert control(app, "Remote access method information").get_description() == "SSH commands uses standard Unix commands on the server for faster operations with fewer network round trips. SFTP only uses the SFTP protocol and is more broadly supported. Automatic prefers SSH commands and falls back to SFTP when unsupported.", "Remote access method help changed"
+    keyboard_focus("Remote access method information", Atspi.Role.TOGGLE_BUTTON)
+    status("SSH commands uses standard Unix commands on the server for faster operations with fewer network round trips. SFTP only uses the SFTP protocol and is more broadly supported. Automatic prefers SSH commands and falls back to SFTP when unsupported.")
+    keys("Escape")
+    wait("keyboard help dismissed", lambda: not find(app, "SSH commands uses standard Unix commands on the server for faster operations with fewer network round trips. SFTP only uses the SFTP protocol and is more broadly supported. Automatic prefers SSH commands and falls back to SFTP when unsupported.", Atspi.Role.LABEL))
+    activate(info)
+    control(app, "SSH commands uses standard Unix commands on the server for faster operations with fewer network round trips. SFTP only uses the SFTP protocol and is more broadly supported. Automatic prefers SSH commands and falls back to SFTP when unsupported.", Atspi.Role.LABEL)
+    screenshot("settings-access-method-help.png")
+    keys("Escape")
+    wait("access method help dismissed", lambda: not find(app, "SSH commands uses standard Unix commands on the server for faster operations with fewer network round trips. SFTP only uses the SFTP protocol and is more broadly supported. Automatic prefers SSH commands and falls back to SFTP when unsupported.", Atspi.Role.LABEL))
+    control(app, "Remote storage", Atspi.Role.TEXT)
     keys("Escape")
     wait("Back closes Advanced", lambda: not find(app, "Remote storage", Atspi.Role.TEXT))
+    keyboard_focus("SSH target", Atspi.Role.TEXT)
     click("Back")
     control(app, "Devices and approvals", Atspi.Role.LABEL)
     click("Send")

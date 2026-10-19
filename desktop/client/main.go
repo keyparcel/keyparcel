@@ -317,7 +317,11 @@ func (m *model) applyProfile(p profile) {
 	m.updateAccessHint()
 	m.set("active-host", "Host: "+p.Target)
 	m.recipient = recipient
-	m.set("ssh-config", m.options.sshConfig)
+	sshConfig := ""
+	if m.options.sshConfig != "" {
+		sshConfig = "Custom SSH config: " + m.options.sshConfig
+	}
+	m.set("ssh-config", sshConfig)
 	m.drawSend()
 }
 

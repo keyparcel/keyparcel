@@ -463,6 +463,17 @@ class ClientJourneyTest {
         check(value("host-discovery") == ".ssh/authorized_keys") { "Advanced settings changed the discovery path" }
         compose.onNodeWithTag("host-key").assertExists()
         compose.onNodeWithTag("access-method-auto").assertIsSelected()
+        check(compose.onNodeWithTag("access-method-auto").fetchSemanticsNode().positionInRoot.y <
+            compose.onNodeWithTag("host-root").fetchSemanticsNode().positionInRoot.y) {
+            "Remote access method must precede storage paths"
+        }
+        compose.onNodeWithTag("access-method-hint").assertDoesNotExist()
+        compose.onNodeWithTag("access-method-info").performScrollTo().assertContentDescriptionEquals("Remote access method information").performClick()
+        compose.onNodeWithText("SSH commands uses standard Unix commands on the server for faster operations with fewer network round trips. SFTP only uses the SFTP protocol and is more broadly supported. Automatic prefers SSH commands and falls back to SFTP when unsupported.").assertIsDisplayed()
+        screenshot("settings-access-method-help")
+        compose.onNodeWithTag("close-access-method-help").performClick()
+        compose.onNodeWithText("SSH commands uses standard Unix commands on the server for faster operations with fewer network round trips. SFTP only uses the SFTP protocol and is more broadly supported. Automatic prefers SSH commands and falls back to SFTP when unsupported.").assertDoesNotExist()
+        compose.onNodeWithTag("access-method-auto").assertIsSelected()
         compose.onNodeWithTag("access-method-hint").assertDoesNotExist()
         compose.onNodeWithTag("access-method-ssh").performScrollTo().performClick().assertIsSelected()
         compose.onNodeWithTag("access-method-hint").assertTextEquals("Connect to apply the remote access method")

@@ -45,7 +45,21 @@ func checkGTKProfilePreview(t *testing.T, m *model) {
 	}
 	m.settingsLoaded = false
 	active := profile{Target: "first", Host: first, Config: cfg}
+	m.options.sshConfig = ""
 	m.applyProfile(active)
+	if m.get("ssh-config") != "" {
+		t.Fatal("default OpenSSH configuration retained custom-config text")
+	}
+	m.options.sshConfig = filepath.Join(dir, "custom-ssh-config")
+	m.applyProfile(active)
+	if m.get("ssh-config") != "Custom SSH config: "+m.options.sshConfig {
+		t.Fatal("explicit OpenSSH configuration was not identified")
+	}
+	m.options.sshConfig = ""
+	m.applyProfile(active)
+	if m.get("ssh-config") != "" {
+		t.Fatal("cleared OpenSSH override retained stale custom-config text")
+	}
 	if m.get("access-method") != "auto" {
 		t.Fatal("default inbox policy was not automatic")
 	}
