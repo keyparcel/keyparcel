@@ -163,6 +163,7 @@ func TestGTKLifecycleAndImmediateCancellation(t *testing.T) {
 	checkGTKInformationPointerAndKeyboard(t, m)
 	testGTKStaleManualRefreshKeepsForegroundProgressAndCancel(t, m)
 	checkGTKTransferProgressOwnership(t, m)
+	checkGTKClipboardPaste(t, m)
 	// Local enrollment preview must not apply a profile or write configuration.
 	path := identity(t, t.TempDir())
 	m.set("identity", path)

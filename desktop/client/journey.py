@@ -495,6 +495,7 @@ try:
         fill("Message", draft)
         wait(f"Send eligibility for {draft!r}", lambda: control(app, "Send text", Atspi.Role.PUSH_BUTTON).get_state_set().contains(Atspi.StateType.SENSITIVE) == bool(draft))
     fill("Message", message)
+    screenshot("send-paste.png")
     draft_file = session / "draft-世界.bin"
     draft_file.write_bytes(b"draft bytes")
     click("Choose file")

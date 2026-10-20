@@ -14,6 +14,7 @@ struct UI {
     GtkWidget *row_box, *last_row;
     gboolean closed, destroyed, has_file, send_locked, updating_settings, resetting_enrollment;
     int send_count;
+    guint paste_generation;
 };
 typedef struct { UI *ui; char *action, *arg; GtkWidget *entry; } Action;
 
@@ -200,8 +201,55 @@ static GtkWidget *page(UI *ui, const char *name, const char *title) {
 static void draft_changed(GtkTextBuffer *buffer, gpointer data) {
     (void)buffer;
     UI *ui = data;
+    ui->paste_generation++;
     if (!ui->closed) ui_send_ready(ui, ui->has_file);
 }
+typedef struct { UI *ui; guint generation; int start, end; } Paste;
+static void draft_cursor_changed(GtkTextBuffer *buffer, GtkTextIter *iter, GtkTextMark *mark, gpointer data) {
+    (void)buffer; (void)iter;
+    const char *name=gtk_text_mark_get_name(mark);
+    if (g_strcmp0(name,"insert")==0 || g_strcmp0(name,"selection_bound")==0) ((UI *)data)->paste_generation++;
+}
+static void paste_ready(GObject *source, GAsyncResult *result, gpointer data) {
+    Paste *p=data; UI *ui=p->ui;
+    GError *error=NULL;
+    char *text=gdk_clipboard_read_text_finish(GDK_CLIPBOARD(source),result,&error);
+    GtkWidget *view=g_hash_table_lookup(ui->fields,"draft");
+    if (!ui->closed && p->generation==ui->paste_generation && gtk_widget_is_sensitive(view) &&
+        gtk_text_view_get_editable(GTK_TEXT_VIEW(view))) {
+        if (text && *text) {
+            GtkTextBuffer *buffer=gtk_text_view_get_buffer(GTK_TEXT_VIEW(view));
+            GtkTextIter start,end;
+            gtk_text_buffer_get_iter_at_offset(buffer,&start,p->start);
+            gtk_text_buffer_get_iter_at_offset(buffer,&end,p->end);
+            gtk_text_buffer_begin_user_action(buffer);
+            gtk_text_buffer_delete(buffer,&start,&end);
+            gtk_text_buffer_insert(buffer,&start,text,-1);
+            gtk_text_buffer_place_cursor(buffer,&start);
+            gtk_text_buffer_end_user_action(buffer);
+            gtk_widget_grab_focus(view);
+        } else if (error && !g_error_matches(error,G_IO_ERROR,G_IO_ERROR_NOT_SUPPORTED)) {
+            goEvent(ui->handle,"error","Clipboard text is unavailable","");
+        }
+    }
+    g_clear_error(&error);g_free(text);ui_unref(ui);g_free(p);
+}
+static void paste_clicked(GtkButton *button, gpointer data) {
+    (void)button;
+    UI *ui=data;
+    GtkWidget *view=g_hash_table_lookup(ui->fields,"draft");
+    if (ui->closed || !gtk_widget_is_sensitive(view) || !gtk_text_view_get_editable(GTK_TEXT_VIEW(view))) return;
+    GtkTextBuffer *buffer=gtk_text_view_get_buffer(GTK_TEXT_VIEW(view));
+    GtkTextIter start,end;
+    if (!gtk_text_buffer_get_selection_bounds(buffer,&start,&end)) {
+        gtk_text_buffer_get_iter_at_mark(buffer,&start,gtk_text_buffer_get_insert(buffer));end=start;
+    }
+    Paste *p=g_new0(Paste,1);p->ui=ui;p->generation=++ui->paste_generation;
+    p->start=gtk_text_iter_get_offset(&start);p->end=gtk_text_iter_get_offset(&end);
+    ui_ref(ui);
+    gdk_clipboard_read_text_async(gtk_widget_get_clipboard(view),NULL,paste_ready,p);
+}
+
 static GtkWidget *text_view(UI *ui, const char *name, gboolean editable) {
     GtkWidget *view = gtk_text_view_new();
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(view), GTK_WRAP_WORD_CHAR);
@@ -569,7 +617,18 @@ UI *ui_new(uintptr_t handle, const char *icon) {
     GtkWidget *retry=button(ui,"Retry failed recipients","retry-send",""); remember(ui,"retry-send",retry); gtk_widget_set_visible(retry,FALSE); gtk_box_append(GTK_BOX(feedback),retry);
     GtkWidget *edit=button(ui,"Edit draft","edit-send",""); remember(ui,"edit-send",edit); gtk_widget_set_visible(edit,FALSE); gtk_box_append(GTK_BOX(feedback),edit);
     gtk_widget_set_visible(feedback,FALSE); gtk_box_append(GTK_BOX(send),feedback);
-    gtk_box_append(GTK_BOX(send), text_view(ui, "draft", TRUE));
+    GtkWidget *editor=gtk_overlay_new();
+    gtk_overlay_set_child(GTK_OVERLAY(editor),text_view(ui,"draft",TRUE));
+    GtkWidget *paste=gtk_button_new_from_icon_name("edit-paste-symbolic");remember(ui,"paste-text",paste);
+    accessible(paste,"Paste from clipboard");gtk_widget_set_tooltip_text(paste,"Paste from clipboard");
+    gtk_widget_add_css_class(paste,"flat");gtk_widget_set_focus_on_click(paste,FALSE);
+    gtk_widget_set_halign(paste,GTK_ALIGN_END);gtk_widget_set_valign(paste,GTK_ALIGN_START);
+    gtk_widget_set_margin_top(paste,4);gtk_widget_set_margin_end(paste,4);
+    gtk_text_view_set_right_margin(GTK_TEXT_VIEW(g_hash_table_lookup(ui->fields,"draft")),52);
+    g_signal_connect(paste,"clicked",G_CALLBACK(paste_clicked),ui);gtk_overlay_add_overlay(GTK_OVERLAY(editor),paste);
+    gtk_box_append(GTK_BOX(send),editor);
+    g_signal_connect(gtk_text_view_get_buffer(GTK_TEXT_VIEW(g_hash_table_lookup(ui->fields,"draft"))),
+        "mark-set",G_CALLBACK(draft_cursor_changed),ui);
     GtkWidget *send_text = button(ui, "Send text", "send-text", ""); remember(ui, "send-text", send_text);
     gtk_widget_set_sensitive(send_text, FALSE); gtk_box_append(GTK_BOX(send), send_text);
     GtkWidget *selected = label("No file selected"); remember(ui, "selected-file", selected); gtk_box_append(GTK_BOX(send), selected);
@@ -632,7 +691,7 @@ void ui_shutdown(UI *ui) {
 }
 void ui_page(UI *ui, const char *name) {
     const char *old=gtk_stack_get_visible_child_name(ui->pages);
-    if (g_strcmp0(old,name)!=0) ui_message(ui,"");
+    if (g_strcmp0(old,name)!=0) { ui->paste_generation++;ui_message(ui,""); }
     gtk_stack_set_visible_child_name(ui->pages, name);
     const char *section = (strcmp(name, "text") == 0 || strcmp(name, "saved") == 0) ? "inbox" : name;
     char *nav = g_strdup_printf("nav-%s", section);
@@ -668,6 +727,7 @@ double ui_transfer_fraction(UI *ui) {
     return gtk_widget_get_visible(ui->transfer_bar) ? gtk_progress_bar_get_fraction(GTK_PROGRESS_BAR(ui->transfer_bar)) : -1;
 }
 void ui_busy(UI *ui, int busy) {
+    if (busy) ui->paste_generation++;
     gtk_widget_set_sensitive(ui->body, !busy); gtk_widget_set_sensitive(ui->cancel, busy);
     if (!busy) ui_progress(ui,"");
 }
@@ -823,6 +883,7 @@ void ui_view(UI *ui, const char *text, const char *notice, int eligible) {
     gtk_text_buffer_set_text(b, text, -1); ui_set(ui, "view-notice", notice); ui_page(ui, "text");
 }
 void ui_clear_results(UI *ui) {
+    ui->paste_generation++;
     GtkTextBuffer *b = gtk_text_view_get_buffer(GTK_TEXT_VIEW(g_hash_table_lookup(ui->fields, "received")));
     gtk_text_buffer_set_text(b, "", -1);
     ui_set(ui, "view-notice", ""); ui_set(ui, "saved-path", "");
@@ -912,7 +973,9 @@ void ui_recipient_token(UI *ui, const char *name, const char *title) {
     gtk_flow_box_insert(GTK_FLOW_BOX(g_hash_table_lookup(ui->fields,"recipient-tokens")),b,position);
 }
 void ui_send_state(UI *ui, int count, int locked, int retry, int has_file, int can_add) {
+    if (locked) ui->paste_generation++;
     ui->send_locked=locked;ui->send_count=count;
+    gtk_widget_set_sensitive(g_hash_table_lookup(ui->fields,"paste-text"),!locked);
     gtk_button_set_label(GTK_BUTTON(g_hash_table_lookup(ui->fields,"add-recipient")),count ? "+ Add another" : "Choose recipient…");
     gtk_widget_set_sensitive(g_hash_table_lookup(ui->fields,"add-recipient"),!locked && can_add);
     gtk_widget_set_sensitive(g_hash_table_lookup(ui->fields,"recipient-tokens"),!locked);
@@ -974,3 +1037,26 @@ InfoState ui_info_state(UI *ui,const char *name) {
 void ui_access_hint(UI *ui,int show) { gtk_widget_set_visible(g_hash_table_lookup(ui->fields,"access-method-hint"),show); }
 
 int ui_access_pending(UI *ui) { return gtk_widget_get_visible(g_hash_table_lookup(ui->fields,"access-method-hint")); }
+
+void ui_draft_select(UI *ui,const char *text,int start,int end) {
+    GtkTextBuffer *buffer=gtk_text_view_get_buffer(GTK_TEXT_VIEW(g_hash_table_lookup(ui->fields,"draft")));
+    gtk_text_buffer_set_text(buffer,text,-1);
+    GtkTextIter a,b;gtk_text_buffer_get_iter_at_offset(buffer,&a,start);gtk_text_buffer_get_iter_at_offset(buffer,&b,end);
+    gtk_text_buffer_select_range(buffer,&a,&b);
+}
+int ui_draft_cursor(UI *ui) {
+    GtkTextBuffer *buffer=gtk_text_view_get_buffer(GTK_TEXT_VIEW(g_hash_table_lookup(ui->fields,"draft")));
+    GtkTextIter iter;gtk_text_buffer_get_iter_at_mark(buffer,&iter,gtk_text_buffer_get_insert(buffer));
+    return gtk_text_iter_get_offset(&iter);
+}
+void ui_activate_paste(UI *ui) { g_signal_emit_by_name(g_hash_table_lookup(ui->fields,"paste-text"),"clicked"); }
+InfoState ui_paste_state(UI *ui) {
+    InfoState result={0};graphene_rect_t bounds;
+    GtkWidget *button=g_hash_table_lookup(ui->fields,"paste-text");
+    if (gtk_widget_compute_bounds(button,GTK_WIDGET(ui->window),&bounds)) {
+        result.x=bounds.origin.x;result.y=bounds.origin.y;result.width=bounds.size.width;result.height=bounds.size.height;
+    }
+    result.mapped=gtk_widget_get_mapped(button);
+    result.focused=gtk_widget_has_focus(g_hash_table_lookup(ui->fields,"draft"));
+    return result;
+}

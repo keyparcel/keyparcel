@@ -31,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.TextRange
 import androidx.lifecycle.ViewModelProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -44,6 +45,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
+@OptIn(ExperimentalTestApi::class)
 @RunWith(AndroidJUnit4::class)
 class ClientJourneyTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
@@ -632,7 +634,31 @@ class ClientJourneyTest {
         screenshot("received")
         click("back")
         click("send-screen"); chooseRecipient("laptop")
-        compose.onNodeWithTag("message").performTextInput(input)
+        withClipboard { clipboard ->
+            fun paste(text: String) {
+                compose.runOnIdle { clipboard.setPrimaryClip(ClipData.newPlainText("fixture", text).apply {
+                    description.extras = PersistableBundle().apply { putBoolean("android.content.extra.IS_SENSITIVE", true) }
+                }) }
+                compose.onNodeWithTag("paste-text").performScrollTo().performTouchInput { click() }
+            }
+            paste("fresh")
+            check(value("message") == "fresh") { "No-focus Paste failed" }
+            compose.onNodeWithTag("message").assertIsFocused()
+            keyboardReady()
+            field("message", "abcd")
+            compose.onNodeWithTag("message").performTextInputSelection(TextRange(3, 1))
+            paste("世界")
+            check(value("message") == "a世界d") { "Paste replaced draft instead of selection" }
+            compose.onNodeWithTag("message").performTextInput("!")
+            check(value("message") == "a世界!d") { "Paste did not leave caret after insertion" }
+            paste("")
+            check(value("message") == "a世界!d") { "Empty clipboard changed draft" }
+            compose.runOnIdle { clipboard.setPrimaryClip(ClipData.newIntent("fixture", android.content.Intent())) }
+            compose.onNodeWithTag("paste-text").performTouchInput { click() }
+            check(value("message") == "a世界!d") { "Non-text clipboard changed draft" }
+            field("message", "Meeting notes\nPlease review before Friday.")
+            field("message", input)
+        }
         click("devices-screen"); click("settings"); click("back")
         compose.onNodeWithTag("devices-screen").assertIsSelected()
         click("send-screen")
@@ -645,6 +671,13 @@ class ClientJourneyTest {
         val revision = liveModel.refreshRevision
         compose.waitUntil(150_000) { liveModel.refreshRevision >= revision + 2 }
         check(value("message") == input) { "Timed refresh discarded the text draft" }
+        val editorBounds = compose.onNodeWithTag("message").fetchSemanticsNode().boundsInWindow
+        val pasteBounds = compose.onNodeWithTag("paste-text").fetchSemanticsNode().boundsInWindow
+        check(pasteBounds.center.x > editorBounds.center.x && pasteBounds.right <= editorBounds.right + 1 &&
+            pasteBounds.top >= editorBounds.top && pasteBounds.center.y < editorBounds.center.y) {
+            "Paste control is not at editor top-right: $pasteBounds vs $editorBounds"
+        }
+        screenshot("send-paste")
         compose.onNodeWithTag("remove-recipient-laptop").assertExists()
         val discovery = requireNotNull(liveModel.discoverySnapshot)
         File(compose.activity.cacheDir, "send-discovery-ready").writeText("ready")
@@ -1014,7 +1047,10 @@ class ClientJourneyTest {
             evidence.putString("${kind}_self_id", ownID)
             compose.onNodeWithTag(sendTag).assertIsNotEnabled()
             if (fileMode) source.writeText("changed source after partial delivery")
-            else check(value("message") == "multi text 世界\n") { "Partial delivery discarded draft" }
+            else {
+                check(value("message") == "multi text 世界\n") { "Partial delivery discarded draft" }
+                compose.onNodeWithTag("paste-text").assertIsNotEnabled()
+            }
             screenshot("send-multiple-$kind")
             fixture("$kind-retry")
             compose.onNodeWithTag("retry-send").performScrollTo().performClick(); finished()

@@ -74,3 +74,8 @@ InfoState ui_info_state(UI *ui, const char *name);
 void ui_access_hint(UI *ui,int show);
 
 int ui_access_pending(UI *ui);
+
+void ui_draft_select(UI *ui,const char *text,int start,int end);
+int ui_draft_cursor(UI *ui);
+void ui_activate_paste(UI *ui);
+InfoState ui_paste_state(UI *ui);
