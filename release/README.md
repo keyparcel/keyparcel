@@ -59,8 +59,8 @@ other. CLI contains the `keyparcel` binary, Bash completion and compressed
 launcher/icon and desktop dependencies. Each owns its own notices, guide and
 build provenance under `/usr/share/doc/keyparcel-cli` or `keyparcel-gtk`.
 The bundled parcel-and-key SVG installs under `/usr/share/icons/hicolor/scalable/apps`.
-The GTK application ID and icon name are `dev.keyparcel`, matching the launcher
-`dev.keyparcel.desktop` on X11 and Wayland. See [shared artwork](../assets/branding/README.md).
+The GTK application ID and icon name are `io.github.keyparcel.keyparcel`, matching the launcher
+`io.github.keyparcel.keyparcel.desktop` on X11 and Wayland. See [shared artwork](../assets/branding/README.md).
 
 - **DEB:** built on Ubuntu 24.04 x86_64, installed/tested on Ubuntu 24.04 and Debian
   13. `dpkg-shlibdeps` derives GTK/libc dependencies. Both clients require OpenSSH
@@ -112,7 +112,7 @@ package with overlapping real binaries must cause explicit package-manager confl
 removing it first permits migration to both clients. This internal fixture has a
 non-package suffix and is never a release asset. Each run cleans only its owned fixtures.
 
-Android's stable production application ID is `dev.keyparcel.app`; smoke/scenario
+Android's stable production application ID is `io.github.keyparcel.keyparcel`; smoke/scenario
 retain their suffixes and x86_64 workflow. Candidate production APKs are unsigned and
 non-debuggable, with ARM64-only native libraries. Static checks inspect package
 version/ID/provenance, AAR-to-APK library completeness, ELF machine/load alignment,

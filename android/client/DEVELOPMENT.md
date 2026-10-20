@@ -154,9 +154,9 @@ smoke uses the windowed `keyparcel-software-trial` AVD on 5554. Tests refuse an
 occupied/wrong/windowed emulator or another `ANDROID_SERIAL`; unset that variable
 for the UI target. Stop just the test emulator with `adb -s emulator-5556 emu kill`.
 
-The scenario app (`dev.keyparcel.app.scenario`) and smoke app
-(`dev.keyparcel.app.smoke`) have separate data and forwarding ports. Tests reset
-only scenario data; manual smoke can stay open. Run journeys sequentially on each
+The scenario app (`io.github.keyparcel.keyparcel.scenario`) and smoke app
+(`io.github.keyparcel.keyparcel.smoke`) have separate data and forwarding ports.
+Tests reset only scenario data; manual smoke can stay open. Run journeys sequentially on each
 emulator because they share its foreground screen. Clipboard limits are exercised
 inside the isolated test Android system, not the interactive phone's sharing link.
 

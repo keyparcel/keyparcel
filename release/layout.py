@@ -10,8 +10,8 @@ def files(client):
         paths['usr/share/bash-completion/completions/keyparcel'] = 0o644
         paths['usr/share/man/man1/keyparcel.1.gz'] = 0o644
     else:
-        paths['usr/share/applications/dev.keyparcel.desktop'] = 0o644
-        paths['usr/share/icons/hicolor/scalable/apps/dev.keyparcel.svg'] = 0o644
+        paths['usr/share/applications/io.github.keyparcel.keyparcel.desktop'] = 0o644
+        paths['usr/share/icons/hicolor/scalable/apps/io.github.keyparcel.keyparcel.svg'] = 0o644
     paths.update({'usr/share/doc/' + name + '/' + leaf: 0o644
                   for leaf in (*NOTICES, 'README.md', 'build-info.json')})
     return paths

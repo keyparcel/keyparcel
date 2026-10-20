@@ -78,7 +78,7 @@ def assemble(source, output, version, revision, code):
         info = json.loads((directory / 'build-info.json').read_text())
         if any(info.get(key) != value for key, value in dict(version=version, revision=revision, target=target).items()):
             raise ValueError(f'Wrong tagged provenance: {target}')
-        if target == 'android-arm64' and (info.get('versionCode') != code or info.get('applicationId') != 'dev.keyparcel.app'):
+        if target == 'android-arm64' and (info.get('versionCode') != code or info.get('applicationId') != 'io.github.keyparcel.keyparcel'):
             raise ValueError('Wrong Android versionCode/application ID')
         shutil.copyfile(directory / 'build-info.json', output / f'build-info-{target}.json')
         for name in names:

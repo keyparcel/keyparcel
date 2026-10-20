@@ -30,7 +30,7 @@ Python standard library generates the SVG variants and Android vector drawables
 from the same paths. Android launcher layers leave room for adaptive masks and
 include a monochrome layer for themed icons. The GTK client embeds the application
 icon for its header; Linux packages also install it in the hicolor icon theme.
-The GTK application ID, icon name and desktop launcher basename are `dev.keyparcel`.
+The GTK application ID, icon name and desktop launcher basename are `io.github.keyparcel.keyparcel`.
 
 The wordmark uses Noto Sans Bold, converted to paths; no font file is bundled.
 Noto Sans is an [SIL Open Font License](https://github.com/notofonts/latin-greek-cyrillic)

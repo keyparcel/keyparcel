@@ -44,16 +44,16 @@ elif args == ['emu', 'avd', 'name']:
 elif args[:5] == ['shell', 'pm', 'list', 'packages', '-u']:
     assert s['online']
     if s.get('installed', True):
-        print('package:dev.keyparcel.app.smoke\\npackage:dev.keyparcel.app.smoke.test')
+        print('package:io.github.keyparcel.keyparcel.smoke\\npackage:io.github.keyparcel.keyparcel.smoke.test')
 elif args[:3] == ['shell', 'pm', 'clear']:
     assert s['online']
     app = args[3]
-    assert app in ['dev.keyparcel.app.smoke', 'dev.keyparcel.app.smoke.test']
+    assert app in ['io.github.keyparcel.keyparcel.smoke', 'io.github.keyparcel.keyparcel.smoke.test']
     if app == s['fail_clear']:
         print('Failed')  # Some pm failures have a successful shell exit code.
     else:
         s['clears'].append(app)
-        if app == 'dev.keyparcel.app.smoke':
+        if app == 'io.github.keyparcel.keyparcel.smoke':
             (root / 'saved-smoke-settings').unlink(missing_ok=True)
         print('Success')
 elif args != ['reverse', '--list']:
@@ -83,7 +83,7 @@ if args[:2] in [['container', 'inspect'], ['network', 'inspect']]:
     sys.exit(0 if args[2] not in s['removed'] else 1)
 elif args[:2] == ['rm', '-f'] or args[:2] == ['network', 'rm']:
     if s.get('installed', True):
-        assert s['clears'][-2:] == ['dev.keyparcel.app.smoke', 'dev.keyparcel.app.smoke.test']
+        assert s['clears'][-2:] == ['io.github.keyparcel.keyparcel.smoke', 'io.github.keyparcel.keyparcel.smoke.test']
     s['removed'].append(args[2])
 elif args[:2] == ['inspect', '--format']:
     print('true')
@@ -158,7 +158,7 @@ sys.exit(77)  # Stop before rebuilding real images or creating a new fixture.
         self.assert_relaunch()
 
     def test_failed_app_clear_preserves_pending_reset(self):
-        for app in ["dev.keyparcel.app.smoke", "dev.keyparcel.app.smoke.test"]:
+        for app in ["io.github.keyparcel.keyparcel.smoke", "io.github.keyparcel.keyparcel.smoke.test"]:
             with self.subTest(app=app):
                 self.set_state(online=True, fail_clear=app)
                 result = self.run_smoke("down")
@@ -214,7 +214,7 @@ sys.exit(77)  # Stop before rebuilding real images or creating a new fixture.
 
     def test_failed_fresh_reset_retries_before_launch(self):
         self.fresh_launch_ready()
-        self.set_state(fail_clear="dev.keyparcel.app.smoke")
+        self.set_state(fail_clear="io.github.keyparcel.keyparcel.smoke")
         result = self.run_smoke("fresh")
         self.assertNotEqual(result.returncode, 0, "fresh mode ignored failed app clearing")
         self.assertTrue((self.fixture / "fresh-reset-pending").exists())
