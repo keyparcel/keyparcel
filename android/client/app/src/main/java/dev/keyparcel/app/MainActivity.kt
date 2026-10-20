@@ -524,8 +524,7 @@ private fun SendScreen(model: AppModel, chooseFile: () -> Unit) {
                     Text(file.size?.let { Bridge.formatSize(it) } ?: "Size unknown", modifier = Modifier.testTag("selected-size"))
                 }
             } else {
-                OutlinedTextField(value = text, onValueChange = { model.draft = model.draft.copy(text = it) }, enabled = editable,
-                    label = { Text("Message") }, minLines = 4, modifier = Modifier.fillMaxWidth().testTag("message"))
+                MessageEditor(text, editable, { model.draft = model.draft.copy(text = it) }, model::clipboardError)
             }
             TextButton(onClick = model::discardDraft, enabled = !model.busy,
                 modifier = Modifier.testTag("discard-draft")) { Text("Discard draft") }
