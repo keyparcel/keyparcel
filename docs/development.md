@@ -117,11 +117,12 @@ The core does not prompt or print. `core.ParseIdentity` accepts unencrypted key
 bytes; `core.GenerateIdentity` creates an Ed25519 identity for storage by its
 caller. OpenSSH and embedded connectors return the same `Session` API. Embedded
 SSH takes explicit connection settings and a trusted server key; it does not use
-OpenSSH configuration, agents, jump hosts or external commands. Cancel the context
-or close the session to stop work.
+OpenSSH configuration, agents or jump hosts. Both connectors can use the probed
+read-only SSH commands described in [remote access methods](usage.md#remote-access-method).
+Cancel the context or close the session to stop work.
 
 Each external OpenSSH session supervises a dedicated non-persistent master in a
-private temporary directory and opens one SFTP channel through that socket.
+private temporary directory. SFTP and read-only command channels use that socket.
 It never attaches to a user's existing master. Missing or lost sockets fail
 closed instead of opening another TCP connection; closing/canceling the owner
 reaps its master and removes the socket directory. Embedded SSH opens channels on its single authenticated SSH client.
@@ -149,6 +150,12 @@ retires both channels. Separate channels avoid a poll blocking foreground SFTP
 packet handling, but still share TCP bandwidth, congestion and head-of-line
 blocking; they do not create another TCP connection or authentication.
 
+SFTP upload/download calls use concurrent requests and buffers of up to 2 MiB
+(the library's 64 × 32 KiB request window). This pipelines bytes on the existing
+channel; verification, staging and atomic publication still run normally. Optional
+`core.WithProgress` observers report encrypted bytes and phases for one request.
+Callbacks must be lightweight; 100% transferred is not a delivery confirmation.
+
 Android consumes verified temporary files through a receive callback rather than
 the CLI's hard-link publication helper. The callback must finish consuming the
 file before returning; failure retains the remote transfer. See the
@@ -167,8 +174,11 @@ screen already makes an outcome clear.
   and symbol accompany color. It is not inbox freshness or a reachability probe.
 - Progress appears only during active work: beside the GTK connection indicator
   or in Android content, with a short label and Cancel where supported. Android
-  manual refresh uses the native pull-to-refresh spinner and content Cancel,
-  without a duplicate progress label. Idle has no status text.
+  manual refresh uses the native pull-to-refresh spinner and **Cancel** beside
+  the Inbox/Devices refresh icon (or a content fallback on other pages), without
+  a duplicate label. Transfer bars measure encrypted bytes, restarting for each
+  recipient; verification/publication/saving use indeterminate progress. Idle has
+  no status text.
 - Action errors stay in the current screen until dismissed, retried or its
   context changes. Background polling never replaces them. Send feedback,
   preview limitations and save results remain in their dedicated controls.

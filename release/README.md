@@ -2,7 +2,7 @@
 
 Build and validate candidates without tags, signing keys or publication rights.
 Candidate builds stay unsigned and need no secrets. The tag workflow below adds
-protected Android signing and an unpublished release draft.
+environment-scoped Android signing and an unpublished release draft.
 Project code is [Apache-2.0](../LICENSE); linked Go components retain their BSD
 licenses. Linux packages/archives and Android APK assets include the project
 license, copyright notice and [third-party notices](../THIRD_PARTY_NOTICES.txt).
@@ -91,13 +91,13 @@ source/developer guides are not bundled as broken relative links.
 runtime images (retaining candidate docs despite minimal-image doc filters).
 It installs each client separately and checks startup/linking **before** adding
 test-driver tools. The CLI image has no GTK libraries/themes; GTK has no CLI
-package or binary. It checks
-then checks archive/package byte equality, paths/modes/ownership, provenance,
-launcher, application icon and completion as the ordinary fixture user. Runtime
+package or binary. It then checks archive/package byte equality, paths, modes,
+ownership, provenance, launcher, icon, completion and the manual as the ordinary
+fixture user. Runtime
 images contain neither Go nor development binaries; selected CLI invocations
 use `/usr/bin/keyparcel` and GTK uses `/usr/bin/keyparcel-gtk` explicitly.
 
-The unchanged CLI text-deletion, file/keep/overwrite and tampered/truncated receive
+The CLI text-deletion, file/keep/overwrite and tampered/truncated receive
 scenarios run through the narrow installed-image hook, with their existing SSH
 fixture and assertions. They exercise the production OpenSSH CLI; the ordinary
 source suite still tests both OpenSSH and embedded connectors. A short branch of
@@ -117,9 +117,10 @@ retain their suffixes and x86_64 workflow. Candidate production APKs are unsigne
 non-debuggable, with ARM64-only native libraries. Static checks inspect package
 version/ID/provenance, AAR-to-APK library completeness, ELF machine/load alignment,
 APK 16 KiB library alignment, and absence of a valid signature. These checks do
-**not** establish ARM runtime behavior; first physical-device execution remains
-deferred. No device farm, upgrade matrix, package repository, macOS packaging or auto-update
-implementation is included. Signing and release drafts are described below.
+**not** establish ARM runtime or upgrade behavior. Each candidate still needs
+manual device inspection before publication; see [current platform status](../README.md#clients).
+There is no device farm, package repository, macOS packaging or auto-update service.
+Signing and release drafts are described below.
 
 Candidate CI preserves the broad source suites, including both Android client
 shards, and adds two candidate jobs. Its Android job also signs a private copy
@@ -136,7 +137,7 @@ The `Draft release` workflow runs only on pushed `v*` tags. It accepts exactly
 no-leading-zero grammar as the builders. The tag must match `release/VERSION`,
 and checkout, event SHA and tag must resolve to the same commit. Linux amd64
 packages and archives are built and installed/tested on the baselines above;
-Android ARM64 uses the unchanged unsigned production build and static checks.
+Android ARM64 uses the unsigned production build and static checks.
 Neither the broad scenario suites nor an ARM emulator are added to this workflow.
 Run ordinary PR CI before tagging.
 
@@ -149,22 +150,23 @@ Run ordinary PR CI before tagging.
 2. From the reviewed clean main commit, create and push the matching tag, for example:
 
    ```sh
-   git tag -a v0.1.0-rc.1 -m 'keyparcel 0.1.0-rc.1'
-   git push origin v0.1.0-rc.1
+   version=$(cat release/VERSION)
+   git tag -a "v$version" -m "keyparcel $version"
+   git push origin "refs/tags/v$version"
    ```
 
-   Never move a distributed version tag. Unsupported tags fail validation.
-3. After both build/test jobs pass, inspect their logs and exact source revision,
-   then approve the `release` environment deployment within seven days (before
-   the same-run build artifacts expire). This environment protects signing and
-   draft upload, not the unsigned PR candidates. Its configured reviewer/tag rules
-   remain in force; the workflow does not change settings or secrets.
+   Check that the tag and release name are unused first. Never move a distributed
+   version tag. Unsupported tags fail validation.
+3. After both build/test jobs pass, the `release` environment job automatically
+   signs Android and prepares the draft from the same-run artifacts. The current
+   environment allows `v*` tags and has no required reviewer or approval wait.
+   PR candidates stay unsigned. The workflow does not change settings or secrets.
 4. Inspect the resulting **unpublished draft** and its assets. There is no automatic
    publish action. Tags with alpha/beta/rc remain marked prerelease; stable drafts
    are not prereleases. Creation explicitly does not select a latest release;
    choose the appropriate prerelease/latest status when publishing manually.
 
-Only the protected job has `contents: write`. Its signing step receives the four
+Only the environment job has `contents: write`. Its signing step receives the four
 environment secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
 `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`; the upload step receives the job's
 GitHub token. Signing uses SDK Build Tools 35.0.0 and JDK 21. The keystore is decoded
@@ -179,8 +181,9 @@ manifest, every original payload entry, notices and ARM64 libraries. The public
 certificate SHA-256 fingerprint is an asset for comparison with the offline backup.
 Unsigned APKs, AARs, logs and fixture output are not release assets.
 
-The draft contains the DEB, RPM, their two matching archives, signed APK, three
-per-target build-info files, Android certificate fingerprint and `SHA256SUMS`.
+The draft contains 14 assets: two DEBs, two RPMs, four matching CLI/GTK archives,
+one signed APK, three per-target build-info files, the Android certificate
+fingerprint and `SHA256SUMS`. The checksums cover the other 13 assets.
 Release asset filenames use the product's hyphen prerelease (for example,
 `keyparcel-cli_0.1.0-rc.1-1_amd64.deb`); internal DEB/RPM versions still use `~` for
 package-manager ordering. This avoids GitHub's normalization of `~` in uploaded
@@ -195,9 +198,9 @@ Download the draft assets and verify `sha256sum -c SHA256SUMS`; compare all thre
 build-info revisions with the tag's commit and Android versionCode with the
 committed value. Check the APK certificate fingerprint against the backed-up
 signing key (SDK `apksigner verify --verbose --print-certs APK` reports it).
-Before the first publication, install the signed production APK on a physical
+Before publishing a candidate, install its signed production APK on a physical
 ARM64 Android device and try enrollment, peer approval and verified text/file
-send, view, save and deletion. This remains a manual gate: CI provides static
+send, view, save and deletion. This is a manual gate: CI provides static
 ARM64 packaging evidence, **not ARM runtime or upgrade assurance**. Retain the
 explicit Linux distro limits when editing release notes. Then publish manually
 in GitHub after reviewing the draft, prerelease/latest choices and device results.
@@ -210,12 +213,14 @@ same signing identity. This workflow introduces no key rotation or recovery serv
 
 ### Reruns and interrupted uploads
 
-Tag runs are serialized. A rerun can resume an existing draft only when its tag,
-exact source SHA and prerelease flag match. Already-uploaded assets must have
-identical sizes and GitHub SHA-256 digests; missing assets can then be uploaded.
+Tag runs are serialized. Rerun an interrupted draft job within the seven-day
+retention of its same-run build artifacts. It can resume an existing draft only
+when its tag, exact source SHA and prerelease flag match. Already-uploaded assets
+must have identical sizes and GitHub SHA-256 digests; missing assets can then be uploaded.
 Published releases are refused, and assets are never deleted or overwritten.
 Do not publish/edit a draft while a run is active. If rebuilding produces different
 bytes (builds are not claimed byte-reproducible), the rerun deliberately fails.
-Inspect the discrepancy; if the release is still wholly undistributed, explicitly
-delete the incomplete draft before retrying. Otherwise use a new version and
-versionCode. The workflow never performs that destructive cleanup for you.
+Inspect the discrepancy before taking action. A maintainer may explicitly remove
+a wholly undistributed incomplete draft, but never reuse a versionCode for different
+APK contents or move an existing tag. Otherwise use a new version and versionCode.
+The workflow never performs that destructive cleanup for you.

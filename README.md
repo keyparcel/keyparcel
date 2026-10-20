@@ -36,8 +36,8 @@ Share text and files between your devices through your own SSH server.
 
 ## Quick start
 
-With Go and Make installed, and a dedicated device key **already enrolled** on
-an SSH/SFTP server reachable as `parcel-vps`:
+With Go, Make and OpenSSH installed, and a dedicated device key **already enrolled**
+on an SSH/SFTP server reachable as `parcel-vps`:
 
 ```sh
 make build
@@ -70,6 +70,19 @@ builds are checked statically, and the rc.2 candidate has also been manually tes
 on a physical ARM device. Linux DEB/RPM/archive and Android builds can be made from
 source. Signed prerelease artifacts are being prepared for publication; public
 release downloads are not yet available. This is development software.
+
+## Limitations
+
+- **Private-key access:** CLI/GTK require a private-key file; Android manages its own
+  software key. The same SSH identity authenticates the connection and decrypts
+  parcels. Agent-only and hardware-backed SSH identities are unsupported by
+  [age's SSH-key encryption](https://github.com/FiloSottile/age#ssh-keys).
+- **Unencrypted keys:** passphrase-protected private keys are not supported yet.
+- **No automatic server cleanup:** unreceived parcels remain until deleted.
+  Interrupted uploads can leave encrypted temporary files. The server never sees
+  plaintext parcel contents.
+- **No read receipts:** a successful send confirms upload, not that the recipient
+  opened the parcel.
 
 ## Documentation
 

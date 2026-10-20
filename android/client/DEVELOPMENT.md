@@ -24,8 +24,8 @@ task **keyparcel: Android smoke** runs the same command.
 The fixture pins its own known server key. In the app, open **Devices**,
 press **Refresh**, compare Alice's fingerprint with the one printed in the smoke
 terminal, then approve it with a name such as `alice`. Return to Inbox and refresh
-to see the initial greeting. For a real server, enter its address, port, and
-username in Settings and press **Connect**. Remote paths are under **Advanced
+to see the six sample parcels described below. For a real server, enter its
+address, port and username in Settings and press **Connect**. Remote paths are under **Advanced
 settings**. The app discovers its key and
 shows the endpoint, key type, and fingerprint. Compare that fingerprint through
 a trusted source before **Approve & connect**. Manually enroll this device's
@@ -53,8 +53,8 @@ keyparcel receive <file-id> --save-to ./received-file
 
 On the phone, **Send → Text**, select the approved Alice name, enter text, and
 press **Send**. For a file, choose **Send → File → Choose file**, select a document
-in Android's picker, choose a recipient, and press **Send file**. Refresh the Linux inbox to receive it. **This device** sends to
-your own inbox without approving yourself; the server must still have your
+in Android's picker, choose a recipient, and press **Send**. Refresh the Linux inbox
+to receive it. **This device** sends to your own inbox without approving yourself; the server must still have your
 public key enrolled.
 
 Repeated smoke launches reinstall updated app code while preserving its key,

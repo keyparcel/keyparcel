@@ -16,7 +16,8 @@ only fills the form; the active connection and drafts remain unchanged until
 **Save & connect**. **Browse…** accepts any
 private-key filename. **Save & connect** saves the shared CLI profile and connects;
 failed connections keep the settings and show an error. Advanced settings contain
-remote paths and OpenSSH details.
+the remote access method and storage paths; an explicit `--ssh-config` override
+is shown when one is supplied. Settings also shows the build version for bug reports.
 
 Open **Show enrollment details** to validate the current identity locally and copy
 its public key for server enrollment. A matching adjacent `.pub` file supplies its
@@ -63,8 +64,8 @@ using the original message/file bytes. Unconfirmed deliveries require checking
 the recipient inbox before starting another send. **Edit draft** clears the
 selection while keeping the content; previous deliveries are not undone.
 
-Draft text,
-recipient and file survive navigation, dialog cancellation and failed sends.
+Draft text, recipients and file survive navigation, dialog cancellation and failed
+sends.
 Successful sends stay on Send, keep recipients and clear only the sent text or
 file attachment. **Discard draft** clears recipients, text and file. Server/identity or approval changes clear affected recipient selections
 without discarding content. Drafts do not survive app restarts.
@@ -90,8 +91,7 @@ for text. Replacing an existing regular file requires confirmation.
 Use **Delete** on an Inbox item to remove this device's remote copy without
 receiving or saving it. Confirm the deletion, or cancel to keep it. Other
 recipients' copies and saved local files are untouched. A failed deletion keeps
-the item available for retry. **Remove & close** after receiving/saving still
-works as before.
+the item available for retry.
 
 Receiving or saving **keeps the remote copy**. **Remove & close** deletes it
 explicitly; Back, window closure, cancellation and failed delivery retain it.
@@ -118,7 +118,9 @@ Reconnections preserve server-key checks and never open approval dialogs in the
 background: use **Save & connect** in Settings when approval is needed. Server/trust changes
 invalidate affected cached results. Monitoring stops when the app exits.
 
-Network/file operations have a two-minute deadline and a Cancel action; a timeout
-or cancellation cleans staging and restores controls. File selection currently
+Network/file operations default to a two-minute deadline (`--request-timeout`
+can change it) and offer Cancel; timeout or cancellation cleans staging and
+restores controls. File selection currently
 uses local paths. Candidate installs are checked on Ubuntu 24.04, Debian 13 and
-Fedora 44; native Wayland and other distributions remain unverified; background transfers and notifications are not implemented.
+Fedora 44. Native Wayland and other distributions remain unverified. Background
+transfers and notifications are not implemented.

@@ -44,7 +44,7 @@ transport subtests and shared-state assertions stay together. Ordinary
 execution, and `SCENARIO=...` still filters normally.
 
 Android CI requires writable `/dev/kvm`, JDK 21, and the components in
-[android/README.md](../../android/README.md). The workflow grants the runner user
+[Android build prerequisites](../../android/DEVELOPMENT.md#build-prerequisites). The workflow grants the runner user
 access to its ephemeral VM's KVM device. CPU acceleration is explicitly `on`;
 software GPU rendering and the tested 480×800 layout remain. Verification uses
 5554 and the UI client uses the dedicated headless 5556 emulator, on separate VMs.
@@ -64,8 +64,8 @@ SSH fixture, real enrollment, host/device trust checks and text exchange.
 The `network` shard keeps timeout/recovery, viewer/clipboard boundaries and
 multi-recipient retries together. The `files` shard keeps failed removal,
 restart, inbox deletion and file transfers together, including their shared
-provider-saved file and independent CLI byte/count checks. Kotlin scenario
-bodies, software keyboard and touch assertions are unchanged.
+provider-saved file and independent CLI byte/count checks. Both use the software
+keyboard and real touch assertions.
 
 Both jobs retain build/emulator-boot overlap and build their own APKs; no app or
 fixture state crosses shards. The required `Android client` aggregate passes
