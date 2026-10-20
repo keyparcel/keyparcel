@@ -63,8 +63,8 @@ original display name is preserved; binary, empty and unknown-size documents are
 supported without broad storage permission.
 
 Pull down Inbox or Devices, or use the refresh icon beside either heading, to
-refresh. Active refreshes show a native spinner and a Cancel action in the content
-area; other operations show their progress below the header.
+refresh. Active refreshes show a native spinner and **Cancel** beside the heading
+refresh icon; other operations show progress below the header.
 
 Every Inbox parcel offers **View**, **Save file** and **Delete**. View accepts up to
 16 MiB of verified plaintext, inclusive. Larger parcels have a disabled View action
@@ -85,8 +85,7 @@ replace it; typing an existing name may instead create a numbered copy.
 Use **Delete** on an Inbox item to remove this device's remote copy without
 receiving or saving it. Confirm the deletion, or cancel to keep it. Other
 recipients' copies and saved local files are untouched. A failed deletion keeps
-the item available for retry. **Remove & close** after receiving/saving still
-works as before.
+the item available for retry.
 
 Receiving or saving **keeps the remote transfer**. **Remove & close** removes it
 explicitly; Back, picker cancellation, app closure and failed removal retain it.
@@ -127,4 +126,6 @@ setup limit. Document metadata, preparation and saving have separate two-minute
 limits. Timeouts cancel work and retain incoming transfers. Large transfers need
 private staging space. Multiple hosts, resumable transfers and identity recovery
 are not implemented. Runtime validation currently uses x86_64 emulators;
-physical ARM64 testing and signed releases are still deferred.
+ARM64 builds are checked statically. The tag workflow produces a signed draft APK
+for manual device inspection and publication, not an automated ARM runtime test.
+Settings shows the build version for bug reports.

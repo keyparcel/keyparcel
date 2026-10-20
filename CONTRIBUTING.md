@@ -6,6 +6,7 @@ update user documentation when behavior changes.
 
 - Use Conventional Commits, such as `fix: preserve a cancelled transfer`
 - Reuse existing fixtures and journey assertions; test local validation with unit tests
+- Include the client version from Settings or `keyparcel --version` in bug reports
 - Keep real keys, personal settings, logs and diagnostic artifacts out of commits
 - Preserve third-party headers and update [notices](THIRD_PARTY_NOTICES.txt) when dependencies change
 

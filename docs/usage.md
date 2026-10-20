@@ -39,7 +39,8 @@ server enrollments may remain selectable until a successful refresh. Current loc
 approvals are always required. CLI sends fetch fresh discovery each invocation.
 
 Each saved target has its own identity, root, and discovery settings. `--host`
-overrides the saved default for one invocation. All commands accept `--config PATH`;
+overrides the saved default for one invocation. Operational commands accept
+`--config PATH`;
 remote commands also accept `--ssh-config PATH` to ask OpenSSH to use a specific
 configuration file. On Linux, config defaults to
 `$XDG_CONFIG_HOME/keyparcel/config.json`, or `~/.config/keyparcel/config.json`.
@@ -95,9 +96,9 @@ without delivering partial data or restarting a partially streamed parcel.
 
 ## Receiving and retention
 
-The GTK and Android GUIs keep received transfers until **Remove & close** is
-chosen; Back and closing the result keep them. The following receive defaults
-apply to the CLI.
+The GTK and Android GUIs retain remote copies until you choose **Delete** in Inbox
+or **Remove & close** in a result. Back and closing a result keep them. The following
+receive defaults apply to the CLI.
 
 Listing verifies signed metadata, not the complete content. Receive fully verifies
 content in temporary storage before output. Successful receive deletes the
@@ -131,9 +132,11 @@ once, even if selected by both its full ID and a prefix. Invalid, missing, ambig
 or failed entries are reported while other valid deletions proceed; any failure gives
 a nonzero exit status. `delete --all` removes all completed transfers in the selected
 device's inbox on the selected host, including corrupted and unapproved packages,
-without confirmation. It cannot be combined with IDs. Both modes use one inbox
-listing, report the number deleted, and leave later arrivals, incomplete uploads, and
-unrelated files untouched. Incomplete-upload cleanup is deferred.
+without confirmation. It cannot be combined with IDs. Full IDs are deleted directly;
+a batch containing prefixes lists once before deleting anything. `--all` lists once
+and deletes that snapshot, leaving later arrivals alone. Deletion reports a count
+and leaves incomplete uploads and unrelated files untouched. Abandoned partial
+uploads require manual cleanup.
 
 To receive a retained transfer again under another filename, use:
 

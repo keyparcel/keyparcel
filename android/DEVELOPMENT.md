@@ -125,5 +125,7 @@ received by a newly generated one. Identity recovery is not implemented.
 
 Development/test builds target the x86_64 emulator. The separate
 [candidate build](../release/README.md) produces an unsigned ARM64 APK with static
-checks. Physical ARM64 execution and signing/publication remain deferred.
+checks. The [tag workflow](../release/README.md#tagged-release-drafts) signs that
+production APK and creates a draft for manual inspection and publication.
+Automated ARM64 runtime and upgrade testing are not provided.
 The verification APK is a test harness, not the user-facing Compose application.

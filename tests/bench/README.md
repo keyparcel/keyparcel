@@ -22,7 +22,8 @@ Calibration is not a guarantee of loaded RTT or single-flow throughput.
 
 A native Go fixture worker runs as the existing ordinary client user. It calls
 production `core.Session` methods through the existing embedded/OpenSSH test
-connector, with current production SFTP options. Setup measures identity/config
+connector, with current production SFTP options: concurrent reads/writes and
+up to 2 MiB transfer buffers. There are no benchmark-only transport tunings. Setup measures identity/config
 loading, authentication and SFTP initialization; closing is outside that timer.
 Remaining rows reuse one authenticated Session per backend/link cell. Shared
 images build once, then embedded/OpenSSH cohorts run in parallel. Each owns a

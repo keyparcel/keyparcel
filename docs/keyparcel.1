@@ -56,7 +56,8 @@ Check recipient outcomes; an unconfirmed delivery must be checked before resendi
 .TP
 .B inbox [\-\-json | \-\-watch [\-\-interval DURATION]]
 List parcels whose metadata verifies for the current identity and approvals.
-Rejected packages are reported as errors. Uploaded times are approximate,
+Rejected packages are reported on standard error and give a nonzero exit status,
+even when accepted items are also shown. Uploaded times are approximate,
 unverified server file times, displayed newest first in the local timezone.
 \fB\-\-watch\fR polls using a persistent connection; the positive interval
 defaults to \fB2s\fR. Watch and JSON output cannot be combined.
@@ -69,7 +70,8 @@ Choose exactly one output action, described below.
 .TP
 .B delete ID [ID ...]
 Delete this identity's remote inbox copies without downloading or decrypting them.
-Unique ID prefixes are accepted. Other recipients' copies and local saved files
+Full IDs are deleted directly; unique prefixes require an inbox listing.
+Other recipients' copies and local saved files
 are unaffected. The command continues past individual failures and reports a count.
 .TP
 .B delete \-\-all

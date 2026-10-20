@@ -39,10 +39,12 @@ ignored build/fixture directory is writable. Go caches persist in
 
 The client container owns a private X11 display, clipboard, D-Bus/accessibility
 buses, window manager and XDG directories. Focused tests and the existing AT-SPI
-journey run there. Only owned-server fault injection (exec/pause/unpause) crosses
+journey run there. Owned-server fault injection (exec/pause/unpause) crosses
 the runner's stdin/stdout; Docker and its socket are absent from the client.
-An independent CLI executable in the container checks filenames and exact bytes.
-Related transfers continue to share one SSH fixture.
+An independent CLI executable in the source-test container checks filenames and
+exact bytes. [Installed-package validation](../../release/README.md#validation-and-limits)
+uses a separate CLI-only driver container so the GTK package can be tested without
+a CLI installation. Related transfers continue to share one SSH fixture.
 
 The [AT-SPI journey](journey.py) checks real dialogs, server/device trust, timed
 refresh and reconnects, drafts, text/files, clipboard boundaries, failure retention,
@@ -96,9 +98,8 @@ first. Test artifacts and Go caches remain.
 
 ## GTK compatibility
 
-The supported, deprecated in-process `GtkFileChooserDialog` avoids portal
-cancellation issues. Product tests cancel immediately and close
-with a picker pending; the crashing case is not skipped. Dialog/saved-host combo
+The client uses the deprecated in-process `GtkFileChooserDialog` for local files.
+Tests cancel immediately and close the app with a picker pending. Dialog/saved-host combo
 APIs need migration before GTK 5. File selection currently supports local paths.
 
 The container image uses Ubuntu 24.04, GTK 4.14.5 and Go 1.27.2, with X11/software

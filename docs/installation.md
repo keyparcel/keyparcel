@@ -2,14 +2,15 @@
 
 [Home](../README.md) · [Usage](usage.md) · [Security](../SECURITY.md)
 
-Build from source, or build local [Linux and Android candidates](../release/README.md).
-Linux DEB/RPM packages and archives have clean-install tests; production ARM64
-Android APKs are unsigned and checked statically. Signed/published releases are
-not yet provided. Physical ARM64 execution remains deferred.
+Build from source or make local [Linux and Android candidates](../release/README.md).
+Linux has separate CLI and GTK DEB/RPM packages and archives, tested on the baselines
+below. Local Android candidates are unsigned; the tag workflow signs an ARM64 APK
+and creates an unpublished draft. Public release downloads are not yet available.
+Automated ARM64 coverage is static; see the [current platform status](../README.md#clients).
 
 ## Server and device keys
 
-Use an SSH/SFTP account with a writable home/data directory and a readable list of
+Use an SSH account with SFTP, a writable home/data directory and a readable list of
 enrolled public keys (by default `.ssh/authorized_keys`). No server-side keyparcel
 application is required. All participating clients must use the same remote root
 and discovery paths; defaults are `.local/share/keyparcel` and `.ssh/authorized_keys`.
@@ -56,7 +57,9 @@ make build
 `make build` produces `bin/keyparcel`; put it on your `PATH` if desired. For clipboard
 copying on Linux, install `wl-copy` for Wayland or `xclip` for X11. macOS uses its
 system `osascript`/AppKit runtime. There is no ongoing macOS CI or full native
-platform-parity claim. [CLI usage](usage.md) covers profiles and peer approval.
+platform-parity claim. CLI commands prefer SSH command reads and require supported
+Unix tools by default; use `setup --access-method sftp` for an SFTP-only server.
+See [remote access methods](usage.md#remote-access-method) and [peer approval](usage.md#profiles-and-server-trust).
 
 ## Linux desktop
 
@@ -80,13 +83,14 @@ baselines and runtime dependencies. Native Wayland is not validated.
 The Compose app remembers one server and stores its generated identity encrypted
 with Android Keystore. Source builds need Go, JDK 21 and the SDK/NDK components
 listed in [Android development](../android/DEVELOPMENT.md). Current build scripts
-target the x86_64 emulator; the separate [candidate build](../release/README.md)
-produces an unsigned ARM64 APK without running it:
-
+target the x86_64 emulator:
 
 ```sh
 make android-client-build
 ```
+
+The separate [candidate build](../release/README.md) produces an unsigned ARM64
+APK without running it.
 
 This creates development debug APKs under `android/client/app/build/outputs/apk/`.
 For an interactive emulator with a disposable server/CLI peer, follow the
