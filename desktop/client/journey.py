@@ -291,10 +291,11 @@ def verify_received_text(id, message):
     received(id)
     node = control(app, "Received text")
     assert text_contents(node) == message, "Preview altered whitespace or Unicode"
-    control(app,"Copy complete text",Atspi.Role.PUSH_BUTTON)
+    copy = control(app,"Copy complete text",Atspi.Role.PUSH_BUTTON)
     preview_scroll = node.get_parent()
     assert preview_scroll.get_role() == Atspi.Role.SCROLL_PANE, "Preview lost its text scroller"
-    assert not find(preview_scroll,"Copy complete text"), "Whole-text copy is inside the scrolling preview"
+    preview = control(app,"Text preview")
+    assert preview_scroll.get_parent() == preview and copy.get_parent() == preview, "Copy is not overlaid inside the preview frame"
     click("Copy complete text")
     status("Complete text copied")
     wait("Clipboard differs from verified text",lambda: clipboard() == message.encode())
