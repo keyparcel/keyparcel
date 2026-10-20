@@ -24,7 +24,7 @@ func TestAndroidTextClient(t *testing.T) {
 	if shard != "" && shard != "network" && shard != "files" {
 		t.Fatalf("Select Android client shard network or files, or leave unset for the complete journey: %q", shard)
 	}
-	const app = "dev.keyparcel.app.scenario"
+	const app = "io.github.keyparcel.keyparcel.scenario"
 	sdk := os.Getenv("ANDROID_HOME")
 	if sdk == "" {
 		t.Fatal("ANDROID_HOME is required")

@@ -388,7 +388,7 @@ static gboolean close_window(GtkWindow *window, gpointer data) {
 static void present(GApplication *app, gpointer data) { (void)app; gtk_window_present(((UI *)data)->window); }
 UI *ui_new(uintptr_t handle, const char *icon) {
     gtk_init();
-    gtk_window_set_default_icon_name("dev.keyparcel");
+    gtk_window_set_default_icon_name("io.github.keyparcel.keyparcel");
     GtkCssProvider *style = gtk_css_provider_new();
     gtk_css_provider_load_from_data(style,
         ".keyparcel .brand { font-size: 1.5em; font-weight: 700; }"
@@ -422,7 +422,7 @@ UI *ui_new(uintptr_t handle, const char *icon) {
     ui->fields = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
     ui->inbox_rows = g_hash_table_new_full(g_str_hash,g_str_equal,g_free,NULL);
     ui->device_rows = g_hash_table_new_full(g_str_hash,g_str_equal,g_free,NULL);
-    ui->app = gtk_application_new("dev.keyparcel", G_APPLICATION_NON_UNIQUE);
+    ui->app = gtk_application_new("io.github.keyparcel.keyparcel", G_APPLICATION_NON_UNIQUE);
     GError *error = NULL;
     if (!g_application_register(G_APPLICATION(ui->app), NULL, &error)) {
         g_printerr("GTK initialization: %s\n", error->message); g_clear_error(&error); ui_unref(ui); return NULL;

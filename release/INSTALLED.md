@@ -102,8 +102,8 @@ For the GTK archive, from its own extracted directory:
 
 ```sh
 sudo install -Dm755 usr/bin/keyparcel-gtk /usr/local/bin/keyparcel-gtk
-sudo install -Dm644 usr/share/applications/dev.keyparcel.desktop /usr/local/share/applications/dev.keyparcel.desktop
-sudo install -Dm644 usr/share/icons/hicolor/scalable/apps/dev.keyparcel.svg /usr/local/share/icons/hicolor/scalable/apps/dev.keyparcel.svg
+sudo install -Dm644 usr/share/applications/io.github.keyparcel.keyparcel.desktop /usr/local/share/applications/io.github.keyparcel.keyparcel.desktop
+sudo install -Dm644 usr/share/icons/hicolor/scalable/apps/io.github.keyparcel.keyparcel.svg /usr/local/share/icons/hicolor/scalable/apps/io.github.keyparcel.keyparcel.svg
 sudo install -d /usr/local/share/doc/keyparcel-gtk
 sudo install -m644 usr/share/doc/keyparcel-gtk/* /usr/local/share/doc/keyparcel-gtk/
 ```
@@ -123,8 +123,8 @@ To remove **only GTK** installed from its archive:
 
 ```sh
 sudo rm -- /usr/local/bin/keyparcel-gtk \
-  /usr/local/share/applications/dev.keyparcel.desktop \
-  /usr/local/share/icons/hicolor/scalable/apps/dev.keyparcel.svg
+  /usr/local/share/applications/io.github.keyparcel.keyparcel.desktop \
+  /usr/local/share/icons/hicolor/scalable/apps/io.github.keyparcel.keyparcel.svg
 sudo rm -- /usr/local/share/doc/keyparcel-gtk/{README.md,build-info.json,LICENSE,NOTICE,THIRD_PARTY_NOTICES.txt,copyright}
 sudo rmdir /usr/local/share/doc/keyparcel-gtk
 ```

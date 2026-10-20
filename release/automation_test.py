@@ -99,7 +99,7 @@ class Automation(unittest.TestCase):
                 directory.mkdir()
                 info = dict(version='1.2.3-rc.1', revision=SHA, target=target)
                 if target == 'android-arm64':
-                    info.update(versionCode=42, applicationId='dev.keyparcel.app')
+                    info.update(versionCode=42, applicationId='io.github.keyparcel.keyparcel')
                 (directory / 'build-info.json').write_text(json.dumps(info))
                 for name in names + ['diagnostic.log', 'unsigned.apk', 'legacy-package.fixture']:
                     (directory / name).write_text(name)
@@ -124,6 +124,12 @@ class Automation(unittest.TestCase):
                 automation.assemble(root, root / 'wrong-sha', '1.2.3-rc.1', 'b'*40, 42)
             with self.assertRaises(ValueError):
                 automation.assemble(root, root / 'wrong-code', '1.2.3-rc.1', SHA, 43)
+            metadata = root / 'android-arm64/build-info.json'
+            info = json.loads(metadata.read_text())
+            info['applicationId'] = 'dev.keyparcel.app'
+            metadata.write_text(json.dumps(info))
+            with self.assertRaisesRegex(ValueError, 'application ID'):
+                automation.assemble(root, root / 'old-application-id', '1.2.3-rc.1', SHA, 42)
 
     def test_draft_only_prerelease_and_safe_reruns(self):
         with tempfile.TemporaryDirectory() as temporary:

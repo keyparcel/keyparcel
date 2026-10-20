@@ -32,7 +32,7 @@ android {
     namespace = "dev.keyparcel.app"
     compileSdk = 35
     defaultConfig {
-        applicationId = "dev.keyparcel.app"
+        applicationId = "io.github.keyparcel.keyparcel"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

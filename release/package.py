@@ -33,8 +33,8 @@ def stage_client(stage, binaries, repo, info, client):
     if client == 'cli':
         sources.append((repo / 'completions/keyparcel.bash', 'usr/share/bash-completion/completions/keyparcel'))
     else:
-        sources += [(repo / 'release/dev.keyparcel.desktop', 'usr/share/applications/dev.keyparcel.desktop'),
-                    (repo / 'assets/branding/app-icon.svg', 'usr/share/icons/hicolor/scalable/apps/dev.keyparcel.svg')]
+        sources += [(repo / 'release/io.github.keyparcel.keyparcel.desktop', 'usr/share/applications/io.github.keyparcel.keyparcel.desktop'),
+                    (repo / 'assets/branding/app-icon.svg', 'usr/share/icons/hicolor/scalable/apps/io.github.keyparcel.keyparcel.svg')]
     for source, relative in sources:
         path = stage / relative
         path.parent.mkdir(parents=True, exist_ok=True)

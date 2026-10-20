@@ -5,7 +5,7 @@ cd "$repo_dir"
 source android/env.sh
 state_dir="$repo_dir/.smoke-android"
 serial=${ANDROID_SERIAL:-emulator-5554}
-app=dev.keyparcel.app.smoke
+app=io.github.keyparcel.keyparcel.smoke
 read -r -a docker_cmd <<< "${KEYPARCEL_DOCKER:-docker}"
 fail() { echo "$*" >&2; exit 1; }
 load() {

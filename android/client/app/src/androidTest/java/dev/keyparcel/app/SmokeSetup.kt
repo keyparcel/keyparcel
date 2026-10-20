@@ -11,7 +11,7 @@ class SmokeSetup {
     @Test fun prepare() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
-        require(context.packageName == "dev.keyparcel.app.smoke") { "Smoke setup may only target the smoke variant" }
+        require(context.packageName == "io.github.keyparcel.keyparcel.smoke") { "Smoke setup may only target the smoke variant" }
         go.Seq.setContext(context)
         Bridge.initialize(context.cacheDir.absolutePath)
         val args = InstrumentationRegistry.getArguments()

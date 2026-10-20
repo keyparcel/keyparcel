@@ -71,11 +71,11 @@ if client == 'gtk':
     import gi
     gi.require_version('GdkPixbuf', '2.0')
     from gi.repository import GdkPixbuf, Gio
-    subprocess.run(['desktop-file-validate', '/usr/share/applications/dev.keyparcel.desktop'], check=True)
-    launcher = Path('/usr/share/applications/dev.keyparcel.desktop').read_text()
-    assert 'Exec=keyparcel-gtk\n' in launcher and 'Icon=dev.keyparcel\n' in launcher
-    assert Gio.DesktopAppInfo.new('dev.keyparcel.desktop').get_icon().to_string() == 'dev.keyparcel'
-    icon = GdkPixbuf.Pixbuf.new_from_file('/usr/share/icons/hicolor/scalable/apps/dev.keyparcel.svg')
+    subprocess.run(['desktop-file-validate', '/usr/share/applications/io.github.keyparcel.keyparcel.desktop'], check=True)
+    launcher = Path('/usr/share/applications/io.github.keyparcel.keyparcel.desktop').read_text()
+    assert 'Exec=keyparcel-gtk\n' in launcher and 'Icon=io.github.keyparcel.keyparcel\n' in launcher
+    assert Gio.DesktopAppInfo.new('io.github.keyparcel.keyparcel.desktop').get_icon().to_string() == 'io.github.keyparcel.keyparcel'
+    icon = GdkPixbuf.Pixbuf.new_from_file('/usr/share/icons/hicolor/scalable/apps/io.github.keyparcel.keyparcel.svg')
     assert (icon.get_width(), icon.get_height()) == (320, 320)
 else:
     subprocess.run(['bash', '-c', 'source /usr/share/bash-completion/completions/keyparcel; complete -p keyparcel'], check=True)

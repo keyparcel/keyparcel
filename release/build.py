@@ -58,7 +58,7 @@ def android(version, code, output, source):
                KEYPARCEL_RELEASE_REVISION=source, KEYPARCEL_RELEASE_ANDROID_DIR=str(destination))
     run(['bash', 'release/android.sh'], env=env)
     (destination / 'build-info.json').write_text(json.dumps(dict(version=version, versionCode=code,
-             revision=source, target='android-arm64', applicationId='dev.keyparcel.app'), indent=2) + '\n')
+             revision=source, target='android-arm64', applicationId='io.github.keyparcel.keyparcel'), indent=2) + '\n')
     run([sys.executable, 'release/check-apk.py', destination])
 
 
