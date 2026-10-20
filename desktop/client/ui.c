@@ -644,12 +644,15 @@ UI *ui_new(uintptr_t handle, const char *icon) {
     GtkWidget *view = page(ui, "text", "Parcel");
     GtkWidget *retained = label("The remote copy remains until you choose Remove & close.");
     gtk_widget_add_css_class(retained,"dim-label"); gtk_box_append(GTK_BOX(view),retained);
-    GtkWidget *preview_header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL,0);
+    GtkWidget *preview=g_object_new(GTK_TYPE_OVERLAY,"accessible-role",GTK_ACCESSIBLE_ROLE_GROUP,NULL);remember(ui,"text-preview",preview);
+    accessible(preview,"Text preview");
+    gtk_overlay_set_child(GTK_OVERLAY(preview),text_view(ui,"received",FALSE));
     GtkWidget *copy_message=icon_button(ui,"edit-copy-symbolic","Copy complete text","copy-message");
-    remember(ui,"copy-message",copy_message);
-    gtk_widget_set_hexpand(copy_message,TRUE);gtk_widget_set_halign(copy_message,GTK_ALIGN_END);
-    gtk_box_append(GTK_BOX(preview_header),copy_message);gtk_box_append(GTK_BOX(view),preview_header);
-    gtk_box_append(GTK_BOX(view), text_view(ui, "received", FALSE));
+    remember(ui,"copy-message",copy_message);gtk_widget_set_focus_on_click(copy_message,FALSE);
+    gtk_widget_set_halign(copy_message,GTK_ALIGN_END);gtk_widget_set_valign(copy_message,GTK_ALIGN_START);
+    gtk_widget_set_margin_top(copy_message,4);gtk_widget_set_margin_end(copy_message,4);
+    gtk_text_view_set_right_margin(GTK_TEXT_VIEW(g_hash_table_lookup(ui->fields,"received")),52);
+    gtk_overlay_add_overlay(GTK_OVERLAY(preview),copy_message);gtk_box_append(GTK_BOX(view),preview);
     g_signal_connect(g_hash_table_lookup(ui->fields, "received"), "copy-clipboard", G_CALLBACK(selected_copy), ui);
     GtkWidget *notice = label(""); remember(ui, "view-notice", notice); gtk_box_append(GTK_BOX(view), notice);
     gtk_box_append(GTK_BOX(view),button(ui,"Save file","save-view",""));
@@ -877,7 +880,7 @@ void ui_device(UI *ui, const char *fp, const char *detail, int supported, int tr
     add_row(ui,fp,content,box); g_free(content);
 }
 void ui_view(UI *ui, const char *text, const char *notice, int eligible) {
-    gtk_widget_set_visible(gtk_widget_get_parent(g_hash_table_lookup(ui->fields,"received")),eligible);
+    gtk_widget_set_visible(g_hash_table_lookup(ui->fields,"text-preview"),eligible);
     gtk_widget_set_visible(g_hash_table_lookup(ui->fields,"copy-message"),eligible);
     GtkTextBuffer *b = gtk_text_view_get_buffer(GTK_TEXT_VIEW(g_hash_table_lookup(ui->fields, "received")));
     gtk_text_buffer_set_text(b, text, -1); ui_set(ui, "view-notice", notice); ui_page(ui, "text");
