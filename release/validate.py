@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Install independent candidates into fresh distros, reusing each client journey."""
 import argparse
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -9,20 +10,35 @@ import uuid
 from build import DOCKER, REPO, run
 from layout import CLIENTS
 
+DISTROS = {
+    'ubuntu24.04': ('ubuntu24.04-amd64', 'ubuntu:24.04', 'deb'),
+    'debian13': ('ubuntu24.04-amd64', 'debian:13', 'deb'),
+    'fedora44': ('fedora44-x86_64', 'fedora:44', 'rpm'),
+}
+
+
+def check_revision(directory, revision):
+    info = json.loads((directory / 'build-info.json').read_text())
+    assert info['revision'] == revision, 'Candidate source differs from validator checkout'
+    assert info['target'] == directory.name, 'Candidate target differs from validator target'
+    assert info['version'] == directory.parent.name, 'Candidate version differs from validator version'
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('candidates', type=Path, help='Version directory from build.py')
+    parser.add_argument('--distro', choices=DISTROS, help='Validate only this distro (default: all three)')
+    parser.add_argument('--revision', help='Require this exact candidate source revision (CI handoff)')
     args = parser.parse_args()
     if os.getuid() == 0:
         parser.error('Run as an ordinary user (Docker access required)')
     candidates = args.candidates.resolve()
     run(['python3', 'release/version_test.py'])
     run(['bash', 'tests/build-image.sh', 'sshd', '-t', 'keyparcel-test-sshd:local', 'tests/e2e'])
-    for target, base, package in [('ubuntu24.04-amd64', 'ubuntu:24.04', 'deb'),
-                                  ('ubuntu24.04-amd64', 'debian:13', 'deb'),
-                                  ('fedora44-x86_64', 'fedora:44', 'rpm')]:
+    for target, base, package in DISTROS.values() if args.distro is None else [DISTROS[args.distro]]:
         directory = candidates / target
+        if args.revision:
+            check_revision(directory, args.revision)
         packages = {client: list(directory.glob('keyparcel-' + client + '*.' + package)) for client in CLIENTS}
         assert all(len(paths) == 1 for paths in packages.values()), f'Expected one package per client: {directory}'
         images = {}

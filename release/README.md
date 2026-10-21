@@ -87,6 +87,20 @@ source/developer guides are not bundled as broken relative links.
 
 ## Validation and limits
 
+Candidate CI builds DEBs and RPMs on separate runners, then validates Ubuntu,
+Debian and Fedora in parallel. Ubuntu and Debian download the same DEB build.
+`Linux installed packages` succeeds only when both builders and all three
+validators succeed, including their artifact handoffs. The internal one-day
+`linux-validation-*` build artifacts include the old-name migration fixture;
+public candidate artifacts and the release asset allowlist exclude it.
+
+For a focused local run, build with `--linux-target ubuntu24.04-amd64` or
+`--linux-target fedora44-x86_64`, then validate with `--distro ubuntu24.04`,
+`--distro debian13` or `--distro fedora44`. Without these options, the scripts
+still build both targets and validate all three distros. CI additionally uses
+`--revision` to reject a handoff whose source, version or target differs from
+its checkout. The tag workflow keeps the full serial build/validation path.
+
 `validate.py` installs the actual packages through apt/dnf in fresh matching
 runtime images (retaining candidate docs despite minimal-image doc filters).
 It installs each client separately and checks startup/linking **before** adding
