@@ -26,14 +26,14 @@ class ClientLayout(unittest.TestCase):
                 package.stage_client(stage, binaries, build.REPO, info, client)
                 stages[client] = stage
                 actual = {str(p.relative_to(stage)): p.stat().st_mode & 0o7777 for p in stage.rglob('*') if p.is_file()}
-                self.assertEqual(actual, layout.files(client))
+                self.assertEqual(actual, layout.files(client, info['target']))
                 doc = stage / f'usr/share/doc/keyparcel-{client}'
                 self.assertEqual(json.loads((doc / 'build-info.json').read_text()), dict(info, client=client))
                 for name in ('LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.txt'):
                     self.assertEqual((doc / name).read_bytes(), (build.REPO / name).read_bytes())
-            self.assertFalse(set(layout.files('cli')) & set(layout.files('gtk')), 'Clients share owned files')
-            self.assertNotIn('usr/bin/keyparcel', layout.files('gtk'))
-            self.assertNotIn('usr/bin/keyparcel-gtk', layout.files('cli'))
+            self.assertFalse(set(layout.files('cli', info['target'])) & set(layout.files('gtk', info['target'])), 'Clients share owned files')
+            self.assertNotIn('usr/bin/keyparcel', layout.files('gtk', info['target']))
+            self.assertNotIn('usr/bin/keyparcel-gtk', layout.files('cli', info['target']))
             manual = stages['cli'] / 'usr/share/man/man1/keyparcel.1.gz'
             source = (build.REPO / 'docs/keyparcel.1').read_bytes()
             self.assertEqual(gzip.decompress(manual.read_bytes()), source)
@@ -41,7 +41,21 @@ class ClientLayout(unittest.TestCase):
             repeat = root / 'repeat'
             package.stage_client(repeat, binaries, build.REPO, info, 'cli')
             self.assertEqual((repeat / 'usr/share/man/man1/keyparcel.1.gz').read_bytes(), manual.read_bytes())
-            self.assertNotIn('usr/share/man/man1/keyparcel.1.gz', layout.files('gtk'))
+            self.assertNotIn('usr/share/man/man1/keyparcel.1.gz', layout.files('gtk', info['target']))
+
+    def test_zsh_completion_uses_each_distros_autoload_directory(self):
+        for target, directory in [('ubuntu24.04-amd64', 'vendor-completions'),
+                                  ('fedora44-amd64', 'site-functions')]:
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                binary = root / 'keyparcel'
+                binary.write_bytes(b'fixture')
+                stage = root / 'cli'
+                package.stage_client(stage, root, build.REPO, dict(target=target), 'cli')
+                relative = f'usr/share/zsh/{directory}/_keyparcel'
+                self.assertEqual((stage / relative).read_bytes(), (build.REPO / 'completions/_keyparcel').read_bytes())
+                self.assertIn(relative, layout.files('cli', target))
+                self.assertNotIn(relative, layout.files('gtk', target))
 
     @unittest.skipUnless(shutil.which('groff'), 'groff not installed; installed-package checks also render the manual')
     def test_manual_renders_without_warnings(self):

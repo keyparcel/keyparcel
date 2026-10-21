@@ -3,11 +3,17 @@ CLIENTS = ('cli', 'gtk')
 NOTICES = ('LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.txt', 'copyright')
 
 
-def files(client):
+def zsh_completion(target):
+    directory = 'site-functions' if target.startswith('fedora') else 'vendor-completions'
+    return 'usr/share/zsh/' + directory + '/_keyparcel'
+
+
+def files(client, target):
     name = 'keyparcel-' + client
     paths = {'usr/bin/' + ('keyparcel' if client == 'cli' else name): 0o755}
     if client == 'cli':
         paths['usr/share/bash-completion/completions/keyparcel'] = 0o644
+        paths[zsh_completion(target)] = 0o644
         paths['usr/share/man/man1/keyparcel.1.gz'] = 0o644
     else:
         paths['usr/share/applications/io.github.keyparcel.keyparcel.desktop'] = 0o644

@@ -156,7 +156,7 @@ plain-text pasteboard type through the system `osascript` bridge; on Linux it us
 `wl-copy` or `xclip` according to the desktop session. Rich clipboard formats are
 deferred.
 
-## Bash completion
+## Shell completion
 
 Source the supplied script in Bash (add the line to `~/.bashrc` to load it in new
 shells):
@@ -164,6 +164,30 @@ shells):
 ```sh
 source /path/to/keyparcel/completions/keyparcel.bash
 ```
+
+The CLI packages install Bash and zsh completion into their system directories.
+Ubuntu 24.04 initializes zsh completion globally; Fedora 44's default new-user
+`~/.zshrc` initializes it. An existing home without that setup may need
+`autoload -Uz compinit; compinit` in `~/.zshrc`. A fresh interactive zsh can also
+show its first-run setup wizard. For a source checkout or user-local installation:
+
+```sh
+mkdir -p ~/.local/share/zsh/site-functions
+cp /path/to/keyparcel/completions/_keyparcel ~/.local/share/zsh/site-functions/
+```
+
+Add this block to `~/.zshrc`, merging it with any existing completion setup.
+The `compinit` call registers the added directory even if the system initialized
+completion earlier:
+
+```zsh
+fpath=(~/.local/share/zsh/site-functions $fpath)
+autoload -Uz compinit
+compinit
+```
+
+Restart the shell after installing completion. No shell startup files are edited automatically. Both shells use the same CLI suggestions; filenames use each
+shell's native path completion and quoting.
 
 Completion suggests commands, flags, local peer names, `self`, configured hosts, and
 file paths. `trust` queries current discovery for supported, unapproved keys
