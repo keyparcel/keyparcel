@@ -29,8 +29,9 @@ def revision(require_clean=False):
     return sha + ('-dirty' if dirty else '')
 
 
-def linux(version, output, source):
-    for target, base in TARGETS.items():
+def linux(version, output, source, target=None):
+    targets = TARGETS if target is None else {target: TARGETS[target]}
+    for target, base in targets.items():
         destination = output / target
         destination.mkdir(parents=True, exist_ok=True)
         image = 'keyparcel-release-builder:' + target
@@ -66,17 +67,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('target', choices=['linux', 'android', 'all'])
     parser.add_argument('--version', required=True)
+    parser.add_argument('--linux-target', choices=TARGETS, help='Build only this Linux target (default: both)')
     parser.add_argument('--android-code', type=android_code)
     parser.add_argument('--require-clean', action='store_true', help='Reject uncommitted source changes (CI)')
     parser.add_argument('--output', type=Path, default=REPO / 'release/out')
     args = parser.parse_args()
     package_version(args.version)
+    if args.linux_target and args.target == 'android':
+        parser.error('--linux-target requires linux or all')
     if args.target != 'linux' and args.android_code is None:
         parser.error('--android-code is required for Android')
     source = revision(require_clean=args.require_clean)
     output = args.output.resolve() / args.version
     if args.target in ('linux', 'all'):
-        linux(args.version, output, source)
+        linux(args.version, output, source, args.linux_target)
     if args.target in ('android', 'all'):
         android(args.version, args.android_code, output, source)
 

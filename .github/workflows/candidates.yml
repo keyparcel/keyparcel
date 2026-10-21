@@ -13,10 +13,57 @@ concurrency:
   group: candidates-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
-  linux:
-    name: Linux installed packages
+  linux-build:
+    name: Build Linux packages (${{ matrix.target }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [ubuntu24.04-amd64, fedora44-x86_64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - run: python3 -m unittest discover -s release -p '*_test.py'
+      - run: echo "RELEASE_VERSION=$(cat release/VERSION)" >> "$GITHUB_ENV"
+      - run: |
+          mkdir -p release/out
+          python3 release/build.py linux --linux-target "${{ matrix.target }}" --require-clean --version "$RELEASE_VERSION" 2>&1 | tee release/out/candidate-build.log
+      # Internal validation inputs include the old-name package fixture, never a release asset.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: linux-validation-${{ matrix.target }}
+          path: release/out/${{ env.RELEASE_VERSION }}/${{ matrix.target }}/
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: linux-candidates-${{ matrix.target }}
+          path: |
+            release/out/**/*.deb
+            release/out/**/*.rpm
+            release/out/**/*.tar.gz
+            release/out/**/build-info.json
+            release/out/candidate-build.log
+          retention-days: 7
+  linux-validate:
+    name: Installed packages (${{ matrix.distro }})
+    needs: linux-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: ubuntu24.04
+            target: ubuntu24.04-amd64
+          - distro: debian13
+            target: ubuntu24.04-amd64
+          - distro: fedora44
+            target: fedora44-x86_64
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -25,25 +72,34 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
-      - run: python3 -m unittest discover -s release -p '*_test.py'
-      - run: |
-          mkdir -p release/out
-          python3 release/build.py linux --require-clean --version "$(cat release/VERSION)" 2>&1 | tee release/out/candidate-build.log
-      - run: python3 release/validate.py "release/out/$(cat release/VERSION)" 2>&1 | tee release/out/candidate-validation.log
+      - run: echo "RELEASE_VERSION=$(cat release/VERSION)" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: linux-validation-${{ matrix.target }}
+          path: release/out/${{ env.RELEASE_VERSION }}/${{ matrix.target }}/
+      - run: python3 release/validate.py "release/out/$RELEASE_VERSION" --distro "${{ matrix.distro }}" --revision "$(git rev-parse HEAD)" 2>&1 | tee release/out/candidate-validation.log
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
-          name: linux-candidates
+          name: linux-validation-results-${{ matrix.distro }}
           path: |
-            release/out/**/*.deb
-            release/out/**/*.rpm
-            release/out/**/*.tar.gz
-            release/out/**/build-info.json
-            release/out/candidate-*.log
+            release/out/candidate-validation.log
             test-artifacts/
             desktop/client/build/session.*/
             !**/id_*
           retention-days: 7
+  linux:
+    name: Linux installed packages
+    if: always()
+    needs: [linux-build, linux-validate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every build and distro validation
+        env:
+          BUILD_RESULT: ${{ needs.linux-build.result }}
+          VALIDATE_RESULT: ${{ needs.linux-validate.result }}
+        run: test "$BUILD_RESULT" = success && test "$VALIDATE_RESULT" = success
   android:
     name: Android ARM64 candidate (static)
     runs-on: ubuntu-24.04
