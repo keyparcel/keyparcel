@@ -2,11 +2,22 @@
 
 [Home](../README.md) · [Usage](usage.md) · [Security](../SECURITY.md)
 
-Build from source or make local [Linux and Android candidates](../release/README.md).
-Linux has separate CLI and GTK DEB/RPM packages and archives, tested on the baselines
-below. Local Android candidates are unsigned; the tag workflow signs an ARM64 APK
-and creates an unpublished draft. Public release downloads are not yet available.
-Automated ARM64 coverage is static; see the [current platform status](../README.md#clients).
+Download the [RC5 prerelease](https://github.com/keyparcel/keyparcel/releases/tag/v0.1.0-rc.5):
+
+- **Linux amd64:** install `keyparcel-cli`, `keyparcel-gtk`, or both. DEBs support
+  Ubuntu 24.04 and Debian 13; RPMs support Fedora 44. Separate binary archives
+  are available for the same baselines.
+- **Android ARM64:** install the signed APK on Android 8 or newer.
+
+Verify downloads against `SHA256SUMS` from the same release. Follow the
+[tagged installation guide](https://github.com/keyparcel/keyparcel/blob/v0.1.0-rc.5/release/INSTALLED.md)
+for package/archive commands and removal of the older combined `keyparcel` package
+before migration. Device-key enrollment is still required; see below.
+
+Source builds are described in the client sections below. Local
+[candidate builds](../release/README.md) keep Android APKs unsigned; the tag workflow
+signs them and prepares a draft for manual publication. Automated ARM64 checks are
+static, not runtime or upgrade assurance; see the [current platform status](../README.md#clients).
 
 ## Server and device keys
 

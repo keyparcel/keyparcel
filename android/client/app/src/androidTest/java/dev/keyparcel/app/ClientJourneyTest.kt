@@ -656,7 +656,6 @@ class ClientJourneyTest {
             compose.runOnIdle { clipboard.setPrimaryClip(ClipData.newIntent("fixture", android.content.Intent())) }
             compose.onNodeWithTag("paste-text").performTouchInput { click() }
             check(value("message") == "a世界!d") { "Non-text clipboard changed draft" }
-            field("message", "Meeting notes\nPlease review before Friday.")
             field("message", input)
         }
         click("devices-screen"); click("settings"); click("back")
@@ -677,7 +676,36 @@ class ClientJourneyTest {
             pasteBounds.top >= editorBounds.top && pasteBounds.center.y < editorBounds.center.y) {
             "Paste control is not at editor top-right: $pasteBounds vs $editorBounds"
         }
-        screenshot("send-paste")
+        field("message", "Meeting notes\nPlease review before Friday.")
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+        compose.waitUntil(30_000) {
+            !imeAnimating && appHasFocus() && ViewCompat.getRootWindowInsets(compose.activity.window.decorView)
+                ?.isVisible(WindowInsetsCompat.Type.ime()) == false
+        }
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val originalFlags = automation.serviceInfo.flags
+        automation.serviceInfo = automation.serviceInfo.apply {
+            flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+        }
+        try {
+            compose.waitUntil(30_000) {
+                val windows = automation.windows
+                windows.any { it.root?.packageName?.toString() == compose.activity.packageName } &&
+                    windows.none { window ->
+                        window.title?.toString() == "ClipboardOverlay" ||
+                            listOf("clipboard_preview", "minimized_preview").any { id ->
+                                window.root?.findAccessibilityNodeInfosByViewId("com.android.systemui:id/$id")
+                                    ?.any { it.isVisibleToUser } == true
+                            }
+                    }
+            }
+            compose.onNodeWithTag("paste-text").assertIsDisplayed()
+            screenshot("send-paste")
+        } finally {
+            automation.serviceInfo = automation.serviceInfo.apply { flags = originalFlags }
+        }
+        compose.onNodeWithTag("message").performTextReplacement(input)
+        check(value("message") == input) { "Screenshot capture changed the transfer fixture" }
         compose.onNodeWithTag("remove-recipient-laptop").assertExists()
         val discovery = requireNotNull(liveModel.discoverySnapshot)
         File(compose.activity.cacheDir, "send-discovery-ready").writeText("ready")
