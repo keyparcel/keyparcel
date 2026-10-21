@@ -66,10 +66,10 @@ removes the recipient's remote copy after successful delivery unless you use
 
 The CLI is exercised on Linux; limited native Intel macOS validation also covers
 its clipboard support. Android runtime tests use hosted x86_64 emulators; ARM64
-builds are checked statically, and the rc.2 candidate has also been manually tested
-on a physical ARM device. Linux DEB/RPM/archive and Android builds can be made from
-source. Signed prerelease artifacts are being prepared for publication; public
-release downloads are not yet available. This is development software.
+builds are checked statically. RC5 was also manually tested with GTK on Linux and
+on a physical ARM64 Android device. Linux DEB/RPM/archive and Android builds can be
+made from source. Signed prerelease candidates remain unpublished; public release
+downloads are not yet available. This is development software.
 
 ## Limitations
 
@@ -89,7 +89,7 @@ release downloads are not yet available. This is development software.
 - [Installation and enrollment](docs/installation.md)
 - [CLI usage](docs/usage.md), [Android guide](android/client/README.md), [Linux desktop guide](desktop/client/README.md)
 - Screenshots: [Linux](desktop/client/docs/gallery/README.md) · [Android](android/client/docs/gallery/README.md)
-- [Security model and identity loss](SECURITY.md)
+- [Private security reporting, security model and identity loss](SECURITY.md)
 - [Development, tests and local smoke environments](docs/development.md)
 - [Package format](PROTOCOL.md)
 
