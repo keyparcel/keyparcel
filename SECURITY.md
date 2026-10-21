@@ -1,5 +1,12 @@
 # Security model
 
+## Report security vulnerabilities privately
+
+**Do not open public issues for suspected vulnerabilities.**
+Use [GitHub's private vulnerability reporting channel](https://github.com/keyparcel/keyparcel/security/advisories/new)
+to report them privately to the maintainers. Use [GitHub Issues](https://github.com/keyparcel/keyparcel/issues)
+for non-security bugs.
+
 [Home](README.md) · [Enrollment](docs/installation.md) · [Package format](PROTOCOL.md)
 
 keyparcel is development software. It has not undergone an independent security
