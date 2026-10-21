@@ -1,0 +1,55 @@
+name: macOS CLI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-cli-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: macOS CLI (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            arch: arm64
+            machine: arm64
+          - runner: macos-26-intel
+            arch: amd64
+            machine: x86_64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - run: bash tests/ci/macos.sh 2>&1 | tee macos.log
+        env:
+          EXPECTED_MACHINE: ${{ matrix.machine }}
+          EXPECTED_GOARCH: ${{ matrix.arch }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: macos-cli-${{ matrix.arch }}
+          path: |
+            macos.log
+            test-artifacts/**/transcript.txt
+            test-artifacts/**/server.log
+          retention-days: 7
+          if-no-files-found: ignore
