@@ -45,6 +45,9 @@ func command(ctx context.Context, input []byte, name string, args ...string) ([]
 	return out.Bytes(), errout.Bytes(), err
 }
 func container(ctx context.Context, input []byte, args ...string) ([]byte, []byte, error) {
+	if localFixtures() {
+		return nil, nil, fmt.Errorf("Docker-only operation in local fixture: %v", args)
+	}
 	return command(ctx, input, docker[0], append(docker[1:], args...)...)
 }
 func TestMain(m *testing.M) {
@@ -60,6 +63,13 @@ func TestMain(m *testing.M) {
 	repo, err = filepath.Abs("../..")
 	if err != nil {
 		panic(err)
+	}
+	if fixture := os.Getenv("KEYPARCEL_E2E_FIXTURE"); fixture != "" {
+		if fixture != "local" {
+			fmt.Fprintln(os.Stderr, "Unknown E2E fixture:", fixture)
+			os.Exit(1)
+		}
+		os.Exit(runLocalTests(m))
 	}
 	docker = strings.Fields(os.Getenv("KEYPARCEL_DOCKER"))
 	if len(docker) == 0 {
@@ -99,6 +109,7 @@ type world struct {
 	transcript             bytes.Buffer
 	ctx                    context.Context
 	mode                   string
+	local                  *localWorld
 	netAdmin               bool
 	cancel                 context.CancelFunc
 }
@@ -133,6 +144,9 @@ type worldOptions struct {
 
 func makeWorldWithOptions(t *testing.T, clipboard bool, bobKeyType, mode string, options worldOptions) *world {
 	t.Helper()
+	if localFixtures() {
+		return makeLocalWorld(t, clipboard, bobKeyType, mode, options)
+	}
 	dir, err := os.MkdirTemp("", "keyparcel-e2e-*")
 	if err != nil {
 		t.Fatal(err)
@@ -354,6 +368,9 @@ func (w *world) items(c client) []core.Item {
 }
 func (w *world) admin(args ...string) []byte {
 	w.t.Helper()
+	if w.local != nil {
+		return w.localAdmin(args...)
+	}
 	out, diag, err := container(w.ctx, nil, append([]string{"exec", w.id}, args...)...)
 	if err != nil {
 		w.t.Fatalf("server fixture command %v: %v %s", args, err, diag)
@@ -362,6 +379,13 @@ func (w *world) admin(args ...string) []byte {
 }
 func (w *world) put(remote string, b []byte) {
 	w.t.Helper()
+	if w.local != nil {
+		w.localPath(remote)
+		if err := os.WriteFile(remote, b, 0600); err != nil {
+			w.t.Fatal(err)
+		}
+		return
+	}
 	out, diag, err := container(w.ctx, b, "exec", "-i", w.id, "sh", "-c", `cat > "$1"`, "sh", remote)
 	if err != nil {
 		w.t.Fatalf("fixture write: %v %s%s", err, out, diag)
@@ -373,10 +397,15 @@ func (w *world) remote(c client, id string) string {
 	if err != nil {
 		w.t.Fatal(err)
 	}
-	return "/home/parcel/.local/share/keyparcel/inbox/" + core.DeviceID(identity.Public) + "/" + id + ".age"
+	return w.storageRoot() + "/inbox/" + core.DeviceID(identity.Public) + "/" + id + ".age"
 }
 func (w *world) exists(remote string) bool {
 	w.t.Helper()
+	if w.local != nil {
+		w.localPath(remote)
+		_, err := os.Stat(remote)
+		return err == nil
+	}
 	_, _, err := container(w.ctx, nil, "exec", w.id, "test", "-e", remote)
 	return err == nil
 }
@@ -454,6 +483,13 @@ func (w *world) reloadSSHD() {
 
 func (w *world) logs() []byte {
 	w.t.Helper()
+	if w.local != nil {
+		data, err := os.ReadFile(w.local.log)
+		if err != nil {
+			w.t.Fatal(err)
+		}
+		return data
+	}
 	out, diag, err := container(w.ctx, nil, "logs", w.id)
 	if err != nil {
 		w.t.Fatal(err)
@@ -463,6 +499,9 @@ func (w *world) logs() []byte {
 
 // Each client can see only its own disposable fixture directory.
 func (w *world) exec(c client, input []byte, args ...string) ([]byte, []byte, error) {
+	if w.local != nil {
+		return w.localExec(c, input, args...)
+	}
 	return container(w.ctx, input, append([]string{"exec", "-i", c.id}, args...)...)
 }
 func (w *world) clientOK(c client, input []byte, args ...string) []byte {
@@ -481,6 +520,9 @@ type operation struct {
 }
 
 func (w *world) start(c client, args ...string) operation {
+	if w.local != nil {
+		return w.localStart(c, args...)
+	}
 	path := filepath.Join(c.dir, fmt.Sprintf("operation-%d", time.Now().UnixNano()))
 	script := `base=$1; shift; "$@" > "$base.log" 2>&1 & pid=$!; echo "$pid" > "$base.pid"; wait "$pid"; echo "$?" > "$base.status"`
 	_, diag, err := container(w.ctx, nil, append([]string{"exec", "-d", c.id, "sh", "-c", script, "sh", path, "keyparcel"}, append(args, "--config", c.config, "--ssh-config", c.sshConfig)...)...)

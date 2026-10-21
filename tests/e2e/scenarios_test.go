@@ -170,7 +170,7 @@ func TestUnapprovedSenderAndExplicitDelete(t *testing.T) {
 		if err := json.Unmarshal(out, &items); err != nil || len(items) != 0 {
 			t.Fatal("unapproved metadata was listed", string(out))
 		}
-		listing := strings.Fields(string(w.admin("find", "/home/parcel/.local/share/keyparcel", "-name", "*.age")))
+		listing := strings.Fields(string(w.admin("find", w.storageRoot(), "-name", "*.age")))
 		if len(listing) != 1 {
 			t.Fatal(listing)
 		}
@@ -278,23 +278,28 @@ func TestHostKeyAndSelectedIdentityEnforcement(t *testing.T) {
 		// Restore trust in the new test host key to isolate authentication failures.
 		hostKey = strings.Fields(string(w.admin("cat", "/etc/ssh/ssh_host_ed25519_key.pub")))
 		os.WriteFile(known, []byte(fmt.Sprintf("inbox %s %s\n", hostKey[0], hostKey[1])), 0600)
-		bobPub, _ := os.ReadFile(w.bob.key + ".pub")
-		w.put("/home/parcel/.ssh/authorized_keys", bobPub)
-		w.fails(w.alice, nil, denied, "devices")
-		if mode == "openssh" {
-			file, err := os.OpenFile(w.alice.sshConfig, os.O_APPEND|os.O_WRONLY, 0600)
-			if err != nil {
-				t.Fatal(err)
-			}
-			other := filepath.Join(w.alice.dir, "other_key")
-			private, _ := os.ReadFile(w.bob.key)
-			os.WriteFile(other, private, 0600)
-			fmt.Fprintf(file, " IdentityFile %s\n", other)
-			file.Close()
-			w.fails(w.alice, nil, "conflicting SSH identity", "devices")
-		}
+		checkSelectedIdentity(t, w, denied)
 	})
 }
+func checkSelectedIdentity(t *testing.T, w *world, denied string) {
+	t.Helper()
+	bobPub, _ := os.ReadFile(w.bob.key + ".pub")
+	w.put(w.authorizedKeys(), bobPub)
+	w.fails(w.alice, nil, denied, "devices")
+	if w.mode == "openssh" {
+		file, err := os.OpenFile(w.alice.sshConfig, os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		other := filepath.Join(w.alice.dir, "other_key")
+		private, _ := os.ReadFile(w.bob.key)
+		os.WriteFile(other, private, 0600)
+		fmt.Fprintf(file, " IdentityFile %s\n", other)
+		file.Close()
+		w.fails(w.alice, nil, "conflicting SSH identity", "devices")
+	}
+}
+
 func TestSetupOfflineAndProtectedKeyRejected(t *testing.T) {
 	runTransports(t, func(t *testing.T, mode string) {
 		w := newWorld(t, mode)
@@ -755,7 +760,7 @@ func TestIdentityChangedAndRemoteCommentDoesNotApproveReplacement(t *testing.T) 
 		keys := append([]byte("# device discovery\n\n"), alicePub...)
 		keys = append(keys, replacement...)
 		keys = append(keys, []byte("\n# trailing comment\n")...)
-		w.put("/home/parcel/.ssh/authorized_keys", keys)
+		w.put(w.authorizedKeys(), keys)
 		var devices []core.Device
 		json.Unmarshal(w.ok(w.alice, nil, "devices", "--json"), &devices)
 		for _, d := range devices {
@@ -807,27 +812,34 @@ func TestInterruptedUploadNeverPublishesPartialPackage(t *testing.T) {
 		}
 	})
 }
+func startReusedWatch(t *testing.T, w *world) operation {
+	t.Helper()
+	before := strings.Count(string(w.logs()), "Accepted publickey")
+	op := w.start(w.alice, "inbox", "--watch", "--interval", "100ms")
+	logPath := op.path + ".log"
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		b, _ := os.ReadFile(logPath)
+		if strings.Count(string(b), "Inbox empty.") >= 3 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("watch did not refresh")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	after := strings.Count(string(w.logs()), "Accepted publickey")
+	if after-before != 1 {
+		t.Fatalf("three polls expected one authentication, got %d", after-before)
+	}
+	return op
+}
+
 func TestWatchReusesConnectionAndRechecksConfigurationOnReconnect(t *testing.T) {
 	runTransports(t, func(t *testing.T, mode string) {
 		w := newWorld(t, mode)
-		before := strings.Count(string(w.logs()), "Accepted publickey")
-		op := w.start(w.alice, "inbox", "--watch", "--interval", "100ms")
+		op := startReusedWatch(t, w)
 		logPath := op.path + ".log"
-		deadline := time.Now().Add(5 * time.Second)
-		for {
-			b, _ := os.ReadFile(logPath)
-			if strings.Count(string(b), "Inbox empty.") >= 3 {
-				break
-			}
-			if time.Now().After(deadline) {
-				t.Fatal("watch did not refresh")
-			}
-			time.Sleep(20 * time.Millisecond)
-		}
-		after := strings.Count(string(w.logs()), "Accepted publickey")
-		if after-before != 1 {
-			t.Fatalf("three polls expected one authentication, got %d", after-before)
-		}
 		rejection := "conflicting SSH identity"
 		if mode == "openssh" {
 			cfg, err := os.OpenFile(w.alice.sshConfig, os.O_APPEND|os.O_WRONLY, 0600)
@@ -851,7 +863,7 @@ func TestWatchReusesConnectionAndRechecksConfigurationOnReconnect(t *testing.T) 
 		}
 
 		w.admin("pkill", "-u", "parcel")
-		deadline = time.Now().Add(5 * time.Second)
+		deadline := time.Now().Add(5 * time.Second)
 		for {
 			b, _ := os.ReadFile(logPath)
 			if strings.Contains(string(b), rejection) {
@@ -884,21 +896,26 @@ func TestCopyUsesRealIsolatedX11Clipboard(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+	checkClipboardTransfers(t, w, func() []byte {
+		out, diag, err := w.exec(w.bob, nil, "xclip", "-selection", "clipboard", "-out")
+		if err != nil {
+			t.Fatalf("real clipboard read: %v %s", err, diag)
+		}
+		return out
+	})
+}
+
+func checkClipboardTransfers(t *testing.T, w *world, read func() []byte) {
+	t.Helper()
 	input := []byte("  copy 世界\n\n")
 	w.ok(w.alice, input, "send", "--to", "bob", "--stdin")
 	item := w.items(w.bob)[0]
 	w.ok(w.bob, nil, "receive", item.ID, "--copy", "--keep")
-	out, diag, err := w.exec(w.bob, nil, "xclip", "-selection", "clipboard", "-out")
-	if err != nil {
-		t.Fatalf("real clipboard read: %v %s", err, diag)
-	}
+	out := read()
 	equalBytes(t, input, out)
 	w.assertExists(w.remote(w.bob, item.ID), true)
 	w.ok(w.bob, nil, "receive", item.ID, "--copy")
-	out, diag, err = w.exec(w.bob, nil, "xclip", "-selection", "clipboard", "-out")
-	if err != nil {
-		t.Fatalf("real clipboard read: %v %s", err, diag)
-	}
+	out = read()
 	equalBytes(t, input, out)
 	w.assertExists(w.remote(w.bob, item.ID), false)
 	source := filepath.Join(w.alice.dir, "file.txt")
@@ -907,7 +924,7 @@ func TestCopyUsesRealIsolatedX11Clipboard(t *testing.T) {
 	w.ok(w.alice, nil, "send", "--to", "bob", "--file", source)
 	item = w.items(w.bob)[0]
 	w.ok(w.bob, nil, "receive", item.ID, "--copy")
-	out = w.clientOK(w.bob, nil, "xclip", "-selection", "clipboard", "-out")
+	out = read()
 	equalBytes(t, fileText, out)
 	w.assertExists(w.remote(w.bob, item.ID), false)
 	for _, tc := range []struct {
@@ -923,7 +940,7 @@ func TestCopyUsesRealIsolatedX11Clipboard(t *testing.T) {
 		item = w.items(w.bob)[0]
 		w.fails(w.bob, nil, tc.reason, "receive", item.ID, "--copy")
 		w.assertExists(w.remote(w.bob, item.ID), true)
-		out = w.clientOK(w.bob, nil, "xclip", "-selection", "clipboard", "-out")
+		out = read()
 		equalBytes(t, fileText, out)
 		w.ok(w.bob, nil, "delete", item.ID)
 	}
