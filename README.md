@@ -36,7 +36,11 @@ Share text and files between your devices through your own SSH server.
 
 ## Quick start
 
-With Go, Make and OpenSSH installed, and a dedicated device key **already enrolled**
+Download the [RC5 prerelease](https://github.com/keyparcel/keyparcel/releases/tag/v0.1.0-rc.5)
+for Linux CLI/GTK packages, binary archives and the signed Android APK. See
+[installation and enrollment](docs/installation.md) before connecting.
+
+For a source build, with Go, Make and OpenSSH installed, and a dedicated device key **already enrolled**
 on an SSH/SFTP server reachable as `parcel-vps`:
 
 ```sh
@@ -68,8 +72,7 @@ The CLI is exercised on Linux; limited native Intel macOS validation also covers
 its clipboard support. Android runtime tests use hosted x86_64 emulators; ARM64
 builds are checked statically. RC5 was also manually tested with GTK on Linux and
 on a physical ARM64 Android device. Linux DEB/RPM/archive and Android builds can be
-made from source. Signed prerelease candidates remain unpublished; public release
-downloads are not yet available. This is development software.
+made from source. This is development software; RC5 is a prerelease for evaluation.
 
 ## Limitations
 
