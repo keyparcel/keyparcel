@@ -9,7 +9,7 @@ import sys
 import tarfile
 import tempfile
 
-from layout import CLIENTS, NOTICES
+from layout import CLIENTS, NOTICES, zsh_completion
 from version import package_version
 
 
@@ -31,7 +31,8 @@ def stage_client(stage, binaries, repo, info, client):
                (repo / 'release/copyright', f'usr/share/doc/{name}/copyright'),
                *[(repo / leaf, f'usr/share/doc/{name}/' + leaf) for leaf in NOTICES if leaf != 'copyright']]
     if client == 'cli':
-        sources.append((repo / 'completions/keyparcel.bash', 'usr/share/bash-completion/completions/keyparcel'))
+        sources += [(repo / 'completions/keyparcel.bash', 'usr/share/bash-completion/completions/keyparcel'),
+                    (repo / 'completions/_keyparcel', zsh_completion(info['target']))]
     else:
         sources += [(repo / 'release/io.github.keyparcel.keyparcel.desktop', 'usr/share/applications/io.github.keyparcel.keyparcel.desktop'),
                     (repo / 'assets/branding/app-icon.svg', 'usr/share/icons/hicolor/scalable/apps/io.github.keyparcel.keyparcel.svg')]

@@ -54,7 +54,7 @@ versionName/versionCode through package metadata. Default developer builds say
 
 Each Linux target produces independent `keyparcel-cli` and `keyparcel-gtk`
 packages and matching, separate `.tar.gz` install trees. Neither depends on the
-other. CLI contains the `keyparcel` binary, Bash completion and compressed
+other. CLI contains the `keyparcel` binary, Bash/zsh completion and compressed
 `keyparcel(1)` manual, with no GTK dependencies. GTK contains `keyparcel-gtk`, its
 launcher/icon and desktop dependencies. Each owns its own notices, guide and
 build provenance under `/usr/share/doc/keyparcel-cli` or `keyparcel-gtk`.

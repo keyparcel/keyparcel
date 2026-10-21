@@ -1,0 +1,15 @@
+#compdef keyparcel
+
+# Native paths stay local; semantic suggestions come from the CLI.
+local current=${(Q)words[CURRENT]} previous=${(Q)words[CURRENT-1]}
+local flag=$previous
+[[ $current == --*=* ]] && flag=${current%%=*}
+case $flag in
+    --file|--save-to|--identity|--config|--ssh-config)
+        [[ $current == --*=* ]] && compset -P "${flag}="
+        _files
+        return ;;
+esac
+local -a candidates
+candidates=("${(@f)$(command keyparcel __complete "${(@Q)words[2,CURRENT]}" 2>/dev/null)}")
+[[ -n $candidates[1] ]] && compadd -V keyparcel -- "${candidates[@]}"

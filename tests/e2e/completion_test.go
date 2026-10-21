@@ -17,13 +17,47 @@ import (
 )
 
 // One server lifecycle covers completion's real-data and failure behavior.
-func TestBashCompletionScenario(t *testing.T) {
+func TestShellCompletionScenario(t *testing.T) {
 	runTransports(t, func(t *testing.T, mode string) {
 		w := makeWorld(t, false, "rsa", mode)
-		// Configuration options precede the current word, just as Bash passes them.
+		// Run the same real-data assertions through both native wrappers.
 		query := func(c client, args ...string) string {
 			words := append([]string{args[0], "--config", c.config, "--ssh-config", c.sshConfig}, args[1:]...)
-			return strings.TrimSpace(string(w.clientOK(c, nil, append([]string{"keyparcel", "__complete"}, words...)...)))
+			result := strings.TrimSpace(string(w.clientOK(c, nil, append([]string{"keyparcel", "__complete"}, words...)...)))
+			for _, shell := range []string{"bash", "zsh"} {
+				body := `source /usr/local/share/keyparcel/completion.bash || exit
+compopt() { :; }
+COMP_WORDS=(keyparcel "$@"); COMP_CWORD=$((${#COMP_WORDS[@]}-1))
+_keyparcel
+for candidate in "${COMPREPLY[@]}"; do eval "set -- $candidate"; printf '%s\n' "$1"; done`
+				if shell == "zsh" {
+					body = `[[ -r /usr/share/zsh/site-functions/_keyparcel ]] || exit 2
+fpath=(/usr/share/zsh/site-functions $fpath)
+autoload -Uz _keyparcel
+words=(keyparcel "$@"); CURRENT=${#words}
+compadd() { [[ $1 == -V && $2 == keyparcel && $3 == -- ]] || return 2; shift 3; print -rl -- "$@"; }
+_keyparcel || [[ $? == 1 ]]`
+				}
+				args := []string{shell, "-f", "-c", body, shell}
+				if shell == "bash" {
+					args = []string{shell, "--noprofile", "--norc", "-c", body, shell}
+				}
+				args = append(args, words...)
+				started := time.Now()
+				out, diag, err := w.exec(c, nil, args...)
+				if err != nil {
+					t.Fatalf("%s wrapper failed: %v %s", shell, err, diag)
+				}
+				got := strings.TrimSpace(string(out))
+				// Five-second query deadline plus the existing process allowance, per shell.
+				if time.Since(started) > 8*time.Second {
+					t.Fatalf("%s completion did not return promptly", shell)
+				}
+				if got != result {
+					t.Fatalf("%s completion %q: got %q, helper %q diagnostics %s", shell, words, got, result, diag)
+				}
+			}
+			return result
 		}
 		initialConfig, _ := os.ReadFile(w.alice.config)
 		unsupported := filepath.Join(w.alice.dir, "unsupported_key")
@@ -241,13 +275,8 @@ func TestBashCompletionScenario(t *testing.T) {
 			t.Fatalf("pause server: %v %s", err, diag)
 		}
 		defer container(w.ctx, nil, "unpause", w.id)
-		started := time.Now()
 		if got = query(w.alice, "trust", ""); got != "" {
 			t.Fatal(got)
-		}
-		// Five-second query deadline plus the existing three-second process allowance.
-		if time.Since(started) > 8*time.Second {
-			t.Fatal("completion did not return promptly")
 		}
 		after, _ := os.ReadFile(w.alice.config)
 		equalBytes(t, before, after)

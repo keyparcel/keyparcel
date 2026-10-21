@@ -26,12 +26,19 @@ not overwrite its owned files alongside it. A package manager may propose removi
 the conflicting package; inspect its transaction rather than forcing installation.
 Removing it preserves home-directory configuration, identities and saved files.
 
-CLI installs `/usr/bin/keyparcel`, Bash completion, `keyparcel(1)`, and its own
+CLI installs `/usr/bin/keyparcel`, Bash/zsh completion, `keyparcel(1)`, and its own
 `/usr/share/doc/keyparcel-cli` guide/notices. GTK independently installs
 `/usr/bin/keyparcel-gtk`, the launcher/icon and `/usr/share/doc/keyparcel-gtk`.
 Remove either with `sudo apt remove keyparcel-cli` / `keyparcel-gtk`, or
 `sudo dnf remove keyparcel-cli` / `keyparcel-gtk`. The other client remains installed;
 user files are not package-owned.
+
+Ubuntu 24.04 initializes zsh completion globally. Fedora 44's default new-user
+`~/.zshrc` initializes it; existing homes without completion setup may need
+`autoload -Uz compinit; compinit` in `~/.zshrc`. Restart the shell after installation. The package uses the distro's
+completion directory; archives install into `/usr/local/share/zsh/site-functions`.
+See [shell completion](https://github.com/keyparcel/keyparcel/blob/main/docs/usage.md)
+for user-local installation and `fpath` ordering. No startup files are edited.
 
 ## First use
 
@@ -93,6 +100,7 @@ tar -xzf keyparcel-cli-VERSION-TARGET.tar.gz -C cli-candidate
 cd cli-candidate
 sudo install -Dm755 usr/bin/keyparcel /usr/local/bin/keyparcel
 sudo install -Dm644 usr/share/bash-completion/completions/keyparcel /usr/local/share/bash-completion/completions/keyparcel
+sudo install -Dm644 usr/share/zsh/*/_keyparcel /usr/local/share/zsh/site-functions/_keyparcel
 sudo install -Dm644 usr/share/man/man1/keyparcel.1.gz /usr/local/share/man/man1/keyparcel.1.gz
 sudo install -d /usr/local/share/doc/keyparcel-cli
 sudo install -m644 usr/share/doc/keyparcel-cli/* /usr/local/share/doc/keyparcel-cli/
@@ -114,6 +122,7 @@ archive installation made above:
 ```sh
 sudo rm -- /usr/local/bin/keyparcel \
   /usr/local/share/bash-completion/completions/keyparcel \
+  /usr/local/share/zsh/site-functions/_keyparcel \
   /usr/local/share/man/man1/keyparcel.1.gz
 sudo rm -- /usr/local/share/doc/keyparcel-cli/{README.md,build-info.json,LICENSE,NOTICE,THIRD_PARTY_NOTICES.txt,copyright}
 sudo rmdir /usr/local/share/doc/keyparcel-cli

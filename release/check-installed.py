@@ -39,7 +39,7 @@ if client == 'cli':
 else:
     assert 'libgtk' in deps, 'GTK runtime dependencies missing'
     assert not Path('/usr/bin/keyparcel').exists() and shutil.which('keyparcel') is None, 'GTK-only runtime has a CLI fallback'
-paths = files(client)
+paths = files(client, info['target'])
 owned_files = {p.lstrip('/') for p in owned if Path(p).is_file()}
 assert owned_files == set(paths), f'Package ownership mismatch: missing {set(paths) - owned_files}, extra {owned_files - set(paths)}'
 archive, = Path('/candidate').glob(name + '-*.tar.gz')
@@ -79,6 +79,7 @@ if client == 'gtk':
     assert (icon.get_width(), icon.get_height()) == (320, 320)
 else:
     subprocess.run(['bash', '-c', 'source /usr/share/bash-completion/completions/keyparcel; complete -p keyparcel'], check=True)
+    subprocess.run(['zsh', '-f', '-c', 'autoload -Uz compinit; compinit -D; [[ $_comps[keyparcel] == _keyparcel ]]'], check=True)
     manual = '/usr/share/man/man1/keyparcel.1.gz'
     # Ubuntu minimal images divert man to a notice; use the installed real tool.
     man = shutil.which('man.REAL') or shutil.which('man')

@@ -12,7 +12,7 @@ export CGO_ENABLED=0
 "${go_cmd[@]}" build -tags=e2e -o "$build_dir/sftp-probe" ./tests/e2e/probe
 age_version=$("${go_cmd[@]}" list -m -f '{{.Version}}' filippo.io/age)
 GOBIN="$build_dir" "${go_cmd[@]}" install "filippo.io/age/cmd/age@$age_version"
-cp completions/keyparcel.bash "$build_dir/"
+cp completions/_keyparcel completions/keyparcel.bash "$build_dir/"
 cp tests/e2e/Dockerfile.client "$build_dir/"
 bash tests/build-image.sh sshd -t keyparcel-test-sshd:local tests/e2e
 bash tests/build-image.sh client --target client --build-arg "CLIENT_UID=$(id -u)" --build-arg "CLIENT_GID=$(id -g)" -f "$build_dir/Dockerfile.client" -t keyparcel-test-client:local "$build_dir"
