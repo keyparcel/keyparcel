@@ -37,6 +37,21 @@ func runLocalTests(m *testing.M) int {
 		fmt.Fprintln(os.Stderr, "Local and installed-container fixtures cannot be combined")
 		return 1
 	}
+	if installed := os.Getenv("KEYPARCEL_E2E_INSTALLED_CLI"); installed != "" {
+		info, err := os.Lstat(installed)
+		if installed != "/usr/local/bin/keyparcel" || err != nil || !info.Mode().IsRegular() {
+			fmt.Fprintln(os.Stderr, "Installed native E2E requires /usr/local/bin/keyparcel, with no symlink or fallback")
+			return 1
+		}
+		owner, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || owner.Uid != 0 || info.Mode().Perm() != 0755 {
+			fmt.Fprintln(os.Stderr, "Installed native CLI must be root-owned with mode0755")
+			return 1
+		}
+		binaryPath = installed
+		fmt.Fprintln(os.Stderr, "Using installed native CLI without rebuilding:", binaryPath)
+		return m.Run()
+	}
 	bin, err := os.MkdirTemp(root, "bin-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

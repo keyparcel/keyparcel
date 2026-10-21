@@ -119,7 +119,8 @@ func runTransports(t *testing.T, scenario func(*testing.T, string)) {
 	t.Helper()
 	t.Parallel()
 	modes := []string{"openssh", "embedded"}
-	if os.Getenv("KEYPARCEL_INSTALLED_IMAGE") != "" {
+	if os.Getenv("KEYPARCEL_INSTALLED_IMAGE") != "" ||
+		(localFixtures() && os.Getenv("KEYPARCEL_E2E_INSTALLED_CLI") != "") {
 		modes = []string{"openssh"} // Production CLI uses OpenSSH; embedded coverage remains in source tests.
 	}
 	for _, mode := range modes {

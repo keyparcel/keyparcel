@@ -36,12 +36,17 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 export TMPDIR="$socket_root"
-go build -o "$RUNNER_TEMP/keyparcel" ./cmd/keyparcel
 # These execute GNU/BusyBox *server* scripts, not portable macOS client code.
 # Linux CI still runs both unchanged; no GNU tools are injected into the native fixture.
 go test -race -count=1 ./... \
   -skip '^(TestCommandParcelScriptRejectsUnsafeFilesBeforeReading|TestInboxBatchToolsAndLocalVerification)$'
 go vet ./...
 export KEYPARCEL_E2E_FIXTURE=local KEYPARCEL_E2E_LOCAL_ROOT="$fixture_root"
-go test -race -tags=e2e -count=1 -timeout=12m -v ./tests/e2e \
-  -run '^(TestReceiveTextDeletesPackage|TestFileBytesAndKeep|TestUnapprovedSenderAndExplicitDelete|TestTamperingBeyondMetadataAndTruncation|TestIdentityChangedAndRemoteCommentDoesNotApproveReplacement|TestCopyUsesNativeMacClipboard|TestLocalWatchCancellation|TestLocalSelectedIdentity)$'
+scenarios='^(TestReceiveTextDeletesPackage|TestFileBytesAndKeep|TestUnapprovedSenderAndExplicitDelete|TestTamperingBeyondMetadataAndTruncation|TestIdentityChangedAndRemoteCommentDoesNotApproveReplacement|TestCopyUsesNativeMacClipboard|TestLocalWatchCancellation|TestLocalSelectedIdentity)$'
+go test -race -tags=e2e -count=1 -timeout=12m -v ./tests/e2e -run "$scenarios"
+
+# Candidate artifacts only; the ordinary production CLI build now carries provenance.
+python3 -m unittest discover -v -s release -p macos_test.py
+candidate="release/out/macos-$EXPECTED_GOARCH"
+python3 release/macos.py --arch "$EXPECTED_GOARCH" --output "$candidate" --require-clean --upgrade-fixture
+python3 release/check-macos.py "$candidate" "$scenarios"

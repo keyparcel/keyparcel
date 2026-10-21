@@ -133,7 +133,9 @@ version/ID/provenance, AAR-to-APK library completeness, ELF machine/load alignme
 APK 16 KiB library alignment, and absence of a valid signature. These checks do
 **not** establish ARM runtime or upgrade behavior. Each candidate still needs
 manual device inspection before publication; see [current platform status](../README.md#clients).
-There is no device farm, package repository, macOS packaging or auto-update service.
+There is no device farm, package repository, macOS GUI or auto-update service.
+Optional unsigned macOS CLI packages can be built, tested and attached to an
+existing draft [on demand](MACOS.md); Linux/Android releases do not wait for them.
 Signing and release drafts are described below.
 
 Candidate CI preserves the broad source suites, including both Android client
@@ -195,9 +197,11 @@ manifest, every original payload entry, notices and ARM64 libraries. The public
 certificate SHA-256 fingerprint is an asset for comparison with the offline backup.
 Unsigned APKs, AARs, logs and fixture output are not release assets.
 
-The draft contains 14 assets: two DEBs, two RPMs, four matching CLI/GTK archives,
+The base draft contains 14 assets: two DEBs, two RPMs, four matching CLI/GTK archives,
 one signed APK, three per-target build-info files, the Android certificate
-fingerprint and `SHA256SUMS`. The checksums cover the other 13 assets.
+fingerprint and `SHA256SUMS`. The checksums cover the other 13 assets. Optional on-demand macOS attachment
+adds two unsigned packages and two build-info files, updating checksums to cover
+all 17 non-checksum assets; it never publishes the draft.
 Release asset filenames use the product's hyphen prerelease (for example,
 `keyparcel-cli_0.1.0-rc.1-1_amd64.deb`); internal DEB/RPM versions still use `~` for
 package-manager ordering. This avoids GitHub's normalization of `~` in uploaded
