@@ -4,6 +4,11 @@ cd "$(dirname "$0")/../.."
 mkdir -p test-artifacts/ci
 case ${1:-} in
     fast)
+        # Compile verification only; native macOS runtime/package tests are on demand.
+        for arch in arm64 amd64; do
+            CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" "${GO:-go}" build \
+                -o "test-artifacts/ci/keyparcel-darwin-$arch" ./cmd/keyparcel
+        done
         "${GO:-go}" test -race ./...
         "${GO:-go}" vet ./...
         (cd android && "${GO:-go}" test -race ./bridge && "${GO:-go}" vet ./bridge)

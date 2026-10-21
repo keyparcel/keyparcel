@@ -105,7 +105,17 @@ class GitHub:
             'X-GitHub-Api-Version': '2022-11-28', 'Content-Type': content_type,
         })
         with urllib.request.urlopen(request, timeout=120) as response:
+            if response.status == 204:
+                return None
             return json.load(response)
+
+    def download(self, asset_id):
+        request = urllib.request.Request(self.base + f'/releases/assets/{asset_id}',
+                                         headers={'Accept': 'application/octet-stream'})
+        # Signed asset redirects do not need our API token.
+        request.add_unredirected_header('Authorization', 'Bearer ' + self.token)
+        with urllib.request.urlopen(request, timeout=120) as response:
+            return response.read()
 
 
 def require_draft(release, tag, revision, prerelease):
