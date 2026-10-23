@@ -50,7 +50,7 @@ class MacPackageTest(unittest.TestCase):
                         requirements.append(plistlib.loads(Path(command[command.index('--product') + 1]).read_bytes()))
                 with patch.object(macos.subprocess, 'run', side_effect=capture):
                     macos.package(Path('/private/payload'), Path('/private/output.pkg'), '1.2.3', arch)
-                self.assertEqual(requirements, [dict(arch=[machine], os=['26.0'])])
+                self.assertEqual(requirements, [dict(arch=[machine], os=['13.0'])])
                 self.assertTrue(all('--sign' not in command and '--scripts' not in command for command in commands))
 
     def test_refuses_cross_architecture_package(self):

@@ -62,7 +62,7 @@ def package(root, output, version, arch):
     with tempfile.TemporaryDirectory() as temporary:
         component = Path(temporary) / 'component.pkg'
         requirements = Path(temporary) / 'requirements.plist'
-        requirements.write_bytes(plistlib.dumps(dict(arch=[MACHINES[arch]], os=['26.0'])))
+        requirements.write_bytes(plistlib.dumps(dict(arch=[MACHINES[arch]], os=['13.0'])))
         subprocess.run(['pkgbuild', '--root', str(root), '--identifier', IDENTIFIER,
                         '--version', version, '--install-location', str(PREFIX),
                         '--ownership', 'recommended', str(component)], check=True)

@@ -121,6 +121,6 @@ invalidate affected cached results. Monitoring stops when the app exits.
 Network/file operations default to a two-minute deadline (`--request-timeout`
 can change it) and offer Cancel; timeout or cancellation cleans staging and
 restores controls. File selection currently
-uses local paths. Candidate installs are checked on Ubuntu 24.04, Debian 13 and
-Fedora 44. Native Wayland and other distributions remain unverified. Background
-transfers and notifications are not implemented.
+uses local paths. The app needs Linux with GTK 4.10 or newer and OpenSSH 8.7 or newer;
+see [installation](../../docs/installation.md#linux-packages-and-archives).
+Background transfers and notifications are not implemented.

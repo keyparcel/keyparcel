@@ -1,81 +1,58 @@
-# keyparcel CLI macOS package testing
+# keyparcel CLI on macOS
 
-These unsigned CLI packages target native macOS 26 on Apple Silicon
-or Intel. Choose the package matching your processor; the installer declares
-that architecture and requires macOS 26 or later. They are not signed or
-notarized. Native test runs retain packages as workflow artifacts; a verified
-pair can also be attached to an existing, unpublished release draft.
+Download a `.pkg` from the [releases page](https://github.com/keyparcel/keyparcel/releases).
+Choose `macos-arm64.pkg` for Apple Silicon or `macos-amd64.pkg` for Intel.
+New package builds require macOS 13 or later. The published RC6 packages still
+require macOS 26; their downloads have not been replaced.
 
-A package installs `keyparcel` into `/usr/local/bin`, its manual into
-`/usr/local/share/man/man1`, and Bash and zsh completions into the corresponding
-`/usr/local/share` directories. Notices and build provenance are in
-`/usr/local/share/doc/keyparcel-cli`. Check `keyparcel --version` and
-`man keyparcel` after installation.
+## Install
 
-For zsh, enable its completion system in your own shell configuration if you
-have not already done so: `autoload -Uz compinit && compinit`. The package does
-not edit startup files. For Bash, source
-`/usr/local/share/bash-completion/completions/keyparcel` from your own startup
-configuration. Existing clipboard commands remain available on macOS.
+Open the package and follow Installer's prompts. The package is **unsigned and
+not notarized**. If macOS blocks it and you choose to proceed, open **System
+Settings → Privacy & Security → Open Anyway** after the blocked attempt, then
+confirm the prompt. See [Apple's instructions](https://support.apple.com/en-us/102445).
 
-Automatic Linux CI cross-compiles the CLI for both Darwin architectures. This
-verifies compilation only: it neither runs those binaries nor publishes release
-assets. Native runtime and package checks are on demand, so a build may have no
-native verification when macOS runners are unavailable.
-
-Run the **macOS CLI** workflow manually for the desired ref, choosing `arm64`,
-`amd64` (Intel), or `both` (the default). Branch and PR-head runs only build/test
-and retain artifacts; they never write release assets. Single-architecture tag
-runs also remain test-only.
-
-For a release tag containing this workflow, one manual dispatch defaults to both
-architectures and `attach_to_draft=true`:
+Installation requires administrator approval and puts the CLI in
+`/usr/local/bin/keyparcel` for all users. Open a new terminal and run:
 
 ```sh
-gh workflow run macos.yml --ref v<version>
+keyparcel --version
+man keyparcel
 ```
 
-Both native builds and installed tests must succeed before attachment. The tag
-must be annotated and resolve to the exact built source/version. Attachment
-looks up only the existing draft with that exact tag, never the latest release;
-a missing, published or mismatched release fails without writes. No draft is
-created or published. Set `attach_to_draft=false` for a tag test without writes.
-The ordinary Linux/Android release workflow does not wait for Mac runners.
+If the command is not found, check that `/usr/local/bin` is on your `PATH`.
+The manual is in `/usr/local/share/man/man1`; notices and build information are
+in `/usr/local/share/doc/keyparcel-cli`.
 
-The attachment adds two `.pkg` files and distinct `build-info-macos-arm64.json`
-and `build-info-macos-amd64.json` assets, then extends `SHA256SUMS`. Linux/Android
-asset IDs and bytes stay unchanged. Existing Mac assets must match exactly;
-reruns resume matching uploads and never overwrite a package. Re-running the
-base Linux/Android draft uploader after Mac attachment refuses the expanded
-asset set rather than overwriting it.
+Run keyparcel as your normal user, without `sudo`. Profiles and approvals stay
+per-user in `~/Library/Application Support/keyparcel/config.json`; the private
+identity stays at the path you select. Installing or upgrading does not enroll
+keys on a server or replace your user configuration, keys or saved downloads.
+Follow [installation and enrollment](https://github.com/keyparcel/keyparcel/blob/main/docs/installation.md)
+to create/select and enroll a dedicated identity before connecting.
 
-GitHub has no atomic multi-asset upload. The workflow serializes with the base
-release workflow and validates the draft/tag/inventory before each write, but
-manual edits or publication must not overlap attachment. Interrupted uploads
-can leave an incomplete **unpublished** draft. Checksum replacement first uploads
-and verifies `SHA256SUMS.macos-pending`, then deletes the old checksum and renames
-the pending asset. If interrupted between deletion and rename, rerun only the
-failed attachment job in that same workflow run to reuse its verified artifacts;
-do not publish or manually remove the pending asset. Artifacts expire after seven
-days. Rebuilt PKGs can have different bytes at the same commit, so a new build
-may correctly refuse existing packages rather than overwrite them. Differing packages, pending checksums or concurrent edits stop
-the run for inspection. Only the checksum asset is intentionally replaced.
+## Shell completion
 
-Native CI uses the command-line installer on a disposable hosted runner. That
-checks installed files, metadata, real transfers and clipboard behavior. It does
-**not** establish how a quarantined download behaves in Gatekeeper or the
-Installer GUI. Download/open/install must still be reviewed manually on a Mac;
-no command to disable security checks is supplied here. ARM runtime results may
-also be unavailable while hosted ARM runners lack capacity.
+The package installs zsh completion into
+`/usr/local/share/zsh/site-functions/_keyparcel`. If your `~/.zshrc` does not
+already initialize completion, add:
 
-The package does not contain identity keys, user configuration, service changes,
-or install scripts. Installing or upgrading must preserve your existing keys,
-configuration and saved downloads. There is no older published macOS package;
-CI's previous-package fixture tests receipt upgrade and file replacement only.
+```zsh
+autoload -Uz compinit
+compinit
+```
 
-macOS package receipts do not provide an uninstaller. Forgetting a receipt alone
-does not remove files. To remove this test installation, remove only these files
-with administrator privileges, then forget `io.github.keyparcel.keyparcel.cli`:
+Open a new shell afterward. No startup file is edited by the installer.
+For Bash, source `/usr/local/share/bash-completion/completions/keyparcel` from
+your own shell configuration. See the
+[CLI guide](https://github.com/keyparcel/keyparcel/blob/main/docs/usage.md#shell-completion)
+for user-local completion and examples.
+
+## Remove
+
+A macOS package receipt is not an uninstaller. Remove only the installed files
+below with administrator privileges, then run
+`sudo pkgutil --forget io.github.keyparcel.keyparcel.cli`:
 
 - `/usr/local/bin/keyparcel`
 - `/usr/local/share/man/man1/keyparcel.1.gz`

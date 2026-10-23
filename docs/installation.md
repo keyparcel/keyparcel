@@ -2,22 +2,78 @@
 
 [Home](../README.md) · [Usage](usage.md) · [Security](../SECURITY.md)
 
-Download the [RC5 prerelease](https://github.com/keyparcel/keyparcel/releases/tag/v0.1.0-rc.5):
+## Requirements
 
-- **Linux amd64:** install `keyparcel-cli`, `keyparcel-gtk`, or both. DEBs support
-  Ubuntu 24.04 and Debian 13; RPMs support Fedora 44. Separate binary archives
-  are available for the same baselines.
-- **Android ARM64:** install the signed APK on Android 8 or newer.
+- **CLI on Linux:** x86_64 and OpenSSH 8.7 or newer. The static binary does not
+  depend on a particular glibc version or on GTK
+- **CLI on macOS:** macOS 13 or later on Apple Silicon or Intel
+- **GTK desktop:** Linux with GTK 4.10 or newer and OpenSSH 8.7 or newer. Current
+  RC6 GTK binaries also need GLib 2.80 or newer; package managers resolve their
+  shared-library dependencies
+- **Android:** Android 8 or later on an ARM64 device
 
-Verify downloads against `SHA256SUMS` from the same release. Follow the
-[tagged installation guide](https://github.com/keyparcel/keyparcel/blob/v0.1.0-rc.5/release/INSTALLED.md)
-for package/archive commands and removal of the older combined `keyparcel` package
-before migration. Device-key enrollment is still required; see below.
+The distro names below describe package formats and build baselines, not a
+restriction on the CLI archive. On another Linux x86_64 distribution, use its
+OpenSSH and CA-certificate packages. GTK archives still need compatible shared
+libraries from their build baseline.
 
-Source builds are described in the client sections below. Local
-[candidate builds](../release/README.md) keep Android APKs unsigned; the tag workflow
-signs them and prepares a draft for manual publication. Automated ARM64 checks are
-static, not runtime or upgrade assurance; see the [current platform status](../README.md#clients).
+## Downloads
+
+Download the [current prerelease](https://github.com/keyparcel/keyparcel/releases/tag/v0.1.0-rc.6):
+
+| Platform | Choose |
+| --- | --- |
+| Linux x86_64, DEB format | CLI and/or GTK DEBs, built on Ubuntu 24.04 |
+| Linux x86_64, RPM format | CLI and/or GTK RPMs, built on Fedora 44 |
+| macOS 26 or later, Apple Silicon | CLI package ending in `macos-arm64.pkg` |
+| macOS 26 or later, Intel | CLI package ending in `macos-amd64.pkg` |
+| Android 8 or later, ARM64 | Signed APK |
+
+Download `SHA256SUMS` from the same release. On Linux,
+`sha256sum --ignore-missing -c SHA256SUMS` checks the downloaded files in that
+directory. On macOS, use `shasum -a 256 FILE` and compare the result with that
+file's entry. Checksums detect changed bytes, not whether software is safe.
+
+### Linux packages and archives
+
+Remove the older combined `keyparcel` package first. Then install one or both
+clients using the commands for your distro:
+
+```sh
+sudo apt install ./keyparcel-cli_*.deb
+sudo apt install ./keyparcel-gtk_*.deb
+# Fedora instead:
+sudo dnf install ./keyparcel-cli-*.rpm
+sudo dnf install ./keyparcel-gtk-*.rpm
+```
+
+The [installed-client guide](../release/INSTALLED.md) covers migration, separate
+binary archives, dependencies and removal.
+
+### macOS CLI
+
+The published RC6 packages still require macOS 26 or later. New package builds
+allow macOS 13 or later; this does not change the existing RC6 downloads.
+
+Open the `.pkg` matching your processor and follow Installer's prompts. It installs
+systemwide under `/usr/local` with administrator approval; run `keyparcel` as your
+normal user afterward. The package is **unsigned and not notarized**. If macOS
+blocks it and you choose to proceed, open **System Settings → Privacy & Security →
+Open Anyway** after the blocked attempt, then confirm the prompt. See
+[Apple's instructions](https://support.apple.com/en-us/102445).
+
+Open a new terminal and run `keyparcel --version` and `man keyparcel`. Profiles
+remain per-user at `~/Library/Application Support/keyparcel/config.json`;
+installation does not enroll a device or share its private key with other users.
+For optional zsh setup, installed paths and removal, see the
+[macOS package guide](../release/MACOS.md).
+
+### Android
+
+Open the signed APK on your ARM64 device and allow installation from that download
+source when Android asks. Updates use the same signing key and keep app data;
+uninstalling or clearing app data removes the device identity. The app generates
+its own key in Settings; enroll its public key as described below.
 
 ## Server and device keys
 
@@ -54,7 +110,9 @@ source at first connection. Server approval and device approval are separate:
 compare each peer's fingerprint independently and approve it on the receiving
 and sending clients. A key comment is only a suggested name, never proof of identity.
 
-## CLI
+## Source builds
+
+### CLI
 
 Use the Go version in [`go.mod`](../go.mod), Make and OpenSSH's `ssh`:
 
@@ -67,12 +125,11 @@ make build
 
 `make build` produces `bin/keyparcel`; put it on your `PATH` if desired. For clipboard
 copying on Linux, install `wl-copy` for Wayland or `xclip` for X11. macOS uses its
-system `osascript`/AppKit runtime. There is no ongoing macOS CI or full native
-platform-parity claim. CLI commands prefer SSH command reads and require supported
+system clipboard tools. CLI commands prefer SSH command reads and require supported
 Unix tools by default; use `setup --access-method sftp` for an SFTP-only server.
 See [remote access methods](usage.md#remote-access-method) and [peer approval](usage.md#profiles-and-server-trust).
 
-## Linux desktop
+### Linux desktop
 
 The GTK client uses the same profiles, identities, approvals and OpenSSH trust as
 the CLI. Native builds need Linux, Go, a C compiler, pkg-config, GTK 4 development
@@ -85,11 +142,10 @@ desktop/client/build/keyparcel-gtk
 
 See the [user guide](../desktop/client/README.md) and
 [containerized development workflow](../desktop/client/DEVELOPMENT.md).
-Automated desktop coverage uses X11. Candidate installs are checked on Ubuntu
-24.04, Debian 13 and Fedora 44; see the [release guide](../release/README.md) for
-baselines and runtime dependencies. Native Wayland is not validated.
+Packages target Ubuntu 24.04, Debian 13 and Fedora 44. See the
+[installed-client guide](../release/INSTALLED.md) for runtime dependencies.
 
-## Android
+### Android app
 
 The Compose app remembers one server and stores its generated identity encrypted
 with Android Keystore. Source builds need Go, JDK 21 and the SDK/NDK components

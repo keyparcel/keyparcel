@@ -2,7 +2,7 @@
 
 [Home](../README.md) · [Installation](installation.md) · [Security](../SECURITY.md)
 
-Commands below assume `bin/` is on your `PATH` and the device key is enrolled.
+Commands below assume `keyparcel` is on your `PATH` and the device key is enrolled.
 Set up a host, list devices and approve a peer after comparing fingerprints:
 
 ```sh
@@ -166,10 +166,9 @@ source /path/to/keyparcel/completions/keyparcel.bash
 ```
 
 The CLI packages install Bash and zsh completion into their system directories.
-Ubuntu 24.04 initializes zsh completion globally; Fedora 44's default new-user
-`~/.zshrc` initializes it. An existing home without that setup may need
-`autoload -Uz compinit; compinit` in `~/.zshrc`. A fresh interactive zsh can also
-show its first-run setup wizard. For a source checkout or user-local installation:
+If zsh completion is not already enabled, add `autoload -Uz compinit; compinit`
+to `~/.zshrc`. The [macOS package guide](../release/MACOS.md#shell-completion)
+covers its installed paths. For a source checkout or user-local installation:
 
 ```sh
 mkdir -p ~/.local/share/zsh/site-functions

@@ -125,7 +125,6 @@ Network operations have a two-minute lifetime, with a shorter 30-second connecti
 setup limit. Document metadata, preparation and saving have separate two-minute
 limits. Timeouts cancel work and retain incoming transfers. Large transfers need
 private staging space. Multiple hosts, resumable transfers and identity recovery
-are not implemented. Runtime validation currently uses x86_64 emulators;
-ARM64 builds are checked statically. The tag workflow produces a signed draft APK
-for manual device inspection and publication, not an automated ARM runtime test.
+are not implemented. The release APK requires Android 8 or later on an ARM64
+device; see [installation](../../docs/installation.md#android).
 Settings shows the build version for bug reports.
