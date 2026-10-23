@@ -1,5 +1,8 @@
 # Release builds
 
+For downloads and setup, see [installation and enrollment](../docs/installation.md).
+This guide is for maintainers building candidates and preparing releases.
+
 Build and validate candidates without tags, signing keys or publication rights.
 Candidate builds stay unsigned and need no secrets. The tag workflow below adds
 environment-scoped Android signing and an unpublished release draft.
@@ -130,12 +133,11 @@ Android's stable production application ID is `io.github.keyparcel.keyparcel`; s
 retain their suffixes and x86_64 workflow. Candidate production APKs are unsigned and
 non-debuggable, with ARM64-only native libraries. Static checks inspect package
 version/ID/provenance, AAR-to-APK library completeness, ELF machine/load alignment,
-APK 16 KiB library alignment, and absence of a valid signature. These checks do
-**not** establish ARM runtime or upgrade behavior. Each candidate still needs
-manual device inspection before publication; see [current platform status](../README.md#clients).
+APK 16 KiB library alignment, and absence of a valid signature. Follow the
+publication checklist below for device checks.
 There is no device farm, package repository, macOS GUI or auto-update service.
 Optional unsigned macOS CLI packages can be built, tested and attached to an
-existing draft [on demand](MACOS.md); Linux/Android releases do not wait for them.
+existing draft [on demand](#on-demand-macos-packages); Linux/Android releases do not wait for them.
 Signing and release drafts are described below.
 
 Candidate CI preserves the broad source suites, including both Android client
@@ -210,18 +212,55 @@ asset names and bytes; upload responses must preserve names, sizes and digests.
 Checksums cover every other asset. They detect changed bytes; they do not replace
 trust in GitHub or provide Linux package/repository signatures.
 
+### On-demand macOS packages
+
+The manual **macOS CLI** workflow builds unsigned CLI packages and runs source
+and installed-package tests on macOS 26 for Apple Silicon and Intel. Linux Fast
+checks separately cross-compile both architectures. Mac runner availability does
+not block the Linux/Android draft workflow. New packages allow macOS 13 or later;
+the macOS 26 test host is separate from that installer minimum. Published RC6
+packages retain their original macOS 26 requirement.
+
+After the base draft is complete, dispatch once on its annotated release tag:
+
+```sh
+gh workflow run macos.yml --ref "v$(cat release/VERSION)"
+```
+
+The default is `architecture=both` and `attach_to_draft=true`. Branch/PR-head runs,
+single-architecture runs and `attach_to_draft=false` retain test artifacts only.
+Attachment waits for both native jobs to succeed and accepts only the existing
+draft with the exact tag object, source, version and package provenance. It never
+creates or publishes a release. Missing, published or mismatched releases fail
+without writes. This cannot add assets to an already published release.
+
+Attachment adds the two PKGs and distinct Mac build-info assets, then updates
+`SHA256SUMS`. Existing Linux/Android assets stay unchanged. Matching Mac uploads
+can be reused; different bytes are never overwritten. Re-running the base draft
+uploader after Mac attachment refuses the expanded asset set.
+
+GitHub has no atomic multi-asset upload. Attachment shares the base workflow's
+release lock; do not edit or publish a draft while either run is active. It stages
+and verifies `SHA256SUMS.macos-pending`, deletes the old checksum, then renames
+the staged asset. If interrupted, rerun only the failed attachment job within the
+seven-day artifact retention period to reuse the same verified packages. Do not
+publish or manually remove the pending checksum. Rebuilt PKGs can differ at the
+same commit; mismatched packages, pending checksums or concurrent edits stop for
+inspection. Only the checksum asset is intentionally replaced.
+
+See the [macOS installation guide](MACOS.md) for unsigned-package approval and paths.
+
 ### Inspection, first device test and publication
 
-Download the draft assets and verify `sha256sum -c SHA256SUMS`; compare all three
-build-info revisions with the tag's commit and Android versionCode with the
+Download the draft assets and verify `sha256sum -c SHA256SUMS`; compare every
+build-info revision with the tag's commit and Android versionCode with the
 committed value. Check the APK certificate fingerprint against the backed-up
 signing key (SDK `apksigner verify --verbose --print-certs APK` reports it).
 Before publishing a candidate, install its signed production APK on a physical
 ARM64 Android device and try enrollment, peer approval and verified text/file
-send, view, save and deletion. This is a manual gate: CI provides static
-ARM64 packaging evidence, **not ARM runtime or upgrade assurance**. Retain the
-explicit Linux distro limits when editing release notes. Then publish manually
-in GitHub after reviewing the draft, prerelease/latest choices and device results.
+send, view, save and deletion. Keep the Linux distro limits in the release notes.
+After reviewing the draft, device results and prerelease/latest choices, publish
+manually in GitHub.
 
 Keep the original keystore, alias and passwords in separate secure offline
 backups, and record its public certificate fingerprint. Test that backups can be
@@ -235,7 +274,9 @@ Tag runs are serialized. Rerun an interrupted draft job within the seven-day
 retention of its same-run build artifacts. It can resume an existing draft only
 when its tag, exact source SHA and prerelease flag match. Already-uploaded assets
 must have identical sizes and GitHub SHA-256 digests; missing assets can then be uploaded.
-Published releases are refused, and assets are never deleted or overwritten.
+The base uploader refuses published releases and never deletes or overwrites
+assets. The optional Mac attachment replaces only its draft checksum as described
+above.
 Do not publish/edit a draft while a run is active. If rebuilding produces different
 bytes (builds are not claimed byte-reproducible), the rerun deliberately fails.
 Inspect the discrepancy before taking action. A maintainer may explicitly remove

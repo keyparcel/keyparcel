@@ -1,10 +1,17 @@
-# keyparcel: installed clients
+# keyparcel: installed Linux clients
 
 Share encrypted, signed text and files through an existing SSH account. Choose
 `keyparcel-cli`, `keyparcel-gtk`, or both. They share user profiles and approvals
 but neither package requires the other. The CLI is headless; GTK requires its
 supported Linux desktop libraries. Build/source information is in `build-info.json`
 beside this guide; `keyparcel --version` and `keyparcel-gtk --version` also show it.
+
+For macOS CLI packages, see the [macOS guide](https://github.com/keyparcel/keyparcel/blob/main/release/MACOS.md).
+For the Android APK, see [installation and enrollment](https://github.com/keyparcel/keyparcel/blob/main/docs/installation.md).
+
+Distro names identify package build baselines. The static CLI archive can run on
+other Linux x86_64 distributions with OpenSSH 8.7 or newer; it does not need GTK
+or a particular glibc version. GTK archives need compatible shared libraries.
 
 ## Install or migrate
 
@@ -138,8 +145,7 @@ sudo rm -- /usr/local/share/doc/keyparcel-gtk/{README.md,build-info.json,LICENSE
 sudo rmdir /usr/local/share/doc/keyparcel-gtk
 ```
 
-These commands preserve user files and the other client. Signing and publication
-are separate from local candidate builds.
+These commands preserve user files and the other client.
 
 ## License
 

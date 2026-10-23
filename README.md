@@ -15,7 +15,7 @@ Share text and files between your devices through your own SSH server.
   continuously monitored or synchronized.
 - **Private parcels:** content and metadata, including original filenames, are encrypted
   before reaching the server.
-- **Simple clients:** Android, Linux desktop and CLI.
+- **Simple clients:** Android, a Linux desktop app, and a CLI for Linux and macOS.
 
 | Linux desktop | Android |
 | :---: | :---: |
@@ -36,9 +36,9 @@ Share text and files between your devices through your own SSH server.
 
 ## Quick start
 
-Download the [RC5 prerelease](https://github.com/keyparcel/keyparcel/releases/tag/v0.1.0-rc.5)
-for Linux CLI/GTK packages, binary archives and the signed Android APK. See
-[installation and enrollment](docs/installation.md) before connecting.
+Download the [current prerelease](https://github.com/keyparcel/keyparcel/releases/tag/v0.1.0-rc.6)
+for Linux CLI/GTK packages and archives, macOS CLI packages, or the signed Android
+ARM64 APK. See [installation and enrollment](docs/installation.md) before connecting.
 
 For a source build, with Go, Make and OpenSSH installed, and a dedicated device key **already enrolled**
 on an SSH/SFTP server reachable as `parcel-vps`:
@@ -66,13 +66,16 @@ removes the recipient's remote copy after successful delivery unless you use
 | --- | --- |
 | [Android](android/client/README.md) | Text and files, system document pickers, device approval and automatic inbox updates while open |
 | [Linux desktop](desktop/client/README.md) | GTK interface for text and files, shared CLI settings, device approval and automatic inbox updates |
-| [CLI](docs/usage.md) | Scriptable send/receive, multiple hosts, clipboard copying, inbox watch and Bash completion |
+| [CLI for Linux and macOS](docs/usage.md) | Scriptable send/receive, multiple hosts, clipboard copying, inbox watch, and Bash/zsh completion |
 
-The CLI is exercised on Linux; limited native Intel macOS validation also covers
-its clipboard support. Android runtime tests use hosted x86_64 emulators; ARM64
-builds are checked statically. RC5 was also manually tested with GTK on Linux and
-on a physical ARM64 Android device. Linux DEB/RPM/archive and Android builds can be
-made from source. This is development software; RC5 is a prerelease for evaluation.
+The CLI runs on Linux x86_64 with OpenSSH 8.7 or newer, and is also available for
+macOS 13 or later on Apple Silicon and Intel.
+The desktop client needs Linux with GTK 4.10 or newer and its runtime libraries;
+the Android APK requires Android 8 or later on ARM64. See
+[installation](docs/installation.md) for package choices and dependencies.
+
+keyparcel is prerelease software and has not undergone an independent security
+audit. Read the [security model](SECURITY.md) before using it with sensitive data.
 
 ## Limitations
 
